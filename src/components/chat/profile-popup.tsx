@@ -2,17 +2,21 @@
 
 import { useState, useRef, useEffect } from "react";
 import { FaTimes, FaEdit, FaCamera, FaKey } from "react-icons/fa";
-import { useUserInfoContext } from "@/components/auth/user-info-provider";
 import { toast } from "react-hot-toast";
 import { api } from "@/utils/api";
-import { getSession, useSession } from "next-auth/react";
+import { getSession } from "next-auth/react";
+import { useUserInfoContext } from "@/components/auth/user-info-provider";
+
+// Use the same API base URL as in api.ts
+const API_BASE_URL = "http://localhost:8081/api";
 
 interface ProfilePopupProps {
   onClose: () => void;
 }
 
 export function ProfilePopup({ onClose }: ProfilePopupProps) {
-  const { userInfo, isLoading, isError, refetch } = useUserInfoContext();
+  const { userInfo, isLoading, isError, refetch, updateUserProfile } =
+    useUserInfoContext();
   const [activeTab, setActiveTab] = useState<"profile" | "password">("profile");
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -74,10 +78,10 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
     setIsSubmitting(true);
 
     try {
-      const response = await api.put("users/profile", formData);
+      // Use the updateUserProfile function from context instead of direct API call
+      await updateUserProfile(formData);
 
       toast.success("Profile updated successfully");
-      refetch(); // Refresh user data
       setIsEditing(false);
     } catch (error) {
       console.error("Profile update error:", error);
@@ -98,7 +102,11 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
     setIsSubmitting(true);
 
     try {
-      await api.put("auth/users/password", passwordData);
+      // Direct API call for password change is fine since it's not part of the user info context
+      await api.put("auth/users/password", {
+        current_password: passwordData.current_password,
+        new_password: passwordData.new_password,
+      });
 
       toast.success("Password changed successfully");
       setPasswordData({
@@ -130,18 +138,23 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       const formData = new FormData();
       formData.append("profile_picture", file);
 
-      // Send the file to the backend using fetch directly since FormData needs special handling
+      // Get the current session to access the token
       const session = await getSession();
-      const response = await fetch(
-        "http://localhost:8081/api/users/profile/avatar",
-        {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-          body: formData,
-        }
-      );
+
+      if (!session?.access_token) {
+        toast.dismiss();
+        toast.error("Authentication required");
+        return;
+      }
+
+      // Send the file to the backend - FormData needs special handling
+      const response = await fetch(`${API_BASE_URL}/users/profile/avatar`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
 
       toast.dismiss();
 
@@ -208,8 +221,8 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="bg-[#050C1B] rounded-lg shadow-lg max-w-md w-full p-6 relative">
-        <button 
-          onClick={onClose} 
+        <button
+          onClick={onClose}
           className="absolute top-4 right-4 text-white hover:text-gray-300"
         >
           <FaTimes size={24} />
@@ -221,7 +234,10 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
               <div className="relative mb-2">
                 <div className="h-20 w-20 rounded-full overflow-hidden bg-blue-600/30">
                   <img
-                    src={userInfo.profile_picture_url || "https://via.placeholder.com/150"}
+                    src={
+                      userInfo.profile_picture_url ||
+                      "https://via.placeholder.com/150"
+                    }
                     alt={userInfo.username}
                     className="h-full w-full object-cover"
                   />
@@ -236,9 +252,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   >
                     Change Picture
                   </button>
-                  <button
-                    className="bg-[#101827] text-white text-sm py-1 px-3 rounded-md"
-                  >
+                  <button className="bg-[#101827] text-white text-sm py-1 px-3 rounded-md">
                     Delete Picture
                   </button>
                 </div>
@@ -266,7 +280,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   <FaEdit className="absolute right-3 top-3 text-gray-400" />
                 </div>
               </div>
-              
+
               <div>
                 <label className="text-white">Last Name</label>
                 <div className="relative">
@@ -280,7 +294,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   <FaEdit className="absolute right-3 top-3 text-gray-400" />
                 </div>
               </div>
-              
+
               <div>
                 <label className="text-white">Email</label>
                 <div className="relative">
@@ -294,7 +308,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   <FaEdit className="absolute right-3 top-3 text-gray-400" />
                 </div>
               </div>
-              
+
               <div>
                 <label className="text-white">Phone Number</label>
                 <div className="relative">
@@ -308,7 +322,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   <FaEdit className="absolute right-3 top-3 text-gray-400" />
                 </div>
               </div>
-              
+
               <div>
                 <label className="text-white">Username</label>
                 <div className="relative">
@@ -321,7 +335,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   />
                 </div>
               </div>
-              
+
               <div className="flex justify-center mt-2">
                 <button
                   onClick={() => setActiveTab("password")}
@@ -330,7 +344,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   Change Password
                 </button>
               </div>
-              
+
               <div>
                 <label className="text-white">About Me</label>
                 <textarea
@@ -340,7 +354,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   className="w-full bg-[#1A2132] text-white rounded p-3 border border-gray-600"
                 />
               </div>
-              
+
               <div className="flex justify-end mt-4">
                 <button
                   onClick={() => setIsEditing(true)}
@@ -357,12 +371,15 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
           <form onSubmit={handleProfileUpdate} className="space-y-4">
             <div className="flex flex-col items-center text-center mb-6">
               <div className="relative mb-2">
-                <div 
+                <div
                   className="h-20 w-20 rounded-full overflow-hidden bg-blue-600/30 relative cursor-pointer"
                   onClick={handleAvatarClick}
                 >
                   <img
-                    src={userInfo.profile_picture_url || "https://via.placeholder.com/150"}
+                    src={
+                      userInfo.profile_picture_url ||
+                      "https://via.placeholder.com/150"
+                    }
                     alt={userInfo.username}
                     className="h-full w-full object-cover"
                   />
@@ -410,7 +427,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   placeholder="Placeholder"
                 />
               </div>
-              
+
               <div>
                 <label className="text-white">Last Name</label>
                 <input
@@ -422,7 +439,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   placeholder="Placeholder"
                 />
               </div>
-              
+
               <div>
                 <label className="text-white">Email</label>
                 <input
@@ -433,7 +450,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   placeholder="Placeholder"
                 />
               </div>
-              
+
               <div>
                 <label className="text-white">Phone Number</label>
                 <input
@@ -445,7 +462,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   placeholder="Placeholder"
                 />
               </div>
-              
+
               <div>
                 <label className="text-white">Username</label>
                 <input
@@ -456,7 +473,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   placeholder="Placeholder"
                 />
               </div>
-              
+
               <div>
                 <label className="text-white">About Me</label>
                 <textarea
@@ -467,7 +484,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   className="w-full bg-[#1A2132] text-white rounded p-3 border border-gray-600"
                 />
               </div>
-              
+
               <div className="flex justify-end space-x-3 mt-4">
                 <button
                   type="button"
@@ -491,8 +508,10 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
         {userInfo && activeTab === "password" && (
           <form onSubmit={handlePasswordUpdate} className="space-y-4">
-            <h2 className="text-xl font-semibold text-white mb-6 text-center">Change Password</h2>
-            
+            <h2 className="text-xl font-semibold text-white mb-6 text-center">
+              Change Password
+            </h2>
+
             <div>
               <label className="text-white">Current Password</label>
               <input

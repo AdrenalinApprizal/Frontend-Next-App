@@ -1,26 +1,20 @@
-import { getSession } from "next-auth/react";
-import { checkAndRefreshToken } from "./refreshToken";
+import { getSession, signIn } from "next-auth/react";
 
-// Change back to direct backend URL
-const API_BASE_URL = "http://localhost:8081/api";
+// Change to use the local proxy API instead of direct backend URL
+const API_BASE_URL = "/api/proxy";
 
 /**
- * Makes an authenticated request to your backend API
+ * Makes an authenticated request to your backend API through the proxy
  * @param endpoint - The API endpoint path (without the base URL)
  * @param options - Fetch options like method, body, etc.
  * @returns The response from your API
  */
 export async function fetchApi(endpoint: string, options: RequestInit = {}) {
-  // Check and refresh token if needed
-  await checkAndRefreshToken();
-
   // Get the current session to access the token
   const session = await getSession();
 
-  // Build the request URL
-  const url = `${API_BASE_URL}${
-    endpoint.startsWith("/") ? endpoint : `/${endpoint}`
-  }`;
+  // Build the request URL using the proxy
+  const url = `${API_BASE_URL}/${endpoint.replace(/^\/?/, "")}`;
 
   // Set up headers with authentication token
   const headers: Record<string, string> = {
@@ -33,7 +27,7 @@ export async function fetchApi(endpoint: string, options: RequestInit = {}) {
     headers["Authorization"] = `Bearer ${session.access_token}`;
   }
 
-  // Make the API request
+  // Make the API request through the proxy
   const response = await fetch(url, {
     ...options,
     headers,

@@ -3,6 +3,7 @@
 import { useQuery, UseQueryResult } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { UserInfo } from "@/components/auth/user-info-provider";
+import { api } from "@/utils/api"; // Import the API utility
 
 /**
  * Hook to fetch user info from the API
@@ -21,18 +22,15 @@ export function useUserInfo(): UseQueryResult<UserInfo> {
         throw new Error("Not authenticated");
       }
 
-      const response = await fetch("http://localhost:8081/api/auth/user/info", {
-        headers: {
-          Authorization: `Bearer ${access_token}`,
-        },
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch user info: ${response.statusText}`);
+      // Use the API utility instead of direct fetch
+      try {
+        return await api.get("auth/user/info");
+      } catch (error: unknown) {
+        // Properly handle the unknown error type
+        const errorMessage =
+          error instanceof Error ? error.message : "An unknown error occurred";
+        throw new Error(`Failed to fetch user info: ${errorMessage}`);
       }
-
-      return response.json();
     },
     enabled: !!access_token && status === "authenticated",
     staleTime: 1000 * 60 * 5, // 5 minutes
