@@ -16,19 +16,22 @@ const handler = NextAuth({
             throw new Error("Email and password are required");
           }
 
-          // Make a request to your backend API
-          const response = await fetch("http://localhost:8081/api/auth/login", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              email: credentials.email,
-              password: credentials.password,
-            }),
-            cache: "no-store",
-          });
+          // Use the proxy endpoint instead of directly connecting to the backend
+          const response = await fetch(
+            `${process.env.NEXTAUTH_URL || ""}/api/proxy/auth/login`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({
+                email: credentials.email,
+                password: credentials.password,
+              }),
+              cache: "no-store",
+            }
+          );
 
           const data = await response.json();
 
@@ -39,7 +42,9 @@ const handler = NextAuth({
             );
             // Throw specific error message if available from API
             throw new Error(
-              data?.message || `Authentication failed: ${response.statusText}`
+              data?.message ||
+                data?.error ||
+                `Authentication failed: ${response.statusText}`
             );
           }
 

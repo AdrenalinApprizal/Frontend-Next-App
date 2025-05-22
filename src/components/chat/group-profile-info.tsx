@@ -12,22 +12,30 @@ import {
   FaEllipsisV,
   FaCheck,
   FaBan,
+  FaDownload,
+  FaShareAlt,
 } from "react-icons/fa";
-import { X, Search, UserMinus } from "lucide-react";
+import { X, Search, UserMinus, ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "react-hot-toast";
+import { useGroup } from "@/hooks/auth/useGroup";
+import { usePresence } from "@/hooks/presence/usePresence";
 
 interface GroupProfileInfoProps {
   groupName: string;
   groupDetails: GroupDetails;
   onClose: () => void;
+  onUpdateGroup?: (groupId: string, groupData: any) => void;
 }
 
 interface GroupMember {
   id: string;
   name: string;
-  status: "online" | "offline";
+  status: "online" | "offline" | "busy" | "away";
   role: "admin" | "member";
   avatar?: string;
   isBlocked?: boolean;
+  lastSeen?: string;
+  user_id?: string; // Added to support API consistency
 }
 
 interface GroupDetails {
@@ -46,73 +54,239 @@ interface Friend {
   username: string;
   avatar?: string;
   selected?: boolean;
+  shareSelected?: boolean;
+}
+
+interface MediaItem {
+  id: string;
+  url: string;
+  name: string;
+  size?: string;
+  type: "image" | "file";
+  date?: string;
+}
+
+interface Pagination {
+  current_page: number;
+  total_pages: number;
+  total_items: number;
+  items_per_page: number;
+  has_more_pages: boolean;
 }
 
 export default function GroupProfileInfo({
   groupName,
   groupDetails: initialGroupDetails,
   onClose,
+  onUpdateGroup,
 }: GroupProfileInfoProps) {
-  const mediaItems = [
-    { id: 1, url: "/images/voxtalogo.png", type: "image" },
-    { id: 2, url: "/images/voxtalogo.png", type: "image" },
-    { id: 3, url: "/images/voxtalogo.png", type: "image" },
-    { id: 4, url: "/images/voxtalogo.png", type: "image" },
-    { id: 5, url: "/images/voxtalogo.png", type: "image" },
-    { id: 6, url: "/images/voxtalogo.png", type: "image" },
-    { id: 7, url: "/images/voxtalogo.png", type: "image" },
-  ];
+  // Group data management hooks
+  const {
+    blockGroupUser,
+    unblockGroupUser,
+    addGroupMembers,
+    getGroupBlocks,
+    loading,
+    error,
+  } = useGroup();
 
-  const linkItems = [
-    {
-      id: 1,
-      url: "https://bit.ly/3xYzA1B_example_long_random_generated_link_for_testing_purposes",
-      preview: "/images/voxtalogo.png",
-    },
-    {
-      id: 2,
-      url: "https://example.com/another-example-link",
-      preview: "/images/voxtalogo.png",
-    },
-  ];
+  // Presence hook for realtime user status
+  const presence = usePresence();
 
-  const fileItems = [
-    {
-      id: 1,
-      name: "Project_Proposal.pdf",
-      size: "1.2 MB",
-      date: "12 Apr 2025",
-    },
-    { id: 2, name: "Meeting_Notes.docx", size: "604 KB", date: "2 Mar 2025" },
-    { id: 3, name: "Budget_2025.xlsx", size: "845 KB", date: "15 Feb 2025" },
-  ];
-
+  // Component state
   const [groupDetails, setGroupDetails] =
     useState<GroupDetails>(initialGroupDetails);
-
-  const blockedMembersCount = groupDetails.members.filter(
-    (member) => member.isBlocked
-  ).length;
-
-  const [friends, setFriends] = useState<Friend[]>([
-    { id: "101", name: "Rudi Setiawan", username: "rudi", avatar: undefined },
-    { id: "102", name: "Lina Kartika", username: "lina", avatar: undefined },
-    { id: "103", name: "Budi Santoso", username: "budi", avatar: undefined },
-    { id: "104", name: "Ratna Dewi", username: "ratna", avatar: undefined },
-    { id: "105", name: "Dimas Prasetyo", username: "dimas", avatar: undefined },
-  ]);
-
   const [expandedSection, setExpandedSection] = useState<string | null>(
     "members"
   );
-
   const [showAddMemberPopup, setShowAddMemberPopup] = useState(false);
-
   const [searchQuery, setSearchQuery] = useState("");
-
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
+  // Media and files state
+  const [groupMedia, setGroupMedia] = useState<MediaItem[]>([]);
+  const [groupFiles, setGroupFiles] = useState<MediaItem[]>([]);
+  const [isLoadingMedia, setIsLoadingMedia] = useState(false);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [isLoadingMoreMedia, setIsLoadingMoreMedia] = useState(false);
+  const [isLoadingMoreFiles, setIsLoadingMoreFiles] = useState(false);
+  const [showMediaModal, setShowMediaModal] = useState(false);
+  const [showFilesModal, setShowFilesModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showMediaPreview, setShowMediaPreview] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<MediaItem | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
+  const [currentMediaPage, setCurrentMediaPage] = useState(1);
+  const [currentFilesPage, setCurrentFilesPage] = useState(1);
+
+  // Pagination state
+  const [mediaPagination, setMediaPagination] = useState<Pagination>({
+    current_page: 1,
+    total_pages: 1,
+    total_items: 0,
+    items_per_page: 20,
+    has_more_pages: false,
+  });
+
+  const [filesPagination, setFilesPagination] = useState<Pagination>({
+    current_page: 1,
+    total_pages: 1,
+    total_items: 0,
+    items_per_page: 20,
+    has_more_pages: false,
+  });
+
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Mock data for demo purposes
+  const [friends, setFriends] = useState<Friend[]>([
+    {
+      id: "101",
+      name: "Rudi Setiawan",
+      username: "rudi",
+      avatar: undefined,
+      selected: false,
+      shareSelected: false,
+    },
+    {
+      id: "102",
+      name: "Lina Kartika",
+      username: "lina",
+      avatar: undefined,
+      selected: false,
+      shareSelected: false,
+    },
+    {
+      id: "103",
+      name: "Budi Santoso",
+      username: "budi",
+      avatar: undefined,
+      selected: false,
+      shareSelected: false,
+    },
+    {
+      id: "104",
+      name: "Ratna Dewi",
+      username: "ratna",
+      avatar: undefined,
+      selected: false,
+      shareSelected: false,
+    },
+    {
+      id: "105",
+      name: "Dimas Prasetyo",
+      username: "dimas",
+      avatar: undefined,
+      selected: false,
+      shareSelected: false,
+    },
+  ]);
+
+  // Mock data for files and media
+  const [linkItems] = useState([
+    {
+      id: "l1",
+      url: "https://example.com/document-shared-in-group",
+      preview: "https://via.placeholder.com/150",
+      title: "Document shared in group",
+    },
+    {
+      id: "l2",
+      url: "https://example.com/another-important-link",
+      preview: "https://via.placeholder.com/150",
+      title: "Another important link",
+    },
+  ]);
+
+  const [fileItems] = useState([
+    {
+      id: "f1",
+      name: "Project_Documentation.pdf",
+      size: "2.4 MB",
+      date: "May 15, 2023",
+      type: "pdf",
+    },
+    {
+      id: "f2",
+      name: "Meeting_Minutes.docx",
+      size: "890 KB",
+      date: "May 12, 2023",
+      type: "docx",
+    },
+    {
+      id: "f3",
+      name: "Financial_Report.xlsx",
+      size: "1.2 MB",
+      date: "May 10, 2023",
+      type: "xlsx",
+    },
+  ]);
+
+  // Mock media data for demo
+  useEffect(() => {
+    // In a real app, these would come from an API call
+    setGroupMedia([
+      {
+        id: "m1",
+        url: "https://via.placeholder.com/300",
+        name: "Image 1.jpg",
+        type: "image",
+        size: "230 KB",
+        date: "May 12, 2023",
+      },
+      {
+        id: "m2",
+        url: "https://via.placeholder.com/300",
+        name: "Image 2.jpg",
+        type: "image",
+        size: "410 KB",
+        date: "May 15, 2023",
+      },
+      {
+        id: "m3",
+        url: "https://via.placeholder.com/300",
+        name: "Image 3.jpg",
+        type: "image",
+        size: "180 KB",
+        date: "May 18, 2023",
+      },
+      {
+        id: "m4",
+        url: "https://via.placeholder.com/300",
+        name: "Image 4.jpg",
+        type: "image",
+        size: "320 KB",
+        date: "May 20, 2023",
+      },
+    ]);
+
+    setGroupFiles([
+      {
+        id: "f1",
+        url: "#",
+        name: "Document.pdf",
+        type: "file",
+        size: "1.2 MB",
+        date: "May 10, 2023",
+      },
+      {
+        id: "f2",
+        url: "#",
+        name: "Presentation.pptx",
+        type: "file",
+        size: "2.4 MB",
+        date: "May 14, 2023",
+      },
+      {
+        id: "f3",
+        url: "#",
+        name: "Spreadsheet.xlsx",
+        type: "file",
+        size: "850 KB",
+        date: "May 17, 2023",
+      },
+    ]);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -140,24 +314,111 @@ export default function GroupProfileInfo({
     setActiveDropdown(activeDropdown === memberId ? null : memberId);
   };
 
-  const handleBlockMember = (memberId: string) => {
-    setGroupDetails((prevDetails) => ({
-      ...prevDetails,
-      members: prevDetails.members.map((member) =>
-        member.id === memberId ? { ...member, isBlocked: true } : member
-      ),
-    }));
-    setActiveDropdown(null);
+  // Get member status from presence system
+  const getMemberStatus = (
+    userId: string
+  ): "online" | "offline" | "busy" | "away" => {
+    return presence.getStatus(userId) || "offline";
   };
 
-  const handleUnblockMember = (memberId: string) => {
-    setGroupDetails((prevDetails) => ({
-      ...prevDetails,
-      members: prevDetails.members.map((member) =>
-        member.id === memberId ? { ...member, isBlocked: false } : member
-      ),
-    }));
-    setActiveDropdown(null);
+  // Format last active time in a human-readable format
+  const formatLastActive = (userId: string): string => {
+    const lastActive = presence.getLastActive(userId);
+    if (!lastActive) return "Not available";
+
+    try {
+      const lastActiveDate = new Date(lastActive);
+      // Basic implementation of time distance
+      const now = new Date();
+      const diffInSeconds = Math.floor(
+        (now.getTime() - lastActiveDate.getTime()) / 1000
+      );
+
+      if (diffInSeconds < 60) return "Just now";
+
+      const diffInMinutes = Math.floor(diffInSeconds / 60);
+      if (diffInMinutes < 60) return `${diffInMinutes} min ago`;
+
+      const diffInHours = Math.floor(diffInMinutes / 60);
+      if (diffInHours < 24) return `${diffInHours} hr ago`;
+
+      const diffInDays = Math.floor(diffInHours / 24);
+      if (diffInDays < 7)
+        return `${diffInDays} day${diffInDays > 1 ? "s" : ""} ago`;
+
+      return lastActiveDate.toLocaleDateString();
+    } catch (error) {
+      return "Not available";
+    }
+  };
+
+  // Members with presence status information
+  const membersWithStatus = groupDetails.members.map((member) => {
+    // Handle both id and user_id fields
+    const userId = member.id || member.user_id || "";
+    const status = getMemberStatus(userId);
+    const lastActive = formatLastActive(userId);
+
+    return {
+      ...member,
+      presenceStatus: status,
+      lastActive,
+    };
+  });
+
+  // Count of blocked members
+  const blockedMembersCount = groupDetails.members.filter(
+    (member) => member.isBlocked
+  ).length;
+
+  // Function to handle blocking a member with real API
+  const handleBlockMember = async (memberId: string) => {
+    try {
+      // Call the API to block the user
+      await blockGroupUser(groupDetails.id, memberId);
+
+      // Update local state
+      setGroupDetails((prevDetails) => ({
+        ...prevDetails,
+        members: prevDetails.members.map((member) =>
+          member.id === memberId ? { ...member, isBlocked: true } : member
+        ),
+      }));
+
+      // Show success notification
+      toast.success("User blocked successfully");
+
+      // Close the dropdown
+      setActiveDropdown(null);
+    } catch (error: any) {
+      console.error("Error blocking user:", error);
+      toast.error(error.message || "Failed to block user");
+    }
+  };
+
+  // Function to handle unblocking a member with real API
+  const handleUnblockMember = async (memberId: string) => {
+    try {
+      // Call the API to unblock the user
+      await unblockGroupUser(groupDetails.id, memberId);
+
+      // Update local state
+      setGroupDetails((prevDetails) => ({
+        ...prevDetails,
+        members: prevDetails.members.map((member) =>
+          member.id === memberId ? { ...member, isBlocked: false } : member
+        ),
+      }));
+
+      // Show success notification
+      toast.success("User unblocked successfully");
+
+      // Close the dropdown
+      setActiveDropdown(null);
+    } catch (error: any) {
+      console.error("Error unblocking user:", error);
+      toast.error(error.message || "Failed to unblock user");
+    }
   };
 
   const toggleFriendSelection = (id: string) => {
@@ -177,6 +438,135 @@ export default function GroupProfileInfo({
     );
   };
 
+  // Current media index for navigation
+  const currentMediaIndex = selectedMedia
+    ? groupMedia.findIndex((item) => item.id === selectedMedia.id)
+    : -1;
+
+  const hasPreviousMedia = currentMediaIndex > 0;
+  const hasNextMedia = currentMediaIndex < groupMedia.length - 1;
+
+  const navigateMedia = (direction: "prev" | "next") => {
+    if (!selectedMedia) return;
+
+    if (direction === "prev" && currentMediaIndex > 0) {
+      setSelectedMedia(groupMedia[currentMediaIndex - 1]);
+    } else if (
+      direction === "next" &&
+      currentMediaIndex < groupMedia.length - 1
+    ) {
+      setSelectedMedia(groupMedia[currentMediaIndex + 1]);
+    }
+  };
+
+  // Format file size for display
+  const formatFileSize = (sizeStr?: string): string => {
+    if (!sizeStr) return "Unknown size";
+    return sizeStr;
+  };
+
+  // Function to get thumbnail URL (mock implementation)
+  const getThumbnailUrl = (fileId: string): string => {
+    const media = groupMedia.find((item) => item.id === fileId);
+    return media?.url || "https://via.placeholder.com/150";
+  };
+
+  // Function to get file URL (mock implementation)
+  const getFileUrl = (fileId: string): string => {
+    const media = groupMedia.find((item) => item.id === fileId);
+    return media?.url || "#";
+  };
+
+  // Function to download a file (mock implementation)
+  const downloadFile = (fileId: string) => {
+    toast.success(`File download started: ${fileId}`);
+  };
+
+  // Function to share a file with users
+  const shareFileWithUsers = async ({
+    fileId,
+    userIds,
+  }: {
+    fileId: string;
+    userIds: string[];
+  }) => {
+    toast.success(`File shared with ${userIds.length} users`);
+    return true;
+  };
+
+  // Function to show share dialog
+  const showShareDialog = (file: MediaItem) => {
+    setSelectedFile(file);
+    setShowShareModal(true);
+    // Reset share selections
+    setFriends(
+      friends.map((friend) => ({
+        ...friend,
+        shareSelected: false,
+      }))
+    );
+  };
+
+  // Function to close share dialog
+  const closeShareDialog = () => {
+    setShowShareModal(false);
+    setSelectedFile(null);
+  };
+
+  // Function to handle file sharing
+  const handleShareFile = async () => {
+    if (!selectedFile) return;
+
+    const selectedUserIds = friends
+      .filter((friend) => friend.shareSelected)
+      .map((friend) => friend.id);
+
+    if (selectedUserIds.length === 0) return;
+
+    try {
+      await shareFileWithUsers({
+        fileId: selectedFile.id,
+        userIds: selectedUserIds,
+      });
+
+      // Reset selection state
+      setFriends(
+        friends.map((friend) => ({
+          ...friend,
+          shareSelected: false,
+        }))
+      );
+
+      closeShareDialog();
+    } catch (error) {
+      console.error("Error sharing file:", error);
+      toast.error("Failed to share file");
+    }
+  };
+
+  // Function to toggle friend share selection
+  const toggleShareSelection = (id: string) => {
+    setFriends(
+      friends.map((friend) =>
+        friend.id === id
+          ? { ...friend, shareSelected: !friend.shareSelected }
+          : friend
+      )
+    );
+  };
+
+  // Function to open media preview
+  const openMediaPreview = (media: MediaItem) => {
+    setSelectedMedia(media);
+    setShowMediaPreview(true);
+  };
+
+  // Function to close media preview
+  const closeMediaPreview = () => {
+    setShowMediaPreview(false);
+    setSelectedMedia(null);
+  };
+
   return (
     <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto h-full">
       <div className="p-4 border-b border-gray-200">
@@ -186,7 +576,7 @@ export default function GroupProfileInfo({
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700"
           >
-            <FaTimes size={20} />
+            <FaTimes className="h-5 w-5" />
           </button>
         </div>
 
@@ -202,7 +592,7 @@ export default function GroupProfileInfo({
               <FaUsers className="h-12 w-12 text-gray-400" />
             )}
           </div>
-          <h2 className="text-xl font-semibold">{groupName}</h2>
+          <h2 className="text-xl text-black font-semibold">{groupName}</h2>
           <p className="text-gray-500 text-sm">{groupDetails.description}</p>
         </div>
       </div>
@@ -216,7 +606,7 @@ export default function GroupProfileInfo({
           }
         >
           <div className="flex items-center">
-            <h3 className="font-medium">
+            <h3 className="font-medium text-black">
               Members{" "}
               <span className="text-gray-500">
                 ({groupDetails.memberCount})
@@ -248,28 +638,56 @@ export default function GroupProfileInfo({
             </button>
 
             <div className="space-y-3">
-              {groupDetails.members.map((member) => (
+              {membersWithStatus.map((member) => (
                 <div
                   key={member.id}
                   className="flex items-center justify-between"
                 >
                   <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
-                      {member.avatar ? (
-                        <img
-                          src={member.avatar}
-                          alt={member.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <FaUser className="h-4 w-4 text-gray-500" />
-                      )}
+                    <div className="relative mr-2">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+                        {member.avatar ? (
+                          <img
+                            src={member.avatar}
+                            alt={member.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <FaUser className="h-4 w-4 text-gray-500" />
+                        )}
+                      </div>
+                      {/* Status indicator */}
+                      <div
+                        className={`absolute bottom-0 right-0 h-2 w-2 rounded-full border border-white ${
+                          member.presenceStatus === "online"
+                            ? "bg-green-500"
+                            : member.presenceStatus === "busy"
+                            ? "bg-red-500"
+                            : member.presenceStatus === "away"
+                            ? "bg-yellow-500"
+                            : "bg-gray-400"
+                        }`}
+                      ></div>
                     </div>
-                    <div className="flex items-center">
-                      <span className="text-sm">{member.name}</span>
+                    <div className="flex flex-col">
+                      <span className="text-sm text-black">{member.name}</span>
+                      <span
+                        className="text-xs text-gray-500"
+                        style={{
+                          display:
+                            member.presenceStatus !== "online"
+                              ? "block"
+                              : "none",
+                        }}
+                      >
+                        {member.lastActive}
+                      </span>
+                      {member.presenceStatus === "online" && (
+                        <span className="text-xs text-green-500"> Online </span>
+                      )}
                       {member.isBlocked && (
                         <div className="ml-2 text-red-500" title="Blocked user">
-                          <FaBan size={12} />
+                          <FaBan className="h-3 w-3" />
                         </div>
                       )}
                     </div>
@@ -282,7 +700,7 @@ export default function GroupProfileInfo({
                         toggleMemberDropdown(member.id);
                       }}
                     >
-                      <FaEllipsisV size={12} />
+                      <FaEllipsisV className="h-3 w-3" />
                     </button>
                     {activeDropdown === member.id && (
                       <div
@@ -309,7 +727,7 @@ export default function GroupProfileInfo({
                             </>
                           ) : (
                             <>
-                              <FaBan className="inline-block mr-2" size={16} />
+                              <FaBan className="text-red-600 inline-block mr-2" />
                               <span className="text-red-600">Block User</span>
                             </>
                           )}
@@ -327,109 +745,125 @@ export default function GroupProfileInfo({
       {/* Media Section */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium">
-            Media{" "}
-            <span className="text-gray-500 text-sm">({mediaItems.length})</span>
+          <h3 className="font-medium text-black">
+            Media
+            <span className="text-gray-500 text-sm">
+              {" "}
+              ({groupMedia.length})
+            </span>
           </h3>
-          <a href="#" className="text-sm text-blue-500">
-            View All
-          </a>
-        </div>
-        <div className="grid grid-cols-4 gap-1">
-          {mediaItems.slice(0, 3).map((item) => (
-            <div
-              key={item.id}
-              className="aspect-square bg-gray-200 rounded-md overflow-hidden"
-            >
-              <img
-                src={item.url}
-                alt=""
-                className="w-full h-full object-cover"
-              />
-            </div>
-          ))}
-          <div className="aspect-square bg-gray-200 rounded-md overflow-hidden relative">
-            <img
-              src={mediaItems[3].url}
-              alt=""
-              className="w-full h-full object-cover opacity-60"
-            />
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 text-white font-semibold">
-              {mediaItems.length - 3}+
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Links Section */}
-      <div className="p-4 border-b border-gray-200">
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium">
-            Link{" "}
-            <span className="text-gray-500 text-sm">({linkItems.length})</span>
-          </h3>
-          <a href="#" className="text-sm text-blue-500">
-            View All
-          </a>
-        </div>
-        {linkItems.map((item) => (
-          <div
-            key={item.id}
-            className="bg-gray-100 rounded-md p-3 flex items-start mb-2"
+          <button
+            onClick={() => setShowMediaModal(true)}
+            className="text-sm text-blue-500 hover:underline"
           >
-            <div className="w-16 h-16 bg-gray-300 rounded-md overflow-hidden mr-3 flex-shrink-0">
-              <img
-                src={item.preview}
-                alt=""
-                className="w-full h-full object-cover"
-              />
+            View All
+          </button>
+        </div>
+
+        {/* Media Grid */}
+        <div className="relative">
+          {isLoadingMedia ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+              <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-            <div className="flex-1">
-              <a
-                href={item.url}
-                className="text-blue-500 text-sm line-clamp-2 mb-2 hover:underline"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {item.url}
-              </a>
-              <button className="text-gray-600 text-sm hover:text-gray-800">
-                View Message
-              </button>
+          ) : groupMedia.length === 0 ? (
+            <div className="py-4 text-center text-gray-500">No media files</div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {groupMedia.slice(0, 3).map((item) => (
+                <div
+                  key={item.id}
+                  className="aspect-square bg-gray-200 rounded-md overflow-hidden cursor-pointer relative group"
+                  onClick={() => openMediaPreview(item)}
+                >
+                  <img
+                    src={getThumbnailUrl(item.id)}
+                    alt=""
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(item.id);
+                      }}
+                      className="bg-white text-blue-500 p-2 rounded-full"
+                    >
+                      <FaDownload className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
 
       {/* Files Section */}
       <div className="p-4">
         <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium">
-            File{" "}
-            <span className="text-gray-500 text-sm">({fileItems.length})</span>
+          <h3 className="text-black font-medium">
+            File
+            <span className="text-gray-500 text-sm">
+              {" "}
+              ({groupFiles.length})
+            </span>
           </h3>
-          <a href="#" className="text-sm text-blue-500">
-            View All
-          </a>
-        </div>
-        {fileItems.map((item) => (
-          <div
-            key={item.id}
-            className="flex items-center py-3 border-b border-gray-100 last:border-0"
+          <button
+            onClick={() => setShowFilesModal(true)}
+            className="text-sm text-blue-500 hover:underline"
           >
-            <div className="w-10 h-10 bg-gray-200 rounded mr-3 flex-shrink-0 flex items-center justify-center">
-              <FaFile className="text-gray-500" />
+            View All
+          </button>
+        </div>
+
+        {/* File List */}
+        <div className="relative">
+          {isLoadingFiles ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+              <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium">{item.name}</p>
-              <div className="flex text-xs text-gray-500">
-                <span>{item.size}</span>
-                <span className="mx-2">•</span>
-                <span>{item.date}</span>
-              </div>
+          ) : groupFiles.length === 0 ? (
+            <div className="py-4 text-center text-gray-500">No files</div>
+          ) : (
+            <div className="space-y-3">
+              {groupFiles.slice(0, 3).map((file) => (
+                <div
+                  key={file.id}
+                  className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100"
+                >
+                  <div className="mr-3">
+                    <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
+                      <FaFile className="h-5 w-5 text-blue-500" />
+                    </div>
+                  </div>
+                  <div className="flex-grow min-w-0">
+                    <p className="text-sm font-medium truncate">{file.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {formatFileSize(file.size)}
+                    </p>
+                  </div>
+                  <div className="ml-2 flex">
+                    <button
+                      onClick={() => downloadFile(file.id)}
+                      className="p-1 text-gray-500 hover:text-blue-500"
+                      title="Download"
+                    >
+                      <FaDownload className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => showShareDialog(file)}
+                      className="p-1 text-gray-500 hover:text-blue-500"
+                      title="Share"
+                    >
+                      <FaShareAlt className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
 
       {/* Add Member Popup */}
@@ -517,6 +951,316 @@ export default function GroupProfileInfo({
               >
                 Add to Group
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Media Preview Modal */}
+      {showMediaPreview && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-70 z-50">
+          <div className="bg-white rounded-lg overflow-hidden shadow-lg max-w-3xl w-full">
+            <div className="relative">
+              <img
+                src={selectedMedia?.url}
+                alt={selectedMedia?.name}
+                className="w-full h-auto max-h-[70vh] object-contain"
+              />
+              <button
+                onClick={closeMediaPreview}
+                className="absolute top-3 right-3 p-2 rounded-full bg-white bg-opacity-80 hover:bg-opacity-100"
+              >
+                <X className="h-5 w-5 text-gray-800" />
+              </button>
+
+              {/* Navigation arrows */}
+              {hasPreviousMedia && (
+                <button
+                  onClick={() => navigateMedia("prev")}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black bg-opacity-50 hover:bg-opacity-70 text-white"
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
+              )}
+
+              {hasNextMedia && (
+                <button
+                  onClick={() => navigateMedia("next")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black bg-opacity-50 hover:bg-opacity-70 text-white"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+              )}
+            </div>
+
+            <div className="p-4 bg-white">
+              <h3 className="text-lg font-semibold">{selectedMedia?.name}</h3>
+              <p className="text-sm text-gray-500">{selectedMedia?.size}</p>
+
+              <div className="flex space-x-3 mt-3">
+                <button
+                  onClick={() =>
+                    selectedMedia && downloadFile(selectedMedia.id)
+                  }
+                  className="px-4 py-2 bg-blue-500 text-white rounded-md flex items-center hover:bg-blue-600"
+                >
+                  <FaDownload className="mr-2" />
+                  Download
+                </button>
+
+                <button
+                  onClick={() =>
+                    selectedMedia && showShareDialog(selectedMedia)
+                  }
+                  className="px-4 py-2 bg-green-500 text-white rounded-md flex items-center hover:bg-green-600"
+                >
+                  <FaShareAlt className="mr-2" />
+                  Share
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Dialog */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-medium text-lg">Share File</h3>
+              <button
+                onClick={closeShareDialog}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <FaTimes className="h-5 w-5" />
+              </button>
+            </div>
+
+            {selectedFile && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-md flex items-center">
+                <div className="mr-3">
+                  <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
+                    <FaFile className="h-5 w-5 text-blue-500" />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{selectedFile.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {formatFileSize(selectedFile.size)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Share with:
+              </label>
+              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                {friends.map((friend) => (
+                  <div
+                    key={friend.id}
+                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
+                      friend.shareSelected ? "bg-blue-50" : ""
+                    }`}
+                    onClick={() => toggleShareSelection(friend.id)}
+                  >
+                    <div className="flex items-center">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
+                        {friend.avatar ? (
+                          <img
+                            src={friend.avatar}
+                            alt={friend.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <FaUser className="h-4 w-4 text-gray-500" />
+                        )}
+                      </div>
+                      <span className="text-sm">{friend.name}</span>
+                    </div>
+                    {friend.shareSelected && (
+                      <div className="h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
+                        <FaCheck className="h-2 w-2 text-white" />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleShareFile}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                disabled={!friends.some((friend) => friend.shareSelected)}
+              >
+                Share
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Media Modal */}
+      {showMediaModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="font-medium text-lg">Media Files</h3>
+              <button
+                onClick={() => setShowMediaModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <FaTimes className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div
+              className="overflow-y-auto p-4"
+              style={{ maxHeight: "calc(90vh - 8rem)" }}
+            >
+              {isLoadingMoreMedia && (
+                <div className="flex justify-center py-4">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
+                {groupMedia.map((item) => (
+                  <div
+                    key={item.id}
+                    className="aspect-square bg-gray-200 rounded-md overflow-hidden cursor-pointer relative group"
+                    onClick={() => openMediaPreview(item)}
+                  >
+                    <img
+                      src={getThumbnailUrl(item.id)}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadFile(item.id);
+                        }}
+                        className="bg-white text-blue-500 p-2 rounded-full"
+                      >
+                        <FaDownload className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Load more button */}
+              {mediaPagination.has_more_pages && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={() => {
+                      setIsLoadingMoreMedia(true);
+                      // Mock loading more media
+                      setTimeout(() => {
+                        setIsLoadingMoreMedia(false);
+                        toast.success("More media loaded");
+                      }, 1000);
+                    }}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    disabled={isLoadingMoreMedia}
+                  >
+                    {isLoadingMoreMedia ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Files Modal */}
+      {showFilesModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="font-medium text-lg">Files</h3>
+              <button
+                onClick={() => setShowFilesModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <FaTimes className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div
+              className="overflow-y-auto p-4"
+              style={{ maxHeight: "calc(90vh - 8rem)" }}
+            >
+              {isLoadingMoreFiles && (
+                <div className="flex justify-center py-4">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
+
+              {/* File list for modal */}
+              <div className="space-y-3">
+                {groupFiles.map((file) => (
+                  <div
+                    key={file.id}
+                    className="flex items-center bg-gray-50 p-3 rounded-md hover:bg-gray-100"
+                  >
+                    <div className="mr-3">
+                      <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
+                        <FaFile className="h-5 w-5 text-blue-500" />
+                      </div>
+                    </div>
+                    <div className="flex-grow min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(file.size)}
+                      </p>
+                    </div>
+                    <div className="ml-2 flex">
+                      <button
+                        onClick={() => downloadFile(file.id)}
+                        className="p-2 text-gray-500 hover:text-blue-500"
+                        title="Download"
+                      >
+                        <FaDownload className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => showShareDialog(file)}
+                        className="p-2 text-gray-500 hover:text-blue-500"
+                        title="Share"
+                      >
+                        <FaShareAlt className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Load more button */}
+              {filesPagination.has_more_pages && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={() => {
+                      setIsLoadingMoreFiles(true);
+                      // Mock loading more files
+                      setTimeout(() => {
+                        setIsLoadingMoreFiles(false);
+                        toast.success("More files loaded");
+                      }, 1000);
+                    }}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                    disabled={isLoadingMoreFiles}
+                  >
+                    {isLoadingMoreFiles ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

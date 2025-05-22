@@ -31,8 +31,8 @@ export function RegisterForm() {
     setLoading(true);
 
     try {
-      // Send registration request to your backend with the complete payload
-      const response = await fetch("http://localhost:8081/api/auth/register", {
+      // Use the proxy API instead of calling the backend directly
+      const response = await fetch("/api/proxy/auth/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -56,7 +56,9 @@ export function RegisterForm() {
         toast.success("Registration successful! Please login.");
         router.push("/"); // Redirect to login page
       } else {
-        toast.error(data.message || "Registration failed. Please try again.");
+        toast.error(
+          data.message || data.error || "Registration failed. Please try again."
+        );
       }
     } catch (error) {
       toast.error("Something went wrong. Please try again.");

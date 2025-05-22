@@ -8,7 +8,7 @@ import {
   QueryClientContext,
 } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
-import { api } from "@/utils/api";
+import { useAuth } from "@/hooks/auth/useAuth";
 
 export interface UserInfo {
   about_me: string;
@@ -49,25 +49,103 @@ const useUserInfoQuery = () => {
   const { data: session, status } = useSession();
   const access_token = session?.access_token as string;
 
+  console.log("Session status:", status);
+  console.log("Access token exists:", !!access_token);
+
   return useQuery<UserInfo>({
     queryKey: ["userInfo"],
     queryFn: async () => {
       if (!access_token || status !== "authenticated") {
+        console.error("Not authenticated in useUserInfoQuery");
         throw new Error("Not authenticated");
       }
 
       try {
-        // Use the api utility for consistent error handling
-        return await api.get("auth/user/info");
+        console.log("Fetching user info from API...");
+
+        // Try multiple endpoints to get user info
+        const endpoints = [
+          `/api/proxy/auth/user/info`,
+          `/api/proxy/auth/me`,
+          `/api/proxy/auth/user`,
+          `/api/proxy/auth/profile`,
+        ];
+
+        let response = null;
+        let data = null;
+        let endpointUsed = "";
+
+        // Try each endpoint until we get a successful response
+        for (const endpoint of endpoints) {
+          try {
+            console.log(`Trying to fetch user info from ${endpoint}`);
+            const resp = await fetch(endpoint, {
+              headers: {
+                Authorization: `Bearer ${access_token}`,
+              },
+              credentials: "include",
+            });
+
+            if (resp.ok) {
+              response = resp;
+              endpointUsed = endpoint;
+              break;
+            }
+          } catch (err) {
+            console.warn(`Error fetching from ${endpoint}:`, err);
+          }
+        }
+
+        if (!response) {
+          throw new Error("Failed to fetch user info from any endpoint");
+        }
+
+        // Parse response
+        const rawData = await response.json();
+        console.log(
+          `User info fetched successfully from ${endpointUsed}:`,
+          rawData
+        );
+
+        // Extract user data from the response, considering different response structures
+        const userData =
+          rawData.user || rawData.data?.user || rawData.data || rawData;
+
+        // Create a properly formatted UserInfo object
+        const userInfo: UserInfo = {
+          about_me: userData.about_me || "",
+          created_at: userData.created_at || new Date().toISOString(),
+          email: userData.email || "",
+          first_name: userData.first_name || "",
+          last_name: userData.last_name || "",
+          last_login: userData.last_login || new Date().toISOString(),
+          phone_number: userData.phone_number || "",
+          // Extract profile picture URL from multiple possible fields
+          profile_picture_url:
+            userData.profile_picture_url ||
+            userData.avatar ||
+            userData.image ||
+            userData.profilePictureUrl ||
+            userData.avatarUrl ||
+            "",
+          status: userData.status || "active",
+          user_id: userData.user_id || userData.id || "",
+          username: userData.username || "",
+        };
+
+        console.log("Processed user info:", userInfo);
+        return userInfo;
       } catch (error: unknown) {
         const errorMessage =
           error instanceof Error ? error.message : "An unknown error occurred";
+        console.error("User info fetch error:", errorMessage);
         throw new Error(`Failed to fetch user info: ${errorMessage}`);
       }
     },
     enabled: !!access_token && status === "authenticated",
     staleTime: 1000 * 60 * 5, // 5 minutes
-    retry: 1,
+    refetchOnWindowFocus: false,
+    refetchOnMount: true,
   });
 };
 
@@ -93,12 +171,13 @@ export function UserInfoProvider({ children }: { children: ReactNode }) {
 function UserInfoProviderInner({ children }: { children: ReactNode }) {
   const { data: userInfo, isLoading, isError, refetch } = useUserInfoQuery();
   const queryClient = useContext(QueryClientContext);
+  const { updateProfile } = useAuth();
 
   // Function to update user profile
   const updateUserProfile = async (profileData: UpdateUserProfileData) => {
     try {
-      // Call the API to update profile
-      await api.put("users/profile", profileData);
+      // Call the useAuth hook's updateProfile function instead of api
+      await updateProfile(profileData);
 
       // After successful update, invalidate the user info query to refetch
       if (queryClient) {

@@ -13,7 +13,7 @@ import {
   FaSignOutAlt,
   FaUserCog,
 } from "react-icons/fa";
-import { ProfilePopup } from "./profile-popup";
+import { ProfilePopup } from "../profile-popup";
 import { UserInfoProvider } from "@/components/auth/user-info-provider";
 
 export function Sidebar() {

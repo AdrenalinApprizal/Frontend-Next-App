@@ -1,4 +1,4 @@
-import { FriendDetail } from "@/components/chat/friend-detail";
+import { ChatArea } from "@/components/chat/chat-area";
 
 export default function FriendPage() {
   // Data mockup langsung tanpa menggunakan params.id
@@ -8,5 +8,11 @@ export default function FriendPage() {
     status: "online",
   };
 
-  return <FriendDetail friendId={mockFriend.id} friendName={mockFriend.name} />;
+  return (
+    <ChatArea
+      recipientId={mockFriend.id}
+      recipientName={mockFriend.name}
+      isGroup={false}
+    />
+  );
 }
