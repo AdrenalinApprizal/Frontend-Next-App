@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Search,
   UserPlus,
@@ -8,16 +8,18 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  MessageSquare,
 } from "lucide-react";
-import { FaUser, FaTimes } from "react-icons/fa";
+import { FaUser, FaTimes, FaUserPlus } from "react-icons/fa";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
 import { useFriendship } from "@/hooks/auth/useFriends";
-import { usePresence } from "@/hooks/presence/usePresence";
+import usePresence, { PresenceStatus } from "@/hooks/presence/usePresence";
 import { useMessages } from "@/hooks/messages/useMessages";
 import { NotificationDropdown } from "@/components/notification-dropdown";
-import { SafeFriendRequest } from "@/components/chat/safe-friend-request";
+import { FriendRequest } from "@/components/chat/friend-request";
+import { formatMessageTimestamp } from "@/utils/timestampHelper";
 
 export default function FriendsList() {
   const pathname = usePathname();
@@ -27,6 +29,9 @@ export default function FriendsList() {
   const [showAddFriendPopup, setShowAddFriendPopup] = useState(false);
   const [addByUsername, setAddByUsername] = useState("");
   const [isAddingByUsername, setIsAddingByUsername] = useState(false);
+  const [searchedFriends, setSearchedFriends] = useState<any[]>([]);
+  const [isSearchingFriends, setIsSearchingFriends] = useState(false);
+  const searchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     loading: isLoading,
@@ -38,6 +43,7 @@ export default function FriendsList() {
     addFriendByUsername,
     acceptFriendRequest,
     rejectFriendRequest,
+    searchFriends,
   } = useFriendship();
 
   const presence = usePresence();
@@ -67,21 +73,15 @@ export default function FriendsList() {
           )
         );
 
-        // Debug: Log friend requests after fetching
-        console.log(
-          "[FriendsList Debug] Friend requests after fetch:",
-          friendRequests
-        );
-        console.log(
-          "[FriendsList Debug] Friend requests count:",
-          friendRequests?.length || 0
-        );
-
+        // If there are any friend requests, automatically show them
         if (friendRequests?.length > 0) {
-          console.log(
-            "[FriendsList Debug] Friend requests sample:",
-            friendRequests[0]
-          );
+          setRequestsHidden(false);
+          console.log("[FriendsList] Showing friend requests section");
+        }
+
+        // Initialize presence status for all friends
+        if (friends?.length > 0) {
+          updateFriendsStatus();
         }
       } catch (err) {
         console.error("[FriendsList] Error during initial data fetch:", err);
@@ -89,40 +89,42 @@ export default function FriendsList() {
       }
     };
 
+    // Connect to presence WebSocket when component mounts
+    presence.connectWebSocket();
+    presence.setInitialStatus();
+
     fetchInitialData();
+
+    // Set up interval to refresh friend statuses periodically
+    const statusInterval = setInterval(() => {
+      updateFriendsStatus();
+    }, 60000); // Every minute
+
+    // Cleanup: Update status to offline when component unmounts
+    return () => {
+      presence.updateStatus("offline");
+      // Don't disconnect the WebSocket here since other components might need it
+      clearInterval(statusInterval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Remove dependencies to prevent infinite loop
 
-  // Add debugging useEffect for rendering updates
-  useEffect(() => {
-    // Debug logging for renders
-    console.log(
-      "[FriendsList Debug] Rendering friend requests:",
-      friendRequests
-    );
-    console.log(
-      "[FriendsList Debug] friendRequests length:",
-      friendRequests?.length
-    );
-
-    if (friendRequests?.length > 0) {
-      console.log(
-        "[FriendsList Debug] Filtered incoming requests:",
-        friendRequests.filter((request) => request?.direction === "incoming")
+  // Function to update all friends' status
+  const updateFriendsStatus = async () => {
+    try {
+      if (friends?.length > 0) {
+        // Get status for each friend individually
+        friends.forEach((friend) => {
+          presence.getUserStatus(friend.id);
+        });
+      }
+    } catch (err) {
+      console.error(
+        "[FriendsList] Error fetching friends' presence status:",
+        err
       );
-
-      // Log sample request for debugging
-      friendRequests.forEach((request, index) => {
-        if (index < 3) {
-          // Only log first 3 to avoid flooding console
-          console.log(
-            `[FriendsList Debug] Processing request ${index}:`,
-            request
-          );
-        }
-      });
     }
-  }, [friendRequests]);
+  };
 
   const handleAcceptRequest = async (friendshipId: string) => {
     try {
@@ -168,6 +170,35 @@ export default function FriendsList() {
   // Handle friend selection
   const handleFriendSelect = async (friendId: string) => {
     try {
+      // Find the friend data to get the name
+      const friend = sortedFriends.find((f) => f.id === friendId);
+
+      // Construct friend name with multiple fallbacks
+      let friendName = "";
+      if (friend) {
+        if (friend.name) {
+          friendName = friend.name;
+        } else if (friend.first_name && friend.last_name) {
+          friendName = `${friend.first_name} ${friend.last_name}`;
+        } else if (friend.first_name) {
+          friendName = friend.first_name;
+        } else if (friend.display_name) {
+          friendName = friend.display_name;
+        } else if (friend.full_name) {
+          friendName = friend.full_name;
+        } else if (friend.username) {
+          friendName = friend.username;
+        }
+      }
+
+      // Debug logging
+      console.log("🔍 [FriendsList] handleFriendSelect called:", {
+        friendId,
+        friend,
+        friendName,
+        sortedFriendsCount: sortedFriends.length,
+      });
+
       // Fetch messages, history, and unread count when a friend is selected
       await getMessages(friendId);
       await getMessageHistory({
@@ -176,21 +207,118 @@ export default function FriendsList() {
       });
       await getUnreadCount();
 
-      // Navigate to the chat with this friend
-      router.push(`/chat/messages/${friendId}`);
+      // Navigate to the chat with this friend, including name parameter if available
+      const url = `/chat/messages/${friendId}${
+        friendName ? `?name=${encodeURIComponent(friendName)}` : ""
+      }`;
+      console.log("🚀 [FriendsList] Navigating to URL:", url);
+      router.push(url);
     } catch (err) {
       console.error("[FriendsList] Error loading messages:", err);
       toast.error("Failed to load messages");
     }
   };
 
-  const filteredFriends = friends.filter((friend) =>
-    friend.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Debounced search function for friends
+  const searchFriendsDebounced = () => {
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
 
-  const sortedFriends = [...filteredFriends].sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
+    if (!searchQuery.trim()) {
+      setSearchedFriends([]);
+      return;
+    }
+
+    setIsSearchingFriends(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        // Try to use the API search if available
+        const results = await searchFriends(searchQuery);
+        setSearchedFriends(results);
+      } catch (err) {
+        console.error("[FriendsList] Error searching friends:", err);
+        setSearchedFriends([]);
+      } finally {
+        setIsSearchingFriends(false);
+      }
+    }, 300);
+  };
+
+  // Watch for changes in the search query
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      searchFriendsDebounced();
+    } else {
+      setSearchedFriends([]);
+    }
+
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
+  // Get friend presence status
+  const getFriendStatus = (friendId: string): PresenceStatus => {
+    // Get status with fallback to "offline" if undefined
+    return presence.getStatus(friendId) || "offline";
+  };
+
+  // Get last active time
+  const getLastActive = (friendId: string): string | null => {
+    return presence.getLastActive(friendId);
+  };
+
+  // Format last active time using centralized helper
+  const formatLastActive = (timestamp: string | null): string => {
+    if (!timestamp) return "Offline";
+    return formatMessageTimestamp({ timestamp, format: "relative" });
+  };
+
+  // Regular filtered friends (client-side filtering)
+  const filteredFriends =
+    friends?.filter((friend) =>
+      friend.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ) || [];
+
+  // Use either API search results or filtered friends
+  const displayedFriends =
+    searchedFriends.length > 0 ? searchedFriends : filteredFriends;
+
+  // Sort friends by online status first, then alphabetically
+  const sortedFriends = [...displayedFriends].sort((a, b) => {
+    // Get presence status
+    const statusA = getFriendStatus(a.id);
+    const statusB = getFriendStatus(b.id);
+
+    // Online users first
+    if (statusA === "online" && statusB !== "online") return -1;
+    if (statusB === "online" && statusA !== "online") return 1;
+
+    // Then sort alphabetically
+    return a.name.localeCompare(b.name);
+  });
+
+  // Filter only incoming friend requests (more Vue-like approach)
+  const incomingRequests =
+    friendRequests?.filter((request) => {
+      if (!request) return false;
+
+      // Check if it's an incoming request based on different API response formats
+      if (request.direction === "incoming") return true;
+      if (request.type === "received") return true;
+      if (
+        request.status === "pending" &&
+        request.recipient_id !== request.requestor_id
+      )
+        return true;
+
+      // Default case
+      return false;
+    }) || [];
 
   return (
     <div className="h-full flex flex-col p-6 bg-white">
@@ -223,34 +351,50 @@ export default function FriendsList() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
+        {isSearchingFriends && (
+          <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+            <div className="animate-spin h-4 w-4 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex flex-col items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          <p className="mt-2 text-sm text-gray-500">Loading...</p>
+          <p className="mt-2 text-sm text-gray-500">Loading friends...</p>
         </div>
       ) : error ? (
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-red-500">{error}</p>
+          <div className="bg-red-50 p-4 rounded-lg border border-red-200 text-center">
+            <p className="text-red-500 font-medium">{error}</p>
+            <button
+              className="mt-3 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm transition-colors"
+              onClick={() => {
+                getFriends();
+                getFriendRequests();
+              }}
+            >
+              Retry
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex-1 overflow-auto">
-          {/* Debug logs moved to useEffect to avoid void return in JSX */}
-
-          {friendRequests?.length > 0 && (
-            <div className="mb-5">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="font-semibold text-gray-800 text-sm flex items-center">
+          {/* Friend Requests Section - Collapsible */}
+          {incomingRequests.length > 0 && (
+            <div className="mb-6 bg-blue-50 rounded-lg overflow-hidden border border-blue-100">
+              <div
+                className="flex justify-between items-center p-3 cursor-pointer bg-blue-100 hover:bg-blue-200 transition-colors"
+                onClick={() => setRequestsHidden(!requestsHidden)}
+              >
+                <h2 className="font-medium text-blue-800 text-sm flex items-center">
+                  <FaUserPlus className="mr-2 h-3.5 w-3.5" />
                   Friend Requests
-                  <span className="ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
-                    {friendRequests.length}
+                  <span className="ml-2 px-1.5 py-0.5 bg-blue-500 text-white text-xs rounded-full">
+                    {incomingRequests.length}
                   </span>
                 </h2>
-                <button
-                  onClick={() => setRequestsHidden(!requestsHidden)}
-                  className="text-gray-500 hover:text-gray-700 p-1"
-                >
+                <button className="text-blue-700 hover:text-blue-900 p-1">
                   {requestsHidden ? (
                     <ChevronDown size={16} />
                   ) : (
@@ -260,157 +404,176 @@ export default function FriendsList() {
               </div>
 
               {!requestsHidden && (
-                <div className="space-y-2">
-                  {/* Debug logs moved to avoid void return in JSX */}
-
-                  {friendRequests
-                    .filter((request) => {
-                      if (!request) return false;
-
-                      // Get the user/friend data, which might be in different fields
-                      const userData = request.user || request.friend || {};
-
-                      // Handle multiple API response formats for determining incoming requests
-                      const isIncoming = request.direction === "incoming";
-                      const isPending = request.status === "pending";
-                      const isReceived = request.type === "received";
-
-                      // Check if current user is the recipient (not the requestor)
-                      const isRecipient =
-                        request.recipient_id !== request.requestor_id;
-
-                      // If it has none of these properties, default to showing it
-                      if (
-                        request.direction === undefined &&
-                        request.status === undefined &&
-                        request.type === undefined &&
-                        request.recipient_id === undefined
-                      ) {
-                        return true;
+                <div className="p-3 space-y-2 bg-blue-50">
+                  {incomingRequests.map((request) => (
+                    <FriendRequest
+                      key={
+                        request.friendship_id ||
+                        request.id ||
+                        `request-${Math.random()}`
                       }
-
-                      return (
-                        isIncoming || isPending || isReceived || isRecipient
-                      );
-                    })
-                    .map((request) => (
-                      <SafeFriendRequest
-                        key={
-                          request.friendship_id ||
-                          request.id ||
-                          `request-${Math.random()}`
-                        }
-                        request={request}
-                        onAccept={handleAcceptRequest}
-                        onReject={handleRejectRequest}
-                      />
-                    ))}
+                      request={request}
+                      onAccept={handleAcceptRequest}
+                      onReject={handleRejectRequest}
+                    />
+                  ))}
                 </div>
               )}
             </div>
           )}
 
-          {sortedFriends.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6">
-              <FaUser className="h-12 w-12 text-gray-300 mb-3" />
-              <p className="text-gray-500 font-medium">
-                {searchQuery
-                  ? `No results for "${searchQuery}"`
-                  : "No friends yet"}
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                Add friends to start chatting
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {sortedFriends.map((friend) => (
-                <div
-                  key={friend.id}
-                  onClick={() => handleFriendSelect(friend.id)}
-                  className={`flex items-center p-4 rounded-lg transition-colors cursor-pointer ${
-                    pathname === `/chat/messages/${friend.id}`
-                      ? "bg-blue-50 border border-blue-100"
-                      : "hover:bg-gray-50"
-                  }`}
-                >
-                  {/* Friend avatar */}
-                  <div
-                    className="relative mr-3"
-                    key={`avatar-wrapper-${friend.id}`}
-                  >
-                    <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
-                      {friend.avatar ? (
-                        <img
-                          key={`avatar-${friend.id}`}
-                          src={friend.avatar}
-                          alt={friend.name}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <FaUser
-                          key={`icon-${friend.id}`}
-                          className="h-5 w-5 text-gray-500"
-                        />
-                      )}
-                    </div>
-                    {/* Online status indicator */}
-                    {presence.getStatus(friend.id) === "online" && (
-                      <div
-                        key={`status-${friend.id}`}
-                        className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-white"
-                      ></div>
-                    )}
-                  </div>
+          {/* Friends List Section */}
+          <div>
+            <h2 className="font-medium text-gray-500 text-xs uppercase tracking-wider mb-3">
+              {getFriendStatus("online") === "online" ? "Online" : "All"}{" "}
+              Friends
+              {sortedFriends.length > 0 && (
+                <span className="ml-2 text-gray-400">
+                  ({sortedFriends.length})
+                </span>
+              )}
+            </h2>
 
-                  {/* Friend info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start">
-                      <h3 className="font-medium text-gray-900 truncate text-sm">
-                        {friend.name}
-                      </h3>
-                      <span className="text-xs text-gray-500 ml-1 whitespace-nowrap">
-                        {friend.last_seen ? friend.last_seen : ""}
-                      </span>
+            {sortedFriends.length === 0 ? (
+              <div className="h-64 flex flex-col items-center justify-center text-center p-6 bg-gray-50 rounded-lg border border-gray-100">
+                <FaUser className="h-12 w-12 text-gray-300 mb-3" />
+                <p className="text-gray-500 font-medium">
+                  {searchQuery
+                    ? `No results for "${searchQuery}"`
+                    : "No friends yet"}
+                </p>
+                <p className="text-sm text-gray-400 mt-2">
+                  Add friends to start chatting
+                </p>
+                <button
+                  onClick={() => setShowAddFriendPopup(true)}
+                  className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md flex items-center text-sm"
+                >
+                  <UserPlus size={14} className="mr-2" />
+                  Add Friend
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {sortedFriends.map((friend) => (
+                  <div
+                    key={friend.id}
+                    onClick={() => handleFriendSelect(friend.id)}
+                    className={`flex items-center p-3 rounded-xl transition-all cursor-pointer ${
+                      pathname === `/chat/messages/${friend.id}`
+                        ? "bg-blue-50 border border-blue-200 shadow-sm"
+                        : "hover:bg-gray-50 border border-transparent"
+                    }`}
+                  >
+                    {/* Friend avatar with status indicator */}
+                    <div className="relative mr-3">
+                      <div className="h-11 w-11 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
+                        {friend.avatar ? (
+                          <img
+                            src={friend.avatar}
+                            alt={friend.name}
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              // If image fails to load, fall back to icon
+                              (e.target as HTMLImageElement).style.display =
+                                "none";
+                              (
+                                e.currentTarget.parentElement as HTMLElement
+                              ).classList.add("avatar-error");
+                              (
+                                e.currentTarget.parentElement as HTMLElement
+                              ).innerHTML +=
+                                '<svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg>';
+                            }}
+                          />
+                        ) : (
+                          <FaUser className="h-5 w-5 text-gray-500" />
+                        )}
+                      </div>
+
+                      {/* Status indicator - simplified for online/offline */}
+                      {(() => {
+                        const status = getFriendStatus(friend.id);
+                        const statusClass =
+                          status === "online" ? "bg-green-500" : "bg-gray-400";
+
+                        return status === "online" ? (
+                          <div
+                            className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full ${statusClass} border-2 border-white`}
+                          ></div>
+                        ) : null;
+                      })()}
                     </div>
-                    <div className="flex justify-between items-center mt-1">
-                      <p className="text-xs text-gray-500 truncate max-w-[80%]">
-                        {friend.status ||
-                          (presence.getStatus(friend.id) === "online"
-                            ? "Online"
-                            : "Offline")}
-                      </p>
+
+                    {/* Friend info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {friend.name}
+                        </h3>
+                        <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
+                          {friend.last_active
+                            ? formatLastActive(friend.last_active)
+                            : formatLastActive(getLastActive(friend.id))}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center mt-0.5">
+                        {/* Status text */}
+                        <p className="text-xs text-gray-500 truncate flex-1">
+                          {getFriendStatus(friend.id) === "online"
+                            ? "Active now"
+                            : friend.username
+                            ? `@${friend.username}`
+                            : "offline"}
+                        </p>
+
+                        {/* Unread count badge */}
+                        {friend.unread_count && friend.unread_count > 0 && (
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 ml-2 text-xs font-medium leading-none text-white bg-red-500 rounded-full">
+                            {friend.unread_count}
+                          </span>
+                        )}
+
+                        {/* Message icon for current chat */}
+                        {pathname === `/chat/messages/${friend.id}` && (
+                          <MessageSquare
+                            size={14}
+                            className="text-blue-500 ml-1"
+                          />
+                        )}
+                      </div>
                     </div>
-                    {/* Show unread count if available */}
-                    {friend.unread_count && friend.unread_count > 0 && (
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 ml-2 text-xs font-medium leading-none text-red-100 bg-red-600 rounded-full">
-                        {friend.unread_count}
-                      </span>
-                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Add Friend Popup */}
+      {/* Add Friend Popup - Enhanced styling */}
       {showAddFriendPopup && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl transform transition-all">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold text-gray-800">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-2xl transform transition-all">
+            <div className="flex justify-between items-center mb-5">
+              <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+                <FaUserPlus className="mr-2 h-5 w-5 text-blue-500" />
                 Add a Friend
               </h2>
               <button
                 type="button"
                 onClick={() => setShowAddFriendPopup(false)}
                 className="p-2 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+                aria-label="Close"
               >
                 <FaTimes size={16} />
               </button>
             </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              You can add a friend with their username. It's case sensitive!
+            </p>
 
             <form
               onSubmit={(e) => {
@@ -419,35 +582,51 @@ export default function FriendsList() {
                   handleAddFriendByUsername();
                 }
               }}
+              className="space-y-4"
             >
-              <div className="mb-4">
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Username
                 </label>
-                <input
-                  type="text"
-                  value={addByUsername}
-                  onChange={(e) => setAddByUsername(e.target.value)}
-                  placeholder="Enter username"
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                  disabled={isAddingByUsername}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={addByUsername}
+                    onChange={(e) => setAddByUsername(e.target.value)}
+                    placeholder="Enter friend's username"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all pl-10"
+                    disabled={isAddingByUsername}
+                  />
+                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                    <FaUser className="h-4 w-4 text-gray-400" />
+                  </div>
+                </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-end space-x-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddFriendPopup(false)}
-                  className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded transition-colors mr-2"
+                  className="px-4 py-2.5 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                 >
-                  Close
+                  Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-300 flex items-center"
                   disabled={!addByUsername.trim() || isAddingByUsername}
                 >
-                  {isAddingByUsername ? "Adding..." : "Add"}
+                  {isAddingByUsername ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent mr-2"></div>
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus size={16} className="mr-2" />
+                      Send Request
+                    </>
+                  )}
                 </button>
               </div>
             </form>

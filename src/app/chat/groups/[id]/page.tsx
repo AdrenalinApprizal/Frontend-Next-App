@@ -1,4 +1,4 @@
-import { GroupDetail } from "@/components/chat/group-detail";
+import { GroupDetail } from "@/components/chat/group-chat-area";
 
 export default function GroupPage() {
   // Data mockup langsung tanpa menggunakan params.id
@@ -8,5 +8,5 @@ export default function GroupPage() {
     memberCount: 8,
   };
 
-  return <GroupDetail groupId={mockGroup.id} groupName={mockGroup.name} />;
+  return <GroupDetail groupId={mockGroup.id} />;
 }

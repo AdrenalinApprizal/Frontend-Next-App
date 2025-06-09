@@ -105,20 +105,153 @@ export function useWebSocket(
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
   const reconnectIntervalRef = useRef(2000); // Start with 2 seconds
-  const messageQueueRef = useRef<WebSocketMessage[]>([]);
+
+  // Enhanced message queue with retry logic and persistence
+  const messageQueueRef = useRef<
+    Array<{
+      message: WebSocketMessage;
+      id: string;
+      timestamp: number;
+      retryCount: number;
+      maxRetries: number;
+    }>
+  >([]);
+
   const activeSubscriptionsRef = useRef<string[]>([]);
   const authCheckInProgressRef = useRef(false);
 
+  // Message deduplication tracking
+  const processedMessageIdsRef = useRef<Set<string>>(new Set());
+  const maxProcessedMessages = 1000; // Keep track of last 1000 message IDs
+
+  // Connection state persistence
+  const connectionStateRef = useRef({
+    lastConnectedTime: null as number | null,
+    totalReconnects: 0,
+    connectionDuration: 0,
+  });
+
+  // Helper function to generate unique message ID
+  const generateMessageId = useCallback(() => {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }, []);
+
+  // Enhanced message queue helpers with retry logic
+  const addToMessageQueue = useCallback(
+    (message: WebSocketMessage, maxRetries: number = 3) => {
+      const queueItem = {
+        message,
+        id: generateMessageId(),
+        timestamp: Date.now(),
+        retryCount: 0,
+        maxRetries,
+      };
+      messageQueueRef.current = [...messageQueueRef.current, queueItem];
+
+      // Persist queue to localStorage for recovery after page reload
+      try {
+        localStorage.setItem(
+          "websocket_message_queue",
+          JSON.stringify(messageQueueRef.current)
+        );
+      } catch (error) {
+        console.warn("[WebSocket] Failed to persist message queue:", error);
+      }
+    },
+    [generateMessageId]
+  );
+
+  // Process queued messages with retry logic
+  const processMessageQueue = useCallback(() => {
+    if (
+      !isMessagesConnected ||
+      !socketMessagesRef.current ||
+      messageQueueRef.current.length === 0
+    ) {
+      return;
+    }
+
+    const processedIds: string[] = [];
+    const failedMessages: typeof messageQueueRef.current = [];
+
+    messageQueueRef.current.forEach((queueItem) => {
+      try {
+        socketMessagesRef.current!.send(JSON.stringify(queueItem.message));
+        processedIds.push(queueItem.id);
+        console.log(
+          `[WebSocket Messages] Successfully sent queued message: ${queueItem.id}`
+        );
+      } catch (error) {
+        console.error(
+          `[WebSocket Messages] Failed to send queued message ${queueItem.id}:`,
+          error
+        );
+
+        // Increment retry count
+        queueItem.retryCount++;
+
+        // If we haven't exceeded max retries, keep the message in queue
+        if (queueItem.retryCount < queueItem.maxRetries) {
+          failedMessages.push(queueItem);
+        } else {
+          console.warn(
+            `[WebSocket Messages] Dropping message ${queueItem.id} after ${queueItem.maxRetries} retries`
+          );
+        }
+      }
+    });
+
+    // Update queue with only failed messages that can still be retried
+    messageQueueRef.current = failedMessages;
+
+    // Update persisted queue
+    try {
+      localStorage.setItem(
+        "websocket_message_queue",
+        JSON.stringify(messageQueueRef.current)
+      );
+    } catch (error) {
+      console.warn(
+        "[WebSocket] Failed to persist updated message queue:",
+        error
+      );
+    }
+
+    if (processedIds.length > 0) {
+      console.log(
+        `[WebSocket Messages] Processed ${processedIds.length} queued messages`
+      );
+    }
+  }, [isMessagesConnected]);
+
+  // Restore message queue from localStorage on component mount
+  const restoreMessageQueue = useCallback(() => {
+    try {
+      const storedQueue = localStorage.getItem("websocket_message_queue");
+      if (storedQueue) {
+        const parsedQueue = JSON.parse(storedQueue);
+        // Only restore messages that are less than 1 hour old
+        const oneHourAgo = Date.now() - 60 * 60 * 1000;
+        messageQueueRef.current = parsedQueue.filter(
+          (item: any) =>
+            item.timestamp > oneHourAgo && item.retryCount < item.maxRetries
+        );
+        console.log(
+          `[WebSocket Messages] Restored ${messageQueueRef.current.length} messages from queue`
+        );
+      }
+    } catch (error) {
+      console.warn("[WebSocket] Failed to restore message queue:", error);
+      messageQueueRef.current = [];
+    }
+  }, []);
+
   // Helper to update the combined connection state
   const updateConnectedState = useCallback(() => {
-    setIsConnected(isMessagesConnected && isPresenceConnected);
-    setIsConnecting(isMessagesConnecting || isPresenceConnecting);
-  }, [
-    isMessagesConnected,
-    isPresenceConnected,
-    isMessagesConnecting,
-    isPresenceConnecting,
-  ]);
+    // Consider connected if messages WebSocket is connected (presence is optional)
+    setIsConnected(isMessagesConnected);
+    setIsConnecting(isMessagesConnecting);
+  }, [isMessagesConnected, isMessagesConnecting]);
 
   // Get the appropriate WebSocket URL for messages
   const getMessagesWebSocketUrl = useCallback((): string => {
@@ -126,7 +259,7 @@ export function useWebSocket(
       throw new Error("No authentication token available");
     }
 
-    // Use the proxy API path instead of direct connection for more reliable behavior
+    // Use the Next.js API route for WebSocket connections
     const protocol =
       typeof window !== "undefined" && window.location.protocol === "https:"
         ? "wss:"
@@ -134,8 +267,8 @@ export function useWebSocket(
     const host =
       typeof window !== "undefined" ? window.location.host : "localhost:3000";
 
-    // Use the API proxy route instead of connecting directly
-    return `${protocol}//${host}/api/proxy/messages/ws?token=${session.access_token}`;
+    // Use the dedicated WebSocket API route
+    return `${protocol}//${host}/api/messages/ws?token=${session.access_token}`;
   }, [session?.access_token]);
 
   // Get the appropriate WebSocket URL for presence
@@ -144,16 +277,10 @@ export function useWebSocket(
       throw new Error("No authentication token available");
     }
 
-    // Use the proxy API path instead of direct connection for more reliable behavior
-    const protocol =
-      typeof window !== "undefined" && window.location.protocol === "https:"
-        ? "wss:"
-        : "ws:";
-    const host =
-      typeof window !== "undefined" ? window.location.host : "localhost:3000";
-
-    // Use the API proxy route instead of connecting directly
-    return `${protocol}//${host}/api/proxy/presence/ws?token=${session.access_token}`;
+    // For now, disable presence WebSocket since we don't have a dedicated route
+    // Return a placeholder that will fail gracefully
+    console.warn("[WebSocket] Presence WebSocket not implemented yet");
+    throw new Error("Presence WebSocket not available");
   }, [session?.access_token]);
 
   // Validate token before connecting
@@ -205,9 +332,15 @@ export function useWebSocket(
       return;
     }
 
-    // Connect both WebSockets
+    console.log("[WebSocket] Starting connection process...");
+
+    // Connect Messages WebSocket - this is the primary connection
     connectMessagesWebSocket();
-    connectPresenceWebSocket();
+
+    // Skip presence WebSocket for now as it's not implemented
+    console.log("[WebSocket] Skipping presence connection (not implemented)");
+    setIsPresenceConnected(false);
+    setIsPresenceConnecting(false);
   }, [validateToken]);
 
   // Initialize Messages WebSocket connection
@@ -222,7 +355,7 @@ export function useWebSocket(
       setError(null);
 
       const wsUrl = getMessagesWebSocketUrl();
-      console.log(`[WebSocket Messages] Connecting to ${wsUrl}`);
+      console.log(`[WebSocket Messages] Attempting connection to ${wsUrl}`);
 
       socketMessagesRef.current = new WebSocket(wsUrl);
 
@@ -234,11 +367,14 @@ export function useWebSocket(
         ) {
           console.warn("[WebSocket Messages] Connection timeout");
           socketMessagesRef.current.close(4000, "Connection timeout");
-          setError("Messages WebSocket connection timeout");
+          // Don't set error for timeout - just log and let fallback handle it
+          console.log(
+            "[WebSocket Messages] Falling back to HTTP for real-time features"
+          );
           setIsMessagesConnecting(false);
           updateConnectedState();
         }
-      }, 10000); // 10 second timeout
+      }, 5000); // Reduced to 5 second timeout for faster failure
 
       // Handle WebSocket events
       socketMessagesRef.current.onopen = (event) => {
@@ -247,26 +383,52 @@ export function useWebSocket(
       };
 
       socketMessagesRef.current.onmessage = handleMessagesMessage;
-      socketMessagesRef.current.onerror = handleMessagesError;
-      socketMessagesRef.current.onclose = handleMessagesClose;
-    } catch (err: any) {
-      console.error("[WebSocket Messages] Connection error:", err);
-      setError(err.message || "Failed to connect to Messages WebSocket server");
 
-      if (
-        err.message?.includes("authentication") ||
-        err.message?.includes("token")
-      ) {
-        handleAuthFailure();
-      } else {
-        handleMessagesReconnect();
-      }
+      socketMessagesRef.current.onerror = (event) => {
+        clearTimeout(timeoutId);
+        console.warn(
+          "[WebSocket Messages] Connection failed - WebSocket not supported in Next.js App Router"
+        );
+        // Don't set error here to prevent persistent toast notifications
+        // The WebSocketProvider will handle fallback to EventBus
+        setIsMessagesConnecting(false);
+        updateConnectedState();
+      };
+
+      socketMessagesRef.current.onclose = (event) => {
+        clearTimeout(timeoutId);
+        console.log(
+          `[WebSocket Messages] Connection closed: ${event.code} - ${event.reason}`
+        );
+        setIsMessagesConnected(false);
+        setIsMessagesConnecting(false);
+
+        // Only attempt reconnect for unexpected closures, not for upgrade failures
+        if (event.code !== 1006 && event.code !== 4000) {
+          handleMessagesReconnect();
+        } else {
+          // Don't set error for expected WebSocket failures in Next.js App Router
+          // The app will automatically use EventBus as fallback
+          console.log(
+            "[WebSocket Messages] Using HTTP fallback for real-time features"
+          );
+        }
+        updateConnectedState();
+      };
+    } catch (err: any) {
+      console.warn("[WebSocket Messages] Connection error:", err);
+      // Don't set error to prevent persistent toast notifications
+      // The app will gracefully fall back to HTTP-based EventBus
+      console.log(
+        "[WebSocket Messages] Falling back to HTTP for real-time features"
+      );
+      setIsMessagesConnecting(false);
+      updateConnectedState();
     }
   }, [
     isMessagesConnecting,
     isMessagesConnected,
     getMessagesWebSocketUrl,
-    handleAuthFailure,
     updateConnectedState,
   ]);
 
@@ -310,23 +472,19 @@ export function useWebSocket(
       socketPresenceRef.current.onerror = handlePresenceError;
       socketPresenceRef.current.onclose = handlePresenceClose;
     } catch (err: any) {
-      console.error("[WebSocket Presence] Connection error:", err);
-      setError(err.message || "Failed to connect to Presence WebSocket server");
+      console.warn("[WebSocket Presence] Connection error:", err);
 
-      if (
-        err.message?.includes("authentication") ||
-        err.message?.includes("token")
-      ) {
-        handleAuthFailure();
-      } else {
-        handlePresenceReconnect();
-      }
+      // For now, just set presence as unavailable but don't fail the entire connection
+      setIsPresenceConnecting(false);
+      setIsPresenceConnected(false);
+      updateConnectedState();
+
+      // Don't handle auth failure for presence errors since it's optional
     }
   }, [
     isPresenceConnecting,
     isPresenceConnected,
     getPresenceWebSocketUrl,
-    handleAuthFailure,
     updateConnectedState,
   ]);
 
@@ -342,14 +500,8 @@ export function useWebSocket(
       // Subscribe to unread counts on connection
       subscribeToUnreadCounts();
 
-      // Send any queued messages
-      if (messageQueueRef.current.length > 0) {
-        console.log(
-          `[WebSocket Messages] Sending ${messageQueueRef.current.length} queued messages`
-        );
-        messageQueueRef.current.forEach((message) => sendMessage(message));
-        messageQueueRef.current = [];
-      }
+      // Process any queued messages with enhanced retry logic
+      processMessageQueue();
 
       // Show toast notification (if you have a toast library)
       // Example: toast.success("Connected to messaging service");
@@ -583,9 +735,27 @@ export function useWebSocket(
   const handleNewMessage = useCallback((data: NewMessageData) => {
     console.log("[WebSocket Messages] New message:", data);
 
+    // Enhanced message deduplication
+    if (processedMessageIdsRef.current.has(data.id)) {
+      console.log(
+        `[WebSocket Messages] Duplicate message detected: ${data.id}`
+      );
+      return;
+    }
+
+    // Add to processed messages tracking
+    processedMessageIdsRef.current.add(data.id);
+
+    // Limit the size of processed messages tracking
+    if (processedMessageIdsRef.current.size > maxProcessedMessages) {
+      const messagesArray = Array.from(processedMessageIdsRef.current);
+      const toKeep = messagesArray.slice(-maxProcessedMessages / 2); // Keep last half
+      processedMessageIdsRef.current = new Set(toKeep);
+    }
+
     // Add new message to the state
     setMessages((prevMessages) => {
-      // Check if message already exists to avoid duplicates
+      // Double-check against existing messages
       const existingMessage = prevMessages.find((m) => m.id === data.id);
       if (!existingMessage) {
         // Show toast notification (if you have a toast library) for new messages
@@ -604,7 +774,14 @@ export function useWebSocket(
   // Handle errors for Messages WebSocket
   const handleMessagesError = useCallback(
     (event: Event) => {
-      console.error("[WebSocket Messages] Error:", event);
+      console.error("[WebSocket Messages] Error event:", {
+        type: event.type,
+        target: event.target,
+        timeStamp: event.timeStamp,
+        // Safely access error details without causing additional errors
+        readyState: socketMessagesRef.current?.readyState,
+        url: socketMessagesRef.current?.url,
+      });
       setError("WebSocket Messages connection error");
       setIsMessagesConnecting(false);
       updateConnectedState();
@@ -615,7 +792,14 @@ export function useWebSocket(
   // Handle errors for Presence WebSocket
   const handlePresenceError = useCallback(
     (event: Event) => {
-      console.error("[WebSocket Presence] Error:", event);
+      console.error("[WebSocket Presence] Error event:", {
+        type: event.type,
+        target: event.target,
+        timeStamp: event.timeStamp,
+        // Safely access error details without causing additional errors
+        readyState: socketPresenceRef.current?.readyState,
+        url: socketPresenceRef.current?.url,
+      });
       setError("WebSocket Presence connection error");
       setIsPresenceConnecting(false);
       updateConnectedState();
@@ -692,9 +876,8 @@ export function useWebSocket(
     ) {
       if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
         console.log("[WebSocket Messages] Max reconnection attempts reached");
-        setError("Failed to connect after multiple attempts");
-        // Show toast notification (if you have a toast library)
-        // Example: toast.error("Failed to connect to messaging service. Please refresh the page.");
+        // Don't set error for max reconnect attempts - let EventBus handle messaging
+        console.log("[WebSocket Messages] Using HTTP fallback for messaging");
       }
       return;
     }
@@ -745,7 +928,7 @@ export function useWebSocket(
         console.log(
           "[WebSocket Messages] Connection not ready, queueing message"
         );
-        messageQueueRef.current = [...messageQueueRef.current, message];
+        addToMessageQueue(message);
 
         // Try to connect if not already connecting
         if (!isMessagesConnecting && !isMessagesConnected) {
@@ -759,10 +942,15 @@ export function useWebSocket(
       } catch (error) {
         console.error("[WebSocket Messages] Failed to send message:", error);
         // Add to queue to retry later
-        messageQueueRef.current = [...messageQueueRef.current, message];
+        addToMessageQueue(message);
       }
     },
-    [isMessagesConnected, isMessagesConnecting, connectMessagesWebSocket]
+    [
+      isMessagesConnected,
+      isMessagesConnecting,
+      connectMessagesWebSocket,
+      addToMessageQueue,
+    ]
   );
 
   // Send typing indicator
@@ -896,6 +1084,19 @@ export function useWebSocket(
     setError(null);
     messageQueueRef.current = [];
     activeSubscriptionsRef.current = [];
+
+    // Clear message deduplication tracking
+    processedMessageIdsRef.current.clear();
+
+    // Clear persisted queue
+    try {
+      localStorage.removeItem("websocket_message_queue");
+    } catch (error) {
+      console.warn(
+        "[WebSocket] Failed to clear persisted message queue:",
+        error
+      );
+    }
   }, []);
 
   // Subscribe to private messages from a specific user
@@ -990,6 +1191,11 @@ export function useWebSocket(
     },
     [isMessagesConnected]
   );
+
+  // Restore message queue on component mount
+  useEffect(() => {
+    restoreMessageQueue();
+  }, [restoreMessageQueue]);
 
   // Connect when component mounts if autoConnect is true
   useEffect(() => {

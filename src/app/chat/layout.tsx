@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import { Sidebar } from "@/components/chat/sidebar";
 import { MessagesList } from "@/components/chat/messages-list";
 import FriendsList from "@/components/chat/friends-list";
 import { GroupsList } from "@/components/chat/groups-list";
 import { usePathname } from "next/navigation";
 import { UserInfoProvider } from "@/components/auth/user-info-provider";
-import { WebSocketProvider } from "@/hooks/websocket/WebSocketProvider";
+import { WebSocketProvider } from "@/hooks/websocket/WebSocketProviderNew";
 
 export default function ChatLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -19,7 +20,13 @@ export default function ChatLayout({ children }: { children: ReactNode }) {
     } else if (pathname?.startsWith("/chat/friends")) {
       return <FriendsList />;
     } else if (pathname?.startsWith("/chat/groups")) {
-      return <GroupsList />;
+      return (
+        <Suspense
+          fallback={<div className="p-4 text-center">Loading groups...</div>}
+        >
+          <GroupsList />
+        </Suspense>
+      );
     }
 
     // Default to MessagesList
@@ -35,8 +42,6 @@ export default function ChatLayout({ children }: { children: ReactNode }) {
             {renderSidebarContent()}
           </div>
           <main className="flex-1 overflow-hidden">{children}</main>
-
-      
         </div>
       </WebSocketProvider>
     </UserInfoProvider>

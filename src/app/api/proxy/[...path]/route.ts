@@ -13,46 +13,34 @@ const PRESENCE_API_BASE_URL = "http://localhost:8085/api";
 // It forwards requests to the backend server and returns the response
 export async function GET(
   req: NextRequest,
-  context: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  // Extract path from URL instead of using params directly
-  const url = new URL(req.url);
-  const pathSegment = url.pathname.replace("/api/proxy/", "");
-  const pathArray = pathSegment.split("/");
-  return handleRequest(req, pathArray, "GET");
+  const { path } = await params;
+  return handleRequest(req, path, "GET");
 }
 
 export async function POST(
   req: NextRequest,
-  context: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  // Extract path from URL instead of using params directly
-  const url = new URL(req.url);
-  const pathSegment = url.pathname.replace("/api/proxy/", "");
-  const pathArray = pathSegment.split("/");
-  return handleRequest(req, pathArray, "POST");
+  const { path } = await params;
+  return handleRequest(req, path, "POST");
 }
 
 export async function PUT(
   req: NextRequest,
-  context: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  // Extract path from URL instead of using params directly
-  const url = new URL(req.url);
-  const pathSegment = url.pathname.replace("/api/proxy/", "");
-  const pathArray = pathSegment.split("/");
-  return handleRequest(req, pathArray, "PUT");
+  const { path } = await params;
+  return handleRequest(req, path, "PUT");
 }
 
 export async function DELETE(
   req: NextRequest,
-  context: { params: { path: string[] } }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
-  // Extract path from URL instead of using params directly
-  const url = new URL(req.url);
-  const pathSegment = url.pathname.replace("/api/proxy/", "");
-  const pathArray = pathSegment.split("/");
-  return handleRequest(req, pathArray, "DELETE");
+  const { path } = await params;
+  return handleRequest(req, path, "DELETE");
 }
 
 async function handleRequest(
@@ -118,9 +106,8 @@ async function handleRequest(
           );
         }
 
-        // Try both GET and POST methods for maximum compatibility
-        const methodsToTry =
-          method === "GET" ? ["GET", "POST"] : ["POST", "GET"];
+        // Only use GET method for messages/history endpoint
+        const methodsToTry = ["GET"];
 
         // Get authentication token
         const token = await getToken({
@@ -134,18 +121,6 @@ async function handleRequest(
           headers["Authorization"] = `Bearer ${token.access_token as string}`;
         }
         headers["Content-Type"] = "application/json";
-
-        let body;
-        // If it's a POST request, try to get the body
-        if (method === "POST") {
-          try {
-            const reqBody = await req.json();
-            body = reqBody;
-            console.log(`[Proxy] POST body for message history:`, body);
-          } catch (e) {
-            console.log(`[Proxy] No body or invalid JSON in POST request`);
-          }
-        }
 
         // Select the appropriate base URL
         const baseUrl = GROUP_API_BASE_URL;
@@ -162,101 +137,6 @@ async function handleRequest(
               method: methodToTry,
               headers,
             };
-
-            // Add body for POST requests if available
-            if (methodToTry === "POST" && body) {
-              options.body = JSON.stringify(body);
-            } else if (methodToTry === "POST" && !body) {
-              // For POST without a body, create a default one with the params from the URL
-              const params = new URLSearchParams(originalUrl.search);
-
-              // Extract target_id from path if it's in the format messages/private/[uuid]/history
-              let target_id = params.get("target_id");
-              if (
-                (!target_id &&
-                  (path.includes("/private/") || path.includes("/group/"))) ||
-                path.includes("/messages/")
-              ) {
-                // Parse target_id from the path segments (paths array gives us clean segments)
-                console.log(
-                  `[Proxy] Extracting target_id from path segments:`,
-                  paths
-                );
-                for (let i = 0; i < paths.length - 1; i++) {
-                  if (
-                    (paths[i] === "private" || paths[i] === "group") &&
-                    i + 1 < paths.length
-                  ) {
-                    // Next element after "private" or "group" should be the target_id
-                    target_id = paths[i + 1];
-                    console.log(
-                      `[Proxy] Found target_id in path: ${target_id}`
-                    );
-                    break;
-                  }
-                }
-
-                // If still not found but we have enough path segments for messages/private/[uuid]/history
-                if (
-                  !target_id &&
-                  paths.length >= 3 &&
-                  paths[0] === "messages"
-                ) {
-                  // Look for UUID format in paths
-                  for (const segment of paths) {
-                    if (
-                      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-                        segment
-                      )
-                    ) {
-                      target_id = segment;
-                      console.log(
-                        `[Proxy] Found UUID target_id in path: ${target_id}`
-                      );
-                      break;
-                    }
-                  }
-                }
-              }
-
-              // Determine the type from path or query param
-              const messageType =
-                params.get("type") ||
-                (path.includes("/private/")
-                  ? "private"
-                  : path.includes("/group/")
-                  ? "group"
-                  : "private");
-
-              const defaultBody: any = {
-                type: messageType,
-                target_id: target_id,
-                limit: params.get("limit")
-                  ? parseInt(params.get("limit")!, 10)
-                  : 20,
-              };
-
-              // If we found a target_id, log it to confirm
-              if (target_id) {
-                console.log(
-                  `[Proxy] Using extracted target_id for POST body: ${target_id} with type: ${messageType}`
-                );
-              } else {
-                console.warn(
-                  `[Proxy] Could not extract target_id from path or query params: ${path}`
-                );
-              }
-
-              if (params.get("before")) {
-                defaultBody.before = params.get("before");
-              }
-
-              options.body = JSON.stringify(defaultBody);
-              console.log(
-                `[Proxy] Created default POST body from URL params:`,
-                defaultBody
-              );
-            }
 
             // Add a timeout for message history requests to prevent hanging
             const controller = new AbortController();

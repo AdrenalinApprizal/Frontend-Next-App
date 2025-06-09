@@ -18,7 +18,8 @@ import {
 import { X, Search, UserMinus, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useGroup } from "@/hooks/auth/useGroup";
-import { usePresence } from "@/hooks/presence/usePresence";
+import usePresence from "@/hooks/presence/usePresence";
+import { useFriendship } from "@/hooks/auth/useFriends";
 
 interface GroupProfileInfoProps {
   groupName: string;
@@ -31,8 +32,8 @@ interface GroupMember {
   id: string;
   name: string;
   status: "online" | "offline" | "busy" | "away";
-  role: "admin" | "member";
-  avatar?: string;
+  role: "admin" | "owner" | "member";
+  avatar_url?: string;
   isBlocked?: boolean;
   lastSeen?: string;
   user_id?: string; // Added to support API consistency
@@ -45,14 +46,16 @@ interface GroupDetails {
   createdAt: string;
   memberCount: number;
   members: GroupMember[];
-  avatar?: string;
+  avatar_url?: string;
 }
 
 interface Friend {
   id: string;
   name: string;
   username: string;
-  avatar?: string;
+  profile_picture_url?: string;
+  avatar_url?: string; // API response field
+  avatar?: string; // Legacy field
   selected?: boolean;
   shareSelected?: boolean;
 }
@@ -90,6 +93,14 @@ export default function GroupProfileInfo({
     error,
   } = useGroup();
 
+  // Friends data management hook
+  const {
+    loading: friendsLoading,
+    error: friendsError,
+    friends: apiFriends,
+    getFriends,
+  } = useFriendship();
+
   // Presence hook for realtime user status
   const presence = usePresence();
 
@@ -102,6 +113,7 @@ export default function GroupProfileInfo({
   const [showAddMemberPopup, setShowAddMemberPopup] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [selectedFriends, setSelectedFriends] = useState<Friend[]>([]);
 
   // Media and files state
   const [groupMedia, setGroupMedia] = useState<MediaItem[]>([]);
@@ -137,156 +149,34 @@ export default function GroupProfileInfo({
   });
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const friendsFetchedRef = useRef(false);
 
-  // Mock data for demo purposes
-  const [friends, setFriends] = useState<Friend[]>([
-    {
-      id: "101",
-      name: "Rudi Setiawan",
-      username: "rudi",
-      avatar: undefined,
-      selected: false,
-      shareSelected: false,
-    },
-    {
-      id: "102",
-      name: "Lina Kartika",
-      username: "lina",
-      avatar: undefined,
-      selected: false,
-      shareSelected: false,
-    },
-    {
-      id: "103",
-      name: "Budi Santoso",
-      username: "budi",
-      avatar: undefined,
-      selected: false,
-      shareSelected: false,
-    },
-    {
-      id: "104",
-      name: "Ratna Dewi",
-      username: "ratna",
-      avatar: undefined,
-      selected: false,
-      shareSelected: false,
-    },
-    {
-      id: "105",
-      name: "Dimas Prasetyo",
-      username: "dimas",
-      avatar: undefined,
-      selected: false,
-      shareSelected: false,
-    },
-  ]);
-
-  // Mock data for files and media
-  const [linkItems] = useState([
-    {
-      id: "l1",
-      url: "https://example.com/document-shared-in-group",
-      preview: "https://via.placeholder.com/150",
-      title: "Document shared in group",
-    },
-    {
-      id: "l2",
-      url: "https://example.com/another-important-link",
-      preview: "https://via.placeholder.com/150",
-      title: "Another important link",
-    },
-  ]);
-
-  const [fileItems] = useState([
-    {
-      id: "f1",
-      name: "Project_Documentation.pdf",
-      size: "2.4 MB",
-      date: "May 15, 2023",
-      type: "pdf",
-    },
-    {
-      id: "f2",
-      name: "Meeting_Minutes.docx",
-      size: "890 KB",
-      date: "May 12, 2023",
-      type: "docx",
-    },
-    {
-      id: "f3",
-      name: "Financial_Report.xlsx",
-      size: "1.2 MB",
-      date: "May 10, 2023",
-      type: "xlsx",
-    },
-  ]);
-
-  // Mock media data for demo
+  // Fetch friends when component mounts (only once)
   useEffect(() => {
-    // In a real app, these would come from an API call
-    setGroupMedia([
-      {
-        id: "m1",
-        url: "https://via.placeholder.com/300",
-        name: "Image 1.jpg",
-        type: "image",
-        size: "230 KB",
-        date: "May 12, 2023",
-      },
-      {
-        id: "m2",
-        url: "https://via.placeholder.com/300",
-        name: "Image 2.jpg",
-        type: "image",
-        size: "410 KB",
-        date: "May 15, 2023",
-      },
-      {
-        id: "m3",
-        url: "https://via.placeholder.com/300",
-        name: "Image 3.jpg",
-        type: "image",
-        size: "180 KB",
-        date: "May 18, 2023",
-      },
-      {
-        id: "m4",
-        url: "https://via.placeholder.com/300",
-        name: "Image 4.jpg",
-        type: "image",
-        size: "320 KB",
-        date: "May 20, 2023",
-      },
-    ]);
+    if (!friendsFetchedRef.current && !friendsLoading) {
+      friendsFetchedRef.current = true;
+      getFriends().catch(() => {
+        // Reset the flag on error to allow retry
+        friendsFetchedRef.current = false;
+      });
+    }
+  }, []); // Empty dependency array - only run once on mount
 
-    setGroupFiles([
-      {
-        id: "f1",
-        url: "#",
-        name: "Document.pdf",
-        type: "file",
-        size: "1.2 MB",
-        date: "May 10, 2023",
-      },
-      {
-        id: "f2",
-        url: "#",
-        name: "Presentation.pptx",
-        type: "file",
-        size: "2.4 MB",
-        date: "May 14, 2023",
-      },
-      {
-        id: "f3",
-        url: "#",
-        name: "Spreadsheet.xlsx",
-        type: "file",
-        size: "850 KB",
-        date: "May 17, 2023",
-      },
-    ]);
-  }, []);
+  // Get available friends (excluding current group members)
+  const availableFriends = apiFriends.filter((friend) => {
+    // Check if friend is already a group member
+    const isAlreadyMember = groupDetails.members.some(
+      (member) => member.id === friend.id || member.user_id === friend.id
+    );
+    return !isAlreadyMember;
+  });
+
+  // Filter available friends based on search query
+  const filteredFriends = availableFriends.filter(
+    (friend) =>
+      friend.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      friend.username?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -303,12 +193,6 @@ export default function GroupProfileInfo({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
-
-  const filteredFriends = friends.filter(
-    (friend) =>
-      friend.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      friend.username.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   const toggleMemberDropdown = (memberId: string) => {
     setActiveDropdown(activeDropdown === memberId ? null : memberId);
@@ -422,20 +306,68 @@ export default function GroupProfileInfo({
   };
 
   const toggleFriendSelection = (id: string) => {
-    setFriends((prevFriends) =>
-      prevFriends.map((friend) =>
-        friend.id === id ? { ...friend, selected: !friend.selected } : friend
-      )
-    );
+    setSelectedFriends((prevSelected) => {
+      const isCurrentlySelected = prevSelected.some(
+        (friend) => friend.id === id
+      );
+      if (isCurrentlySelected) {
+        // Remove from selection
+        return prevSelected.filter((friend) => friend.id !== id);
+      } else {
+        // Add to selection
+        const friendToAdd = apiFriends.find((friend) => friend.id === id);
+        if (friendToAdd) {
+          return [...prevSelected, { ...friendToAdd, selected: true }];
+        }
+        return prevSelected;
+      }
+    });
   };
 
-  const handleAddMembers = () => {
-    setShowAddMemberPopup(false);
-    setSearchQuery("");
-    alert("Members have been invited to the group!");
-    setFriends((prevFriends) =>
-      prevFriends.map((friend) => ({ ...friend, selected: false }))
-    );
+  const handleAddMembers = async () => {
+    if (selectedFriends.length === 0) {
+      toast.error("Please select at least one friend to add");
+      return;
+    }
+
+    try {
+      const memberIds = selectedFriends.map((friend) => friend.id);
+      await addGroupMembers(groupDetails.id, memberIds);
+
+      // Update local group details with new members
+      const newMembers = selectedFriends.map((friend) => ({
+        id: friend.id,
+        name: friend.name || friend.username,
+        status: "offline" as const,
+        role: "member" as const,
+        avatar_url: friend.avatar_url || friend.profile_picture_url,
+        user_id: friend.id,
+      }));
+
+      setGroupDetails((prev) => ({
+        ...prev,
+        members: [...prev.members, ...newMembers],
+        memberCount: prev.memberCount + selectedFriends.length,
+      }));
+
+      // Reset selection and close popup
+      setSelectedFriends([]);
+      setShowAddMemberPopup(false);
+      setSearchQuery("");
+
+      toast.success(`${selectedFriends.length} member(s) added to the group!`);
+
+      // Call the update callback if provided
+      if (onUpdateGroup) {
+        onUpdateGroup(groupDetails.id, {
+          members: [...groupDetails.members, ...newMembers],
+          memberCount: groupDetails.memberCount + selectedFriends.length,
+        });
+      }
+    } catch (error: any) {
+      console.error("Error adding members:", error);
+      toast.error(error.message || "Failed to add members to the group");
+    }
   };
 
   // Current media index for navigation
@@ -498,13 +430,8 @@ export default function GroupProfileInfo({
   const showShareDialog = (file: MediaItem) => {
     setSelectedFile(file);
     setShowShareModal(true);
-    // Reset share selections
-    setFriends(
-      friends.map((friend) => ({
-        ...friend,
-        shareSelected: false,
-      }))
-    );
+    // TODO: Implement share functionality with API friends
+    console.log("Share dialog opened for file:", file);
   };
 
   // Function to close share dialog
@@ -517,42 +444,15 @@ export default function GroupProfileInfo({
   const handleShareFile = async () => {
     if (!selectedFile) return;
 
-    const selectedUserIds = friends
-      .filter((friend) => friend.shareSelected)
-      .map((friend) => friend.id);
-
-    if (selectedUserIds.length === 0) return;
-
-    try {
-      await shareFileWithUsers({
-        fileId: selectedFile.id,
-        userIds: selectedUserIds,
-      });
-
-      // Reset selection state
-      setFriends(
-        friends.map((friend) => ({
-          ...friend,
-          shareSelected: false,
-        }))
-      );
-
-      closeShareDialog();
-    } catch (error) {
-      console.error("Error sharing file:", error);
-      toast.error("Failed to share file");
-    }
+    // TODO: Implement file sharing with API friends
+    toast.success("File sharing feature coming soon!");
+    closeShareDialog();
   };
 
   // Function to toggle friend share selection
   const toggleShareSelection = (id: string) => {
-    setFriends(
-      friends.map((friend) =>
-        friend.id === id
-          ? { ...friend, shareSelected: !friend.shareSelected }
-          : friend
-      )
-    );
+    // TODO: Implement share selection with API friends
+    console.log("Toggle share selection for friend:", id);
   };
 
   // Function to open media preview
@@ -568,7 +468,7 @@ export default function GroupProfileInfo({
   };
 
   return (
-    <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto h-full">
+    <div className="w-80 h-full border-l border-gray-200 bg-white overflow-y-auto shadow-lg">
       <div className="p-4 border-b border-gray-200">
         <div className="flex justify-between items-center mb-4">
           <div></div>
@@ -582,9 +482,9 @@ export default function GroupProfileInfo({
 
         <div className="flex flex-col items-center">
           <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center">
-            {groupDetails.avatar ? (
+            {groupDetails.avatar_url ? (
               <img
-                src={groupDetails.avatar}
+                src={groupDetails.avatar_url}
                 alt={groupDetails.name}
                 className="h-full w-full object-cover"
               />
@@ -646,9 +546,9 @@ export default function GroupProfileInfo({
                   <div className="flex items-center">
                     <div className="relative mr-2">
                       <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
-                        {member.avatar ? (
+                        {member.avatar_url ? (
                           <img
-                            src={member.avatar}
+                            src={member.avatar_url}
                             alt={member.name}
                             className="w-full h-full object-cover"
                           />
@@ -895,45 +795,69 @@ export default function GroupProfileInfo({
             </div>
 
             <div className="max-h-60 overflow-y-auto mb-4 border border-gray-200 rounded-lg">
-              {filteredFriends.length === 0 ? (
+              {friendsLoading ? (
+                <div className="p-4 text-center">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                  <p className="text-gray-500 text-sm">Loading friends...</p>
+                </div>
+              ) : friendsError ? (
+                <div className="p-4 text-center text-red-500">
+                  <p className="text-sm">Failed to load friends</p>
+                  <button
+                    onClick={getFriends}
+                    className="text-blue-500 text-xs mt-1 hover:underline"
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : filteredFriends.length === 0 ? (
                 <div className="p-4 text-center text-gray-500">
-                  No friends found
+                  {searchQuery
+                    ? "No friends found matching your search"
+                    : "No friends available to add"}
                 </div>
               ) : (
-                filteredFriends.map((friend) => (
-                  <div
-                    key={friend.id}
-                    className={`flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 ${
-                      friend.selected ? "bg-blue-50" : ""
-                    }`}
-                    onClick={() => toggleFriendSelection(friend.id)}
-                  >
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 mr-3 flex items-center justify-center">
-                        {friend.avatar ? (
-                          <img
-                            src={friend.avatar}
-                            alt={friend.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <FaUser className="h-5 w-5 text-gray-500" />
-                        )}
+                filteredFriends.map((friend) => {
+                  const isSelected = selectedFriends.some(
+                    (selected) => selected.id === friend.id
+                  );
+                  return (
+                    <div
+                      key={friend.id}
+                      className={`flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 ${
+                        isSelected ? "bg-blue-50" : ""
+                      }`}
+                      onClick={() => toggleFriendSelection(friend.id)}
+                    >
+                      <div className="flex items-center">
+                        <div className="w-10 h-10 rounded-full overflow-hidden bg-gray-200 mr-3 flex items-center justify-center">
+                          {friend.avatar_url || friend.profile_picture_url ? (
+                            <img
+                              src={
+                                friend.avatar_url || friend.profile_picture_url
+                              }
+                              alt={friend.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <FaUser className="h-5 w-5 text-gray-500" />
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">{friend.name}</p>
+                          <p className="text-gray-500 text-xs">
+                            @{friend.username}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-sm">{friend.name}</p>
-                        <p className="text-gray-500 text-xs">
-                          @{friend.username}
-                        </p>
-                      </div>
+                      {isSelected && (
+                        <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center">
+                          <FaCheck className="h-3 w-3 text-white" />
+                        </div>
+                      )}
                     </div>
-                    {friend.selected && (
-                      <div className="h-6 w-6 rounded-full bg-blue-500 flex items-center justify-center">
-                        <FaCheck className="h-3 w-3 text-white" />
-                      </div>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -947,9 +871,15 @@ export default function GroupProfileInfo({
               <button
                 onClick={handleAddMembers}
                 className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                disabled={!friends.some((friend) => friend.selected)}
+                disabled={selectedFriends.length === 0 || loading}
               >
-                Add to Group
+                {loading
+                  ? "Adding..."
+                  : `Add ${
+                      selectedFriends.length > 0
+                        ? `(${selectedFriends.length})`
+                        : ""
+                    } to Group`}
               </button>
             </div>
           </div>
@@ -1057,46 +987,21 @@ export default function GroupProfileInfo({
               <label className="block text-sm font-medium mb-2">
                 Share with:
               </label>
-              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
-                {friends.map((friend) => (
-                  <div
-                    key={friend.id}
-                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                      friend.shareSelected ? "bg-blue-50" : ""
-                    }`}
-                    onClick={() => toggleShareSelection(friend.id)}
-                  >
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
-                        {friend.avatar ? (
-                          <img
-                            src={friend.avatar}
-                            alt={friend.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <FaUser className="h-4 w-4 text-gray-500" />
-                        )}
-                      </div>
-                      <span className="text-sm">{friend.name}</span>
-                    </div>
-                    {friend.shareSelected && (
-                      <div className="h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
-                        <FaCheck className="h-2 w-2 text-white" />
-                      </div>
-                    )}
-                  </div>
-                ))}
+              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-4 text-center text-gray-500">
+                <p>File sharing feature coming soon!</p>
+                <p className="text-sm mt-2">
+                  This feature will be available with the next update.
+                </p>
               </div>
             </div>
 
             <div className="flex justify-end">
               <button
                 onClick={handleShareFile}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                disabled={!friends.some((friend) => friend.shareSelected)}
+                className="px-4 py-2 bg-gray-300 text-gray-500 rounded hover:bg-gray-400 cursor-not-allowed"
+                disabled={true}
               >
-                Share
+                Share (Coming Soon)
               </button>
             </div>
           </div>

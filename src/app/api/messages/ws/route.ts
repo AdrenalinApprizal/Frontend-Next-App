@@ -1,87 +1,51 @@
-import { Server as SocketIOServer } from "socket.io";
-import { Server as NetServer } from "http";
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-// Store for active socket connections
-type SocketConnection = {
-  userId: string;
-  socket: any;
-};
+const WS_BASE_URL = "http://localhost:8081"; // Adjust if your WebSocket server is on a different port
 
-// Maintain global instance of socket.io server
-let io: SocketIOServer | null = null;
-const activeConnections: SocketConnection[] = [];
+export async function GET(req: NextRequest) {
+  try {
+    // Get the token for authentication
+    const token = await getToken({ req });
 
-// This function is called when a client tries to establish a WebSocket connection
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
+    if (!token?.access_token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  if (!token) {
-    return new NextResponse(
-      JSON.stringify({ error: "Authentication token is required" }),
-      { status: 401 }
+    // Return WebSocket connection info
+    return NextResponse.json({
+      ws_url: `ws://localhost:8081/ws`,
+      access_token: token.access_token,
+      user_id: token.user_id || token.sub,
+    });
+  } catch (error) {
+    console.error("Error in WebSocket API route:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
     );
   }
+}
 
+export async function POST(req: NextRequest) {
   try {
-    // Instead of using verify directly, we'll parse the JWT token ourselves
-    // and extract the user_id which is in the payload
-    const parts = token.split(".");
+    // Handle WebSocket connection upgrades or other POST operations
+    const token = await getToken({ req });
 
-    if (parts.length !== 3) {
-      throw new Error("JWT token format is invalid");
+    if (!token?.access_token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Decode the payload part (second part) of the JWT token
-    const payload = JSON.parse(
-      Buffer.from(parts[1], "base64").toString("utf-8")
-    );
-
-    // Extract user ID from the payload
-    const userId = payload.user_id || payload.id || payload.sub;
-
-    if (!userId) {
-      return new NextResponse(
-        JSON.stringify({
-          error: "Invalid token: User ID not found in payload",
-        }),
-        { status: 401 }
-      );
-    }
-
-    // In Next.js, we can't upgrade the connection to WebSocket here
-    // Instead, we need to redirect to the WebSocket server endpoint on port 8082
-    // Return basic info with a 200 status to indicate the token is valid
-    // The actual WebSocket connection is handled by the client directly to the backend
-
-    console.log(`[WebSocket] Validated token for user: ${userId}`);
-
-    // Return success response
-    return new NextResponse(
-      JSON.stringify({
-        success: true,
-        userId,
-        message:
-          "Token validated successfully. Please use direct WebSocket connection to the server.",
-        websocketUrl: `ws://${
-          process.env.NEXT_PUBLIC_WEBSOCKET_HOST || "localhost"
-        }:8082/api/messages/ws?token=${token}`,
-      }),
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    // For now, return success - implement specific WebSocket logic as needed
+    return NextResponse.json({
+      success: true,
+      message: "WebSocket endpoint ready",
+    });
   } catch (error) {
-    console.error("WebSocket authentication error:", error);
-    return new NextResponse(
-      JSON.stringify({ error: "Invalid or expired token" }),
-      { status: 401 }
+    console.error("Error in WebSocket POST route:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
     );
   }
 }

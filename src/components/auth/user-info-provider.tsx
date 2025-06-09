@@ -171,7 +171,10 @@ export function UserInfoProvider({ children }: { children: ReactNode }) {
 function UserInfoProviderInner({ children }: { children: ReactNode }) {
   const { data: userInfo, isLoading, isError, refetch } = useUserInfoQuery();
   const queryClient = useContext(QueryClientContext);
-  const { updateProfile } = useAuth();
+  const auth = useAuth() as {
+    updateProfile: (data: any) => Promise<any>;
+  };
+  const updateProfile = auth.updateProfile;
 
   // Function to update user profile
   const updateUserProfile = async (profileData: UpdateUserProfileData) => {

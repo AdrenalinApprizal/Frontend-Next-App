@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import axios from "axios";
 
@@ -12,7 +12,7 @@ export interface User {
   avatar_url?: string;
   avatar?: string;
   username: string;
-  status?: "online" | "offline" | "busy";
+  status?: "online" | "offline"; // Updated to only allow 'online' | 'offline'
   phone?: string;
   location?: string;
   display_name?: string;
@@ -87,12 +87,17 @@ export const useFriendship = () => {
 
   // Helper function for API calls
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+    if (!session?.access_token) {
+      throw new Error("No authentication token available");
+    }
+
     const defaultOptions: RequestInit = {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
       credentials: "include",
+      signal: AbortSignal.timeout(30000), // 30 second timeout
     };
 
     // Add authorization header if session has access_token
@@ -163,6 +168,18 @@ export const useFriendship = () => {
     } catch (err) {
       console.error(`[Friends API] Fetch error for ${endpoint}:`, err);
 
+      // Handle specific error types
+      if (err instanceof Error) {
+        if (err.name === "AbortError" || err.name === "TimeoutError") {
+          console.log(`[Friends API] Request timeout for ${endpoint}`);
+          throw new Error(`Request timeout: ${endpoint}`);
+        }
+        if (err.message.includes("Failed to fetch")) {
+          console.log(`[Friends API] Network error for ${endpoint}`);
+          throw new Error(`Network error: ${endpoint}`);
+        }
+      }
+
       // For critical endpoints, return fallback values to avoid UI failures
       if (endpoint.includes("friends") && !endpoint.includes("add")) {
         console.log(`[Friends API] Using fallback for ${endpoint} after error`);
@@ -172,12 +189,18 @@ export const useFriendship = () => {
     }
   };
 
-  // Get list of friends
-  const getFriends = async () => {
+  // Get list of friends with enhanced error handling and logging
+  const getFriends = useCallback(async () => {
+    if (!session?.access_token) {
+      console.log("[Friends Store] No access token, skipping friends fetch");
+      setLoading(false);
+      return [];
+    }
+
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends] Fetching friends list...");
+      console.log("[Friends Store] Fetching friends list...");
 
       // Try multiple endpoint variations to handle different backend API patterns
       let response;
@@ -186,7 +209,7 @@ export const useFriendship = () => {
 
       for (const endpoint of endpoints) {
         try {
-          console.log(`[Friends] Trying endpoint: ${endpoint}`);
+          console.log(`[Friends Store] Trying endpoint: ${endpoint}`);
           response = await apiCall(endpoint, {
             method: "GET",
             headers: {
@@ -194,10 +217,10 @@ export const useFriendship = () => {
             },
           });
           successEndpoint = endpoint;
-          console.log(`[Friends] Success with endpoint: ${endpoint}`);
+          console.log(`[Friends Store] Success with endpoint: ${endpoint}`);
           break;
         } catch (err) {
-          console.log(`[Friends] Failed with endpoint ${endpoint}:`, err);
+          console.log(`[Friends Store] Failed with endpoint ${endpoint}:`, err);
           // Continue to the next endpoint
         }
       }
@@ -205,7 +228,7 @@ export const useFriendship = () => {
       // If all endpoints failed, use an empty array as fallback
       if (!response) {
         console.log(
-          "[Friends] All endpoints failed, using empty array fallback"
+          "[Friends Store] All endpoints failed, using empty array fallback"
         );
         setFriends([]);
         setLoading(false);
@@ -283,14 +306,21 @@ export const useFriendship = () => {
             lastSeen = String(friend.last_seen || "");
           }
 
+          // Access first and last name safely through type assertion
+          const userWithOptionalFields = friend as any;
+          const first_name = userWithOptionalFields?.first_name || "";
+          const last_name = userWithOptionalFields?.last_name || "";
+
+          // Build full name from components when available
+          const full_name =
+            first_name && last_name
+              ? `${first_name} ${last_name}`
+              : friend.full_name || "";
+
           // Create a properly formatted Friend object
           const processedFriend: Friend = {
             id: friend.id || "",
-            name:
-              friend.full_name ||
-              friend.name ||
-              friend.username ||
-              "Unknown User",
+            name: full_name || friend.name || friend.username || "Unknown User",
             email: friend.email || "",
             username:
               friend.username ||
@@ -303,7 +333,7 @@ export const useFriendship = () => {
             location: friend.location || "",
             display_name:
               friend.display_name ||
-              friend.full_name ||
+              full_name ||
               friend.name ||
               friend.username ||
               "Unknown User",
@@ -324,119 +354,178 @@ export const useFriendship = () => {
       return processedFriends;
     } catch (err: any) {
       console.error("[Friends] Error fetching friends:", err);
-      setError(`Failed to get friends: ${err.message}`);
+
+      // Handle specific error types
+      let errorMessage = "Failed to get friends";
+      if (
+        err?.message?.includes("timeout") ||
+        err?.message?.includes("Request timeout")
+      ) {
+        errorMessage =
+          "Request timed out. Please check your connection and try again.";
+      } else if (
+        err?.message?.includes("Network error") ||
+        err?.message?.includes("Failed to fetch")
+      ) {
+        errorMessage =
+          "Network error. Please check your connection and try again.";
+      } else if (err?.message?.includes("No authentication token")) {
+        errorMessage = "Authentication required. Please log in again.";
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
+      setError(errorMessage);
+      setFriends([]); // Set empty array as fallback
       setLoading(false);
-      throw err;
+      return [];
     }
-  };
+  }, [session?.access_token]); // Dependencies: session access token
 
   /**
-   * Get pending friend requests with optional pagination
+   * Get pending friend requests with optional pagination and enhanced logging
    */
-  const getFriendRequests = async (page?: number) => {
-    setLoading(true);
-    setError(null);
-    try {
-      console.log("[Friends] Fetching pending friend requests...");
-
-      const endpoint = page
-        ? `/friends/requests?page=${page}`
-        : "/friends/requests";
-      const response = await apiCall(endpoint);
-
-      console.log("[Friends] Raw friend requests response:", response);
-      console.log("[Friends Debug] Response type:", typeof response);
-      console.log("[Friends Debug] Is Array:", Array.isArray(response));
-
-      // If response is null or undefined, use an empty array as fallback
-      if (!response) {
+  const getFriendRequests = useCallback(
+    async (page?: number) => {
+      if (!session?.access_token) {
         console.log(
-          "[Friends Debug] Empty response, using empty array fallback"
+          "[Friends Store] No access token, skipping friend requests fetch"
         );
-        setFriendRequests([]);
         setLoading(false);
         return [];
       }
 
-      if (response) {
-        console.log("[Friends Debug] Has data property:", "data" in response);
-        console.log("[Friends Debug] Response keys:", Object.keys(response));
-      }
+      setLoading(true);
+      setError(null);
+      try {
+        console.log("[Friends Store] Fetching pending friend requests...");
 
-      // Handle both array responses and responses that have the data property
-      if (Array.isArray(response)) {
-        console.log("[Friends Debug] Processing array response");
-        setFriendRequests(response);
-      } else if (response && Array.isArray(response.data)) {
-        console.log("[Friends Debug] Processing response.data array");
-        setFriendRequests(response.data);
-      } else if (
-        response &&
-        response.requests &&
-        Array.isArray(response.requests)
-      ) {
-        // Added check for response.requests format
-        console.log("[Friends Debug] Processing response.requests array");
-        setFriendRequests(response.requests);
-      } else if (
-        response &&
-        response.friend_requests &&
-        Array.isArray(response.friend_requests)
-      ) {
-        // Added check for response.friend_requests format
-        console.log(
-          "[Friends Debug] Processing response.friend_requests array"
-        );
-        setFriendRequests(response.friend_requests);
-      } else if (typeof response === "object" && response !== null) {
-        // Last resort: try to extract any array property from the response
-        console.log(
-          "[Friends Debug] Attempting to find any array in response object"
-        );
-        let foundArrays = false;
+        const endpoint = page
+          ? `/friends/requests?page=${page}`
+          : "/friends/requests";
+        const response = await apiCall(endpoint);
 
-        // Check each property to find arrays
-        for (const key in response) {
-          if (Array.isArray(response[key])) {
-            console.log(`[Friends Debug] Found array in property: ${key}`);
-            setFriendRequests(response[key] as FriendRequest[]);
-            foundArrays = true;
-            break;
-          }
+        // Detailed logging of the response structure
+        console.log("[Friends Store] Raw friend requests response:", response);
+        console.log("[Friends Store] Response type:", typeof response);
+        console.log("[Friends Store] Is Array:", Array.isArray(response));
+
+        // If response is null or undefined, use an empty array as fallback
+        if (!response) {
+          console.log(
+            "[Friends Store] Empty response, using empty array fallback"
+          );
+          setFriendRequests([]);
+          setLoading(false);
+          return [];
         }
 
-        if (!foundArrays) {
+        if (response) {
+          console.log("[Friends Store] Has data property:", "data" in response);
+          console.log("[Friends Store] Response keys:", Object.keys(response));
+        }
+
+        // Handle both array responses and responses that have the data property
+        if (Array.isArray(response)) {
+          console.log("[Friends Store] Processing array response");
+          setFriendRequests(response);
+        } else if (response && Array.isArray(response.data)) {
+          console.log("[Friends Store] Processing response.data array");
+          setFriendRequests(response.data);
+        } else if (
+          response &&
+          response.requests &&
+          Array.isArray(response.requests)
+        ) {
+          // Added check for response.requests format
+          console.log("[Friends Store] Processing response.requests array");
+          setFriendRequests(response.requests);
+        } else if (
+          response &&
+          response.friend_requests &&
+          Array.isArray(response.friend_requests)
+        ) {
+          // Added check for response.friend_requests format
+          console.log(
+            "[Friends Store] Processing response.friend_requests array"
+          );
+          setFriendRequests(response.friend_requests);
+        } else if (typeof response === "object" && response !== null) {
+          // Last resort: try to extract any array property from the response
+          console.log(
+            "[Friends Store] Attempting to find any array in response object"
+          );
+          let foundArrays = false;
+
+          // Check each property to find arrays
+          for (const key in response) {
+            if (Array.isArray(response[key])) {
+              console.log(`[Friends Store] Found array in property: ${key}`);
+              setFriendRequests(response[key] as FriendRequest[]);
+              foundArrays = true;
+              break;
+            }
+          }
+
+          if (!foundArrays) {
+            setFriendRequests([]);
+            console.error(
+              "[Friends Store] Could not find any array in friend requests response:",
+              response
+            );
+          }
+        } else {
           setFriendRequests([]);
           console.error(
-            "[Friends] Could not find any array in friend requests response:",
+            "[Friends Store] Unexpected friend requests format:",
             response
           );
         }
-      } else {
-        setFriendRequests([]);
-        console.error("[Friends] Unexpected friend requests format:", response);
+
+        // Log the final friendRequests state
+        console.log(
+          "[Friends Store] Final friendRequests state count:",
+          friendRequests.length
+        );
+
+        // If the API supports pagination and returns meta data
+        if (response && response.meta) {
+          setRequestsPagination(response.meta);
+        }
+
+        setLoading(false);
+        return response;
+      } catch (err: any) {
+        console.error("[Friends] Error fetching friend requests:", err.message);
+
+        // Handle specific error types
+        let errorMessage = "Failed to get friend requests";
+        if (
+          err?.message?.includes("timeout") ||
+          err?.message?.includes("Request timeout")
+        ) {
+          errorMessage =
+            "Request timed out. Please check your connection and try again.";
+        } else if (
+          err?.message?.includes("Network error") ||
+          err?.message?.includes("Failed to fetch")
+        ) {
+          errorMessage =
+            "Network error. Please check your connection and try again.";
+        } else if (err?.message?.includes("No authentication token")) {
+          errorMessage = "Authentication required. Please log in again.";
+        } else if (err.message) {
+          errorMessage = err.message;
+        }
+
+        setError(errorMessage);
+        setFriendRequests([]); // Set empty array as fallback
+        setLoading(false);
+        return [];
       }
-
-      // Debug the final friendRequests state
-      console.log(
-        "[Friends Debug] Final friendRequests state:",
-        friendRequests
-      );
-
-      // If the API supports pagination and returns meta data
-      if (response && response.meta) {
-        setRequestsPagination(response.meta);
-      }
-
-      setLoading(false);
-      return response;
-    } catch (err: any) {
-      console.error("[Friends] Error fetching friend requests:", err.message);
-      setError(`Failed to get friend requests: ${err.message}`);
-      setLoading(false);
-      throw err;
-    }
-  };
+    },
+    [session?.access_token]
+  ); // Dependencies: session access token
 
   /**
    * Load more pending requests when pagination is available
@@ -454,6 +543,12 @@ export const useFriendship = () => {
    * Search for users by query string with pagination
    */
   const searchUsers = async (query: string, page: number = 1) => {
+    if (!session?.access_token) {
+      console.log("[Friends Store] No access token, skipping user search");
+      setLoading(false);
+      return { users: [], pagination: null };
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -519,210 +614,270 @@ export const useFriendship = () => {
   };
 
   /**
-   * Add a friend by username
+   * Add a friend by username with enhanced error handling and logging
    */
-  const addFriendByUsername = async (username: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (!username) {
-        throw new Error("Username is required");
+  const addFriendByUsername = useCallback(
+    async (username: string) => {
+      if (!session?.access_token) {
+        throw new Error("Authentication required. Please log in again.");
       }
 
-      // Try to find the user first
-      const searchResponse = await apiCall(
-        `friends/search?username=${encodeURIComponent(username)}`
-      );
+      setLoading(true);
+      setError(null);
+      try {
+        if (!username) {
+          throw new Error("Username is required");
+        }
 
-      if (
-        !searchResponse ||
-        (!Array.isArray(searchResponse) && !searchResponse.data)
-      ) {
-        throw new Error("User not found");
-      }
+        console.log(
+          `[Friends Store] Sending friend request to username: ${username}`
+        );
 
-      // Send friend request
-      const response = await apiCall("friends/add", {
-        method: "POST",
-        body: JSON.stringify({ username: username.toLowerCase() }),
-      });
+        // Try to find the user first
+        const searchResponse = await apiCall(
+          `friends/search?username=${encodeURIComponent(username)}`
+        );
 
-      console.log(`[Friends] Successfully sent friend request to ${username}`);
-      console.log(`[Friends Debug] Add friend response:`, response);
+        console.log(
+          `[Friends Store] Search response for username:`,
+          searchResponse
+        );
 
-      // Refresh friend requests with a slight delay to allow backend to process
-      setTimeout(async () => {
+        if (
+          !searchResponse ||
+          (!Array.isArray(searchResponse) && !searchResponse.data)
+        ) {
+          console.error(
+            `[Friends Store] User '${username}' not found in search response`
+          );
+          throw new Error("User not found");
+        }
+
+        // Send friend request
+        const response = await apiCall("friends/add", {
+          method: "POST",
+          body: JSON.stringify({ username: username.toLowerCase() }),
+        });
+
+        console.log(
+          `[Friends Store] Successfully sent friend request to ${username}`
+        );
+        console.log(`[Friends Store] Add friend response:`, response);
+
+        // Force refresh friend requests immediately to update the UI
+        console.log(
+          `[Friends Store] Refreshing friend requests after sending request to ${username}`
+        );
         try {
           await getFriendRequests();
           console.log(
-            "[Friends Debug] Friend requests refreshed after adding friend"
+            "[Friends Store] Friend requests refreshed after adding friend"
           );
         } catch (refreshErr) {
           console.error(
-            "[Friends Debug] Error refreshing requests:",
+            "[Friends Store] Error refreshing requests:",
             refreshErr
           );
+          // Don't throw here as the main operation was successful
         }
-      }, 1000);
 
-      setLoading(false);
-      return response;
-    } catch (err: any) {
-      console.error(`[Friends] Error adding friend ${username}:`, err.message);
-      setError(`Failed to add friend by username: ${err.message}`);
-      setLoading(false);
-      throw err;
-    }
-  };
+        setLoading(false);
+        return response;
+      } catch (err: any) {
+        console.error(
+          `[Friends Store] Error adding friend ${username}:`,
+          err.message
+        );
+
+        // Handle specific error types
+        let errorMessage = `Failed to add friend ${username}`;
+        if (
+          err?.message?.includes("timeout") ||
+          err?.message?.includes("Request timeout")
+        ) {
+          errorMessage =
+            "Request timed out. Please check your connection and try again.";
+        } else if (
+          err?.message?.includes("Network error") ||
+          err?.message?.includes("Failed to fetch")
+        ) {
+          errorMessage =
+            "Network error. Please check your connection and try again.";
+        } else if (err?.message?.includes("Authentication required")) {
+          errorMessage = "Authentication required. Please log in again.";
+        } else if (err?.message?.includes("User not found")) {
+          errorMessage = `User '${username}' not found.`;
+        } else if (err.message) {
+          errorMessage = err.message;
+        }
+
+        setError(errorMessage);
+        setLoading(false);
+        throw new Error(errorMessage);
+      }
+    },
+    [session?.access_token]
+  ); // Dependencies: session access token
 
   /**
-   * Accept a friend request
+   * Accept a friend request with enhanced error handling
    */
-  const acceptFriendRequest = async (friendshipId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      console.log("[FriendsHook] Accepting friend request:", friendshipId);
-
-      // 1. Find the friend request before accepting it
-      const request = friendRequests.find(
-        (req) => req.friendship_id === friendshipId
-      );
-      if (!request) {
-        console.error(
-          "[FriendsHook] Could not find friend request with ID:",
-          friendshipId
-        );
-        throw new Error("Friend request not found");
-      }
-
-      console.log("[FriendsHook] Found friend request:", request);
-
-      // 2. Accept the friend request
-      const acceptResponse = await apiCall("friends/accept", {
-        method: "POST",
-        body: JSON.stringify({ friendship_id: friendshipId }),
-      });
-      console.log(
-        "[FriendsHook] Friend request accept response:",
-        acceptResponse
-      );
-
-      // 3. Immediately update the local friend requests state to remove the accepted request
-      const updatedRequests = friendRequests.filter(
-        (req) => req.friendship_id !== friendshipId
-      );
-      setFriendRequests(updatedRequests);
-      console.log(
-        "[FriendsHook] Updated friend requests locally:",
-        updatedRequests
-      );
-
-      // 4. Add the new friend to the friends list immediately if they were the sender
-      if (request.user) {
-        const newFriend: Friend = {
-          id: request.user.id,
-          name:
-            request.user.full_name ||
-            request.user.name ||
-            request.user.username ||
-            "Unknown User",
-          email: request.user.email || "",
-          username: request.user.username || "",
-          avatar:
-            request.user.avatar_url ||
-            request.user.avatar ||
-            request.user.profile_picture_url,
-          status: request.user.status || "offline",
-          phone: request.user.phone || "",
-          location: request.user.location || "",
-          display_name:
-            request.user.display_name ||
-            request.user.name ||
-            request.user.username ||
-            "Unknown User",
-        };
-
-        // Only add if not already in friends list
-        if (!friends.some((f) => f.id === newFriend.id)) {
-          const updatedFriends = [...friends, newFriend];
-          setFriends(updatedFriends);
-          console.log("[FriendsHook] Added new friend locally:", newFriend);
-        }
-      }
-
-      // 5. Refresh both lists from the server to ensure consistency
+  const acceptFriendRequest = useCallback(
+    async (friendshipId: string) => {
+      setLoading(true);
+      setError(null);
       try {
-        await Promise.all([
-          (async () => {
-            const requestsResponse = await apiCall("friends/requests");
-            if (Array.isArray(requestsResponse)) {
-              setFriendRequests(requestsResponse);
-            } else if (requestsResponse?.data) {
-              setFriendRequests(requestsResponse.data);
-            }
-          })(),
-          (async () => {
-            await getFriends(); // Use the improved getFriends function
-          })(),
-        ]);
-        console.log(
-          "[FriendsHook] Successfully refreshed both lists from server"
-        );
-      } catch (refreshError) {
-        console.error(
-          "[FriendsHook] Error refreshing lists after acceptance:",
-          refreshError
-        );
-        // Don't throw here, as the acceptance was successful
-      }
+        console.log("[Friends Store] Accepting friend request:", friendshipId);
 
-      setLoading(false);
-      return acceptResponse;
-    } catch (err: any) {
-      console.error("[FriendsHook] Error accepting friend request:", err);
-      setError(`Failed to accept friend request: ${err.message}`);
-      setLoading(false);
-      throw err;
-    }
-  };
+        // 1. Find the friend request before accepting it
+        const request = friendRequests.find(
+          (req) => req.friendship_id === friendshipId
+        );
+        if (!request) {
+          console.error(
+            "[Friends Store] Could not find friend request with ID:",
+            friendshipId
+          );
+          throw new Error("Friend request not found");
+        }
+
+        console.log("[Friends Store] Found friend request:", request);
+
+        // 2. Accept the friend request
+        const acceptResponse = await apiCall("friends/accept", {
+          method: "POST",
+          body: JSON.stringify({ friendship_id: friendshipId }),
+        });
+        console.log(
+          "[Friends Store] Friend request accept response:",
+          acceptResponse
+        );
+
+        // 3. Immediately update the local friend requests state to remove the accepted request
+        const updatedRequests = friendRequests.filter(
+          (req) => req.friendship_id !== friendshipId
+        );
+        setFriendRequests(updatedRequests);
+        console.log(
+          "[Friends Store] Updated friend requests locally:",
+          updatedRequests
+        );
+
+        // 4. Add the new friend to the friends list immediately if they were the sender
+        if (request.user) {
+          const newFriend: Friend = {
+            id: request.user.id,
+            name:
+              request.user.full_name ||
+              request.user.name ||
+              request.user.username ||
+              "Unknown User",
+            email: request.user.email || "",
+            username: request.user.username || "",
+            avatar:
+              request.user.avatar_url ||
+              request.user.avatar ||
+              request.user.profile_picture_url,
+            status: request.user.status || "offline",
+            phone: request.user.phone || "",
+            location: request.user.location || "",
+            display_name:
+              request.user.display_name ||
+              request.user.name ||
+              request.user.username ||
+              "Unknown User",
+          };
+
+          // Only add if not already in friends list
+          if (!friends.some((f) => f.id === newFriend.id)) {
+            const updatedFriends = [...friends, newFriend];
+            setFriends(updatedFriends);
+            console.log("[Friends Store] Added new friend locally:", newFriend);
+          }
+        }
+
+        // 5. Refresh both lists from the server to ensure consistency (like Vue implementation)
+        try {
+          console.log(
+            "[Friends Store] Refreshing friends and requests after acceptance"
+          );
+          await Promise.all([getFriendRequests(), getFriends()]);
+          console.log(
+            "[Friends Store] Successfully refreshed both lists from server"
+          );
+        } catch (refreshError) {
+          console.error(
+            "[Friends Store] Error refreshing lists after acceptance:",
+            refreshError
+          );
+          // Don't throw here, as the acceptance was successful
+        }
+
+        setLoading(false);
+        return acceptResponse;
+      } catch (err: any) {
+        console.error("[Friends Store] Error accepting friend request:", err);
+        setError(`Failed to accept friend request: ${err.message}`);
+        setLoading(false);
+        throw err;
+      }
+    },
+    [session?.access_token]
+  ); // Dependencies: session access token
 
   /**
-   * Reject a friend request
+   * Reject a friend request with enhanced logging
    */
-  const rejectFriendRequest = async (friendshipId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      console.log("[FriendsHook] Rejecting friend request:", friendshipId);
-      const response = await apiCall("friends/reject", {
-        method: "POST",
-        body: JSON.stringify({ friendship_id: friendshipId }),
-      });
-      console.log("[FriendsHook] API response for reject:", response);
+  const rejectFriendRequest = useCallback(
+    async (friendshipId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        console.log("[Friends Store] Rejecting friend request:", friendshipId);
 
-      // Immediately update local state for better UX
-      const updatedRequests = friendRequests.filter(
-        (req) => req.friendship_id !== friendshipId
-      );
-      setFriendRequests(updatedRequests);
+        const response = await apiCall("friends/reject", {
+          method: "POST",
+          body: JSON.stringify({ friendship_id: friendshipId }),
+        });
 
-      // Also fetch from API to ensure data consistency
-      await getFriendRequests();
-      console.log(
-        "[FriendsHook] Friend requests updated after rejection, count:",
-        friendRequests.length
-      );
+        console.log("[Friends Store] API response for reject:", response);
 
-      setLoading(false);
-      return response;
-    } catch (err: any) {
-      console.error("[FriendsHook] Error rejecting request:", err);
-      setError(`Failed to reject friend request: ${err.message}`);
-      setLoading(false);
-      throw err;
-    }
-  };
+        // Immediately update local state for better UX
+        const updatedRequests = friendRequests.filter(
+          (req) => req.friendship_id !== friendshipId
+        );
+        setFriendRequests(updatedRequests);
+        console.log(
+          "[Friends Store] Updated friend requests locally, new count:",
+          updatedRequests.length
+        );
+
+        // Fetch from API to ensure data consistency (like Vue implementation)
+        try {
+          await getFriendRequests();
+          console.log(
+            "[Friends Store] Friend requests refreshed from API after rejection, count:",
+            friendRequests.length
+          );
+        } catch (refreshErr) {
+          console.error(
+            "[Friends Store] Error refreshing requests after rejection:",
+            refreshErr
+          );
+          // Don't throw here as the main operation was successful
+        }
+
+        setLoading(false);
+        return response;
+      } catch (err: any) {
+        console.error("[Friends Store] Error rejecting request:", err);
+        setError(`Failed to reject friend request: ${err.message}`);
+        setLoading(false);
+        throw err;
+      }
+    },
+    [session?.access_token]
+  ); // Dependencies: session access token
 
   /**
    * Remove a friend
@@ -747,18 +902,21 @@ export const useFriendship = () => {
   };
 
   /**
-   * Get all blocked users
+   * Get all blocked users with enhanced error handling and logging
    */
   const getBlockedUsers = async () => {
     setLoading(true);
     setError(null);
     try {
+      console.log("[Friends Store] Fetching blocked users from API...");
       const response = await apiCall("friends/blocked", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
         },
       });
+
+      console.log("[Friends Store] Raw blocked users API response:", response);
 
       const blockedList = Array.isArray(response)
         ? response
@@ -768,10 +926,18 @@ export const useFriendship = () => {
         ? response.blocked_users
         : [];
 
+      console.log(
+        "[Friends Store] Processed blocked users:",
+        blockedList.length
+      );
       setBlockedUsers(blockedList);
       setLoading(false);
       return blockedList;
     } catch (err: any) {
+      console.error(
+        "[Friends Store] Error fetching blocked users:",
+        err.message
+      );
       setError(`Failed to fetch blocked users: ${err.message}`);
       setLoading(false);
       throw err;
@@ -779,22 +945,30 @@ export const useFriendship = () => {
   };
 
   /**
-   * Block a user
+   * Block a user with enhanced logging
    */
   const blockUser = async (userId: string) => {
     setLoading(true);
     setError(null);
     try {
+      console.log("[Friends Store] Blocking user with ID:", userId);
+
       const response = await apiCall("friends/block", {
         method: "POST",
         body: JSON.stringify({ user_id: userId }),
       });
 
-      // Update friends list after blocking
+      console.log("[Friends Store] User blocked successfully:", response);
+
+      // Update friends list after blocking to reflect changes
       await getFriends();
+      // Also update blocked users list
+      await getBlockedUsers();
+
       setLoading(false);
       return response;
     } catch (err: any) {
+      console.error("[Friends Store] Error blocking user:", err.message);
       setError(`Failed to block user: ${err.message}`);
       setLoading(false);
       throw err;
@@ -802,22 +976,36 @@ export const useFriendship = () => {
   };
 
   /**
-   * Block a user by username
+   * Block a user by username with enhanced logging
    */
   const blockUserByUsername = async (username: string) => {
     setLoading(true);
     setError(null);
     try {
+      console.log("[Friends Store] Blocking user by username:", username);
+
       const response = await apiCall("friends/block", {
         method: "POST",
         body: JSON.stringify({ username }),
       });
 
+      console.log(
+        "[Friends Store] User blocked successfully by username:",
+        response
+      );
+
       // Update friends list after blocking
       await getFriends();
+      // Also update blocked users list
+      await getBlockedUsers();
+
       setLoading(false);
       return response;
     } catch (err: any) {
+      console.error(
+        "[Friends Store] Error blocking user by username:",
+        err.message
+      );
       setError(`Failed to block user by username: ${err.message}`);
       setLoading(false);
       throw err;
@@ -825,22 +1013,30 @@ export const useFriendship = () => {
   };
 
   /**
-   * Unblock a user
+   * Unblock a user with enhanced logging
    */
   const unblockUser = async (userId: string) => {
     setLoading(true);
     setError(null);
     try {
+      console.log("[Friends Store] Unblocking user with ID:", userId);
+
       const response = await apiCall("friends/unblock", {
         method: "POST",
         body: JSON.stringify({ user_id: userId }),
       });
 
-      // Update friends list after unblocking
+      console.log("[Friends Store] User unblocked successfully:", response);
+
+      // Update blocked users list after unblocking
       await getBlockedUsers();
+      // Also refresh friends list to reflect changes
+      await getFriends();
+
       setLoading(false);
       return response;
     } catch (err: any) {
+      console.error("[Friends Store] Error unblocking user:", err.message);
       setError(`Failed to unblock user: ${err.message}`);
       setLoading(false);
       throw err;
@@ -848,22 +1044,36 @@ export const useFriendship = () => {
   };
 
   /**
-   * Unblock a user by username
+   * Unblock a user by username with enhanced logging
    */
   const unblockUserByUsername = async (username: string) => {
     setLoading(true);
     setError(null);
     try {
+      console.log("[Friends Store] Unblocking user by username:", username);
+
       const response = await apiCall("friends/unblock", {
         method: "POST",
         body: JSON.stringify({ username }),
       });
 
+      console.log(
+        "[Friends Store] User unblocked successfully by username:",
+        response
+      );
+
       // Update blocked users list
       await getBlockedUsers();
+      // Also refresh friends list to reflect changes
+      await getFriends();
+
       setLoading(false);
       return response;
     } catch (err: any) {
+      console.error(
+        "[Friends Store] Error unblocking user by username:",
+        err.message
+      );
       setError(`Failed to unblock user by username: ${err.message}`);
       setLoading(false);
       throw err;
@@ -871,21 +1081,36 @@ export const useFriendship = () => {
   };
 
   /**
-   * Search for friends by name, email, or username
+   * Search for friends by name, email, or username with enhanced logging
    */
   const searchFriends = async (query: string, limit: number = 20) => {
     setLoading(true);
     setError(null);
     try {
+      console.log(
+        `[Friends Store] Searching friends with query: "${query}", limit: ${limit}`
+      );
+
       const endpoint = `friends/search?q=${encodeURIComponent(
         query
       )}&limit=${limit}`;
+
       const response = await apiCall(endpoint);
 
-      // Return results without updating global state
+      console.log(`[Friends Store] Friend search response:`, response);
+
+      // Extract appropriate data from response
+      const results = response.data || response;
+      console.log(
+        `[Friends Store] Processed search results count:`,
+        Array.isArray(results) ? results.length : "not an array"
+      );
+
+      // Return results without updating global state (like Vue implementation)
       setLoading(false);
-      return response.data || response;
+      return results;
     } catch (err: any) {
+      console.error(`[Friends Store] Error searching friends:`, err);
       setError(`Failed to search friends: ${err.message}`);
       setLoading(false);
       throw err;
@@ -937,13 +1162,19 @@ export const useFriendship = () => {
 
         // Format the friend object if we found data
         if (friendData) {
+          // Access first and last name safely through type assertion
+          const friendDataAny = friendData as any;
+          const first_name = friendDataAny?.first_name || "";
+          const last_name = friendDataAny?.last_name || "";
+          const full_name =
+            first_name && last_name
+              ? `${first_name} ${last_name}`
+              : friendData.full_name || "";
+
           const formattedFriend: Friend = {
             id: friendData.id || friendId,
             name:
-              friendData.full_name ||
-              friendData.name ||
-              friendData.username ||
-              "Unknown",
+              full_name || friendData.name || friendData.username || "Unknown",
             email: friendData.email || "",
             username: friendData.username || "",
             avatar:
@@ -1060,6 +1291,24 @@ export const useFriendship = () => {
     setFriendRequests(updatedRequests);
   };
 
+  // Add useEffect to handle loading timeout and prevent stuck states
+  React.useEffect(() => {
+    if (loading) {
+      // Set a timeout to prevent getting stuck in loading state
+      const timeoutId = setTimeout(() => {
+        console.warn(
+          "[Friends Store] Loading timeout reached, resetting loading state"
+        );
+        setLoading(false);
+        if (!friends.length && !friendRequests.length) {
+          setError("Request took too long. Please refresh and try again.");
+        }
+      }, 30000); // 30 seconds timeout
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [loading, friends.length, friendRequests.length]);
+
   return {
     loading,
     error,
@@ -1079,7 +1328,12 @@ export const useFriendship = () => {
     searchFriends,
     getFriendById,
     getFriendDetails,
-    setFriends: setFriendsState, // Expose setFriends method
-    setFriendRequests: setFriendRequestsState, // Expose setFriendRequests method
+    getBlockedUsers, // Add new functions to the returned object
+    blockUser, // Add new functions to the returned object
+    blockUserByUsername, // Add new functions to the returned object
+    unblockUser, // Add new functions to the returned object
+    unblockUserByUsername, // Add new functions to the returned object
+    setFriends: setFriendsState,
+    setFriendRequests: setFriendRequestsState,
   };
 };

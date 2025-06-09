@@ -11,7 +11,7 @@ export interface User {
   avatar_url?: string;
   avatar?: string;
   created_at?: string;
-  status?: "online" | "offline" | "busy";
+  status?: "online" | "offline"; // Updated to only allow 'online' | 'offline'
   phone?: string;
   location?: string;
 }

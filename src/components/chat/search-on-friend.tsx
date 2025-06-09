@@ -16,8 +16,17 @@ export default function SearchOnFriend({
 }: SearchOnFriendProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const popupRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Close popup when clicking outside
+  // Handle search action
+  const handleSearch = () => {
+    onSearch(searchQuery);
+    if (!searchQuery.trim()) {
+      onClose();
+    }
+  };
+
+  // Handle click outside to close
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (
@@ -30,6 +39,8 @@ export default function SearchOnFriend({
 
     if (isOpen) {
       document.addEventListener("mousedown", handleClickOutside);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
     }
 
     return () => {
@@ -37,19 +48,19 @@ export default function SearchOnFriend({
     };
   }, [isOpen, onClose]);
 
-  // Reset states when popup is closed
+  // Reset states when popup is closed and focus input when opened
   useEffect(() => {
     if (!isOpen) {
       setSearchQuery("");
+    } else {
+      // Focus the input when opened (similar to Vue's nextTick)
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+      }, 0);
     }
   }, [isOpen]);
-
-  const handleSearch = () => {
-    onSearch(searchQuery);
-    if (!searchQuery.trim()) {
-      onClose();
-    }
-  };
 
   if (!isOpen) return null;
 
@@ -67,17 +78,17 @@ export default function SearchOnFriend({
                 <FaSearch className="h-4 w-4 text-gray-400" />
               </div>
               <input
+                ref={inputRef}
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search Messages"
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full text-black pl-10 pr-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     handleSearch();
                   }
                 }}
-                autoFocus
               />
             </div>
 

@@ -745,6 +745,7 @@ export const useFiles = () => {
     shareFile,
     getPreviewUrl,
     getDownloadUrl,
+    getFileUrl,
     getThumbnailUrl,
 
     // New methods from Pinia store

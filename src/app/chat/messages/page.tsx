@@ -3,15 +3,6 @@ import { FaUser, FaPaperPlane } from "react-icons/fa";
 import { Paperclip } from "lucide-react";
 
 export default function MessagesPage() {
-  // Mockup data langsung dalam komponen
-  const mockMessages = [
-    {
-      id: "1",
-      content: "Pilih seseorang untuk mulai chat",
-      timestamp: "10:15 AM",
-      isCurrentUser: false,
-    },
-  ];
 
   return (
     <div className="h-full flex flex-col justify-center items-center bg-gray-50">

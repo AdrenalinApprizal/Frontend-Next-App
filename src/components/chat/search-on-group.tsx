@@ -8,8 +8,9 @@ interface GroupMember {
   id: string;
   name: string;
   status: "online" | "offline";
-  role: "admin" | "member";
+  role: "admin" | "member" | "owner";
   avatar?: string;
+  avatar_url?: string; // Added to support compatibility
 }
 
 interface SearchFilterPopupProps {
@@ -187,9 +188,9 @@ export default function SearchFilterPopup({
                         >
                           <div className="flex items-center">
                             <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 mr-3">
-                              {member.avatar ? (
+                              {member.avatar_url || member.avatar ? (
                                 <img
-                                  src={member.avatar}
+                                  src={member.avatar_url || member.avatar}
                                   alt={member.name}
                                   className="w-full h-full object-cover"
                                 />

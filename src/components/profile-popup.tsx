@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FaTimes, FaUser, FaEye, FaEyeSlash } from "react-icons/fa";
+import { FaTimes, FaUser, FaEye, FaEyeSlash, FaCamera } from "react-icons/fa";
 import { toast } from "react-hot-toast";
 import { useAuth } from "@/hooks/auth/useAuth";
 import { useUserInfoContext } from "@/components/auth/user-info-provider";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { ProfilePictureModal } from "./profile-picture-modal";
 
 interface ProfilePopupProps {
   onClose: () => void;
@@ -14,7 +15,14 @@ interface ProfilePopupProps {
 
 export function ProfilePopup({ onClose }: ProfilePopupProps) {
   const router = useRouter();
-  const { updateProfile, changePassword, getUserInfo } = useAuth();
+  const auth = useAuth() as {
+    updateProfile: (data: any) => Promise<any>;
+    changePassword: (data: any) => Promise<any>;
+    getUserInfo: () => Promise<any>;
+  };
+  const updateProfile = auth.updateProfile;
+  const changePassword = auth.changePassword;
+  const getUserInfo = auth.getUserInfo;
   const { userInfo, isLoading, isError, refetch } = useUserInfoContext();
   const { data: session } = useSession();
 
@@ -47,10 +55,20 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
     return `http://localhost:8081${url.startsWith("/") ? "" : "/"}${url}`;
   };
 
+  // Function to handle the new profile picture upload
+  const handleProfilePictureUploaded = (newPictureUrl: string) => {
+    console.log("New profile picture uploaded:", newPictureUrl);
+    // Close the modal
+    setShowProfilePictureModal(false);
+    // No need to manually update the UI here as we already refetch user data in the modal
+    toast.success("Profile picture updated successfully");
+  };
+
   // UI state
   const [activeTab, setActiveTab] = useState<"profile" | "password">("profile");
   const [isEditing, setIsEditing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showProfilePictureModal, setShowProfilePictureModal] = useState(false);
 
   // Password visibility toggles
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -225,7 +243,10 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
             <div className="flex justify-center mb-4">
               <div className="relative">
-                <div className="h-16 w-16 rounded-full overflow-hidden bg-blue-600/30 relative flex items-center justify-center">
+                <div
+                  className="h-16 w-16 rounded-full overflow-hidden bg-blue-600/30 relative flex items-center justify-center cursor-pointer"
+                  onClick={() => setShowProfilePictureModal(true)}
+                >
                   {userInfo.profile_picture_url ? (
                     <img
                       src={getAvatarUrl(userInfo.profile_picture_url)}
@@ -250,6 +271,9 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   ) : (
                     <FaUser className="h-8 w-8 text-blue-400" />
                   )}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20 opacity-0 hover:opacity-100 transition-opacity rounded-full">
+                    <FaCamera className="h-5 w-5 text-white" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -382,6 +406,13 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   ) : (
                     <FaUser className="h-8 w-8 text-blue-400" />
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setShowProfilePictureModal(true)}
+                    className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 hover:bg-opacity-50 transition-all rounded-full"
+                  >
+                    <FaCamera className="h-5 w-5 text-white" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -573,11 +604,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   )}
                 </button>
               </div>
-              {passwordMismatch && (
-                <p className="text-red-500 text-xs mt-1">
-                  Passwords do not match
-                </p>
-              )}
             </div>
 
             <div className="flex justify-between pt-3">
@@ -608,6 +634,18 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
         >
           <FaTimes size={18} />
         </button>
+
+        {showProfilePictureModal && userInfo && (
+          <ProfilePictureModal
+            currentImageUrl={
+              userInfo.profile_picture_url
+                ? getAvatarUrl(userInfo.profile_picture_url)
+                : undefined
+            }
+            onClose={() => setShowProfilePictureModal(false)}
+            onUploaded={handleProfilePictureUploaded}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useFiles } from "../files/useFiles";
 
@@ -12,12 +12,46 @@ import { useFiles } from "../files/useFiles";
  * - Robust error handling with fallbacks to prevent UI crashes
  * - Multiple endpoint format support for maximum compatibility
  * - Automatic retries with different HTTP methods where appropriate
- * - Comprehensive logging for debugging
+ * - Comprehensive logging with consistent "[Messages Store]" prefix
+ * - Performance tracking for API calls and operations
+ * - Unified message handling patterns
  */
+
+/**
+ * Helper function to measure performance of async operations
+ * @param label Operation label for logging
+ * @param callback The async function to measure
+ * @returns A wrapped function that measures performance
+ */
+function measurePerformance<T extends any[], R>(
+  label: string,
+  callback: (...args: T) => Promise<R>
+): (...args: T) => Promise<R> {
+  return async (...args: T) => {
+    const start = performance.now();
+    try {
+      console.log(`[Messages Store] Starting ${label}...`);
+      const result = await callback(...args);
+      const elapsed = performance.now() - start;
+      console.log(
+        `[Messages Store] Completed ${label} in ${elapsed.toFixed(2)}ms`
+      );
+      return result;
+    } catch (error) {
+      const elapsed = performance.now() - start;
+      console.error(
+        `[Messages Store] Failed ${label} after ${elapsed.toFixed(2)}ms:`,
+        error
+      );
+      throw error;
+    }
+  };
+}
 
 // Define Message types
 export interface Message {
   id: string;
+  message_id?: string; // Added for compatibility with APIs that use message_id
   sender_id: string;
   recipient_id: string;
   content: string;
@@ -29,10 +63,13 @@ export interface Message {
   timestamp?: string;
   is_edited?: boolean;
   is_deleted?: boolean;
+  sent_at?: string;
+  delivered_at?: string;
   sender?: {
     id: string;
     name: string;
     profile_picture_url?: string;
+    avatar?: string;
   };
   recipient?: {
     id: string;
@@ -40,12 +77,22 @@ export interface Message {
     profile_picture_url?: string;
   };
   media_url?: string;
+  attachment_url?: string; // Added for compatibility
   attachment?: {
     type: "image" | "file";
     url: string;
     name: string;
     size?: string;
   };
+  // Additional properties for UI state management
+  pending?: boolean;
+  sent?: boolean;
+  isCurrentUser?: boolean;
+  temp_id?: string;
+  replacedTempMessage?: boolean;
+  fromWebSocket?: boolean;
+  updatedViaWebSocket?: boolean;
+  recoveredFromError?: boolean;
 }
 
 // Updated interface for SearchMessagesParams
@@ -91,6 +138,7 @@ export interface ApiResponse {
   messages?: any[]; // Add messages property to support message history responses
   pagination?: Pagination;
   error?: string;
+  errorCode?: string; // Added for specific error identification (e.g., ALL_METHODS_FAILED)
   success?: boolean;
   count?: number; // Added count for unread messages count endpoint
   _throttled?: boolean; // Added for throttling detection in request handlers
@@ -124,6 +172,15 @@ export interface MediaUploadRequest {
   related_to: string;
 }
 
+// New interface for unified parameters, similar to the Vue implementation
+export interface UnifiedMessageParams {
+  target_id: string;
+  type: "private" | "group";
+  limit?: number;
+  page?: number;
+  before?: string;
+}
+
 export const useMessages = () => {
   const { data: session } = useSession();
   const [loading, setLoading] = useState(false);
@@ -146,6 +203,11 @@ export const useMessages = () => {
 
   // Base URL for API proxy
   const proxyUrl = "/api/proxy";
+
+  // For tracking API call performance
+  const perfMetrics = useRef<{
+    [key: string]: { count: number; totalTime: number; avgTime: number };
+  }>({});
 
   // Helper function for API calls
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -189,12 +251,12 @@ export const useMessages = () => {
           endpoint.includes("group"))
       ) {
         console.log(
-          `[Messages] Making ${
+          `[Messages Store] Making ${
             mergedOptions.method || "GET"
           } request to: ${normalizedEndpoint}`
         );
         if (mergedOptions.body) {
-          console.log(`[Messages] Request body: ${mergedOptions.body}`);
+          console.log(`[Messages Store] Request body: ${mergedOptions.body}`);
         }
       }
 
@@ -208,13 +270,13 @@ export const useMessages = () => {
       const fullUrl = `${proxyUrl}/${normalizedEndpoint}`;
 
       // Enhanced logging for all requests
-      console.log(`[Messages] Making API call to: ${fullUrl}`);
+      console.log(`[Messages Store] Making API call to: ${fullUrl}`);
       if (
         endpoint.includes("messages/history") ||
         endpoint.includes("messages") ||
         options.method !== "GET"
       ) {
-        console.log(`[Messages] Request options:`, {
+        console.log(`[Messages Store] Request options:`, {
           method: mergedOptions.method || "GET",
           headers: Object.keys(mergedOptions.headers).reduce((acc, key) => {
             acc[key] =
@@ -240,7 +302,7 @@ export const useMessages = () => {
       if (!response.ok) {
         const text = await response.text();
         console.error(
-          `[Messages] API error for ${endpoint}: Status ${response.status}, Response:`,
+          `[Messages Store] API error for ${endpoint}: Status ${response.status}, Response:`,
           text
         );
 
@@ -251,7 +313,7 @@ export const useMessages = () => {
           (response.status === 404 || response.status === 500)
         ) {
           console.log(
-            `[Messages] Returning fallback data for ${response.status} error on ${endpoint}`
+            `[Messages Store] Returning fallback data for ${response.status} error on ${endpoint}`
           );
           return {
             data: [],
@@ -320,21 +382,29 @@ export const useMessages = () => {
   const requestTimestamps = useRef<{ [userId: string]: number }>({});
 
   /**
-   * Get messages with a specific user
+   * Unified function to get messages - supports both initial load and pagination
+   * Uses consistent parameter structure for both private chat and group scenarios
    */
-  const getMessages = async (
-    userId: string,
-    page = 1,
-    limit = 20
+  const getUnifiedMessages = async (
+    params: UnifiedMessageParams
   ): Promise<ApiResponse> => {
-    // Avoid concurrent/overlapping requests for the same user
+    console.log(`[Messages Store] Getting unified messages:`, params);
+
+    const { target_id, type = "private", limit = 20, page, before } = params;
+
+    // Determine if this is pagination (before parameter) or page-based load
+    const isPagination = !!before;
+    const isInitialLoad = !page || page === 1;
+
+    // Avoid concurrent/overlapping requests for the same conversation
+    const requestKey = `${type}-${target_id}`;
     const now = Date.now();
-    const lastRequest = requestTimestamps.current[userId] || 0;
-    const MIN_REQUEST_INTERVAL = 2000; // Minimum 2 seconds between requests for the same user
+    const lastRequest = requestTimestamps.current[requestKey] || 0;
+    const MIN_REQUEST_INTERVAL = 2000; // Minimum 2 seconds between requests
 
     if (now - lastRequest < MIN_REQUEST_INTERVAL) {
       console.log(
-        `[Messages] Throttling request for ${userId}, too soon after previous request (${
+        `[Messages Store] Throttling request for ${requestKey}, too soon after previous request (${
           now - lastRequest
         }ms)`
       );
@@ -347,89 +417,185 @@ export const useMessages = () => {
     }
 
     // Update timestamp
-    requestTimestamps.current[userId] = now;
+    requestTimestamps.current[requestKey] = now;
+
+    // Start performance measurement
+    const startTime = performance.now();
 
     setLoading(true);
     setError(null);
 
     try {
-      // Try both GET and POST approaches for maximum compatibility
-      const methods = ["GET", "POST"];
+      console.log(
+        `[Messages Store] getUnifiedMessages: ${type} chat with ${target_id}, ` +
+          `${
+            isPagination ? `pagination before ${before}` : `page ${page || 1}`
+          }`
+      );
+
+      // Build query parameters consistently
+      let queryParams = new URLSearchParams({
+        type,
+        target_id,
+        limit: limit.toString(),
+      });
+
+      // Add pagination parameter (before takes precedence over page)
+      if (before) {
+        queryParams.append("before", before);
+      } else if (page && page > 1) {
+        queryParams.append("page", page.toString());
+      }
+
+      console.log(`[Messages Store] Query parameters:`, queryParams.toString());
+
+      // Try multiple endpoint formats, based on API compatibility needs
+      const endpoints = [
+        // Primary endpoint with query params
+        {
+          url: `messages/history?${queryParams.toString()}`,
+          method: "GET",
+        },
+        // RESTful format
+        {
+          url: `messages/${type}/${target_id}/history${
+            before
+              ? `?before=${before}&limit=${limit}`
+              : page && page > 1
+              ? `?page=${page}&limit=${limit}`
+              : `?limit=${limit}`
+          }`,
+          method: "GET",
+        },
+      ];
+
       let lastError = null;
+      let response = null;
 
-      for (const method of methods) {
+      // Try each endpoint until one works
+      for (const endpoint of endpoints) {
         try {
-          console.log(`[Messages] Attempting to get messages with ${method}`);
+          console.log(
+            `[Messages Store] Trying endpoint: ${endpoint.url} with method ${endpoint.method}`
+          );
 
-          let response;
-          if (method === "GET") {
-            response = await apiCall(
-              `messages?userId=${userId}&page=${page}&limit=${limit}`
+          response = await apiCall(endpoint.url, {});
+
+          if (response) {
+            console.log(`[Messages Store] Endpoint ${endpoint.url} succeeded`);
+            break;
+          }
+        } catch (error) {
+          console.warn(
+            `[Messages Store] Endpoint ${endpoint.url} failed:`,
+            error
+          );
+          lastError = error;
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error("All message history endpoints failed");
+      }
+
+      // Extract messages from various response formats
+      let messagesArray = [];
+      if (Array.isArray(response)) {
+        messagesArray = response;
+      } else if (Array.isArray(response.data)) {
+        messagesArray = response.data;
+      } else if (Array.isArray(response.messages)) {
+        messagesArray = response.messages;
+      } else if (response && typeof response === "object") {
+        // Find the first array property in the response
+        const arrayProps = Object.entries(response)
+          .filter(([_, value]) => Array.isArray(value))
+          .sort(([_, a], [__, b]) =>
+            Array.isArray(b) ? b.length - (Array.isArray(a) ? a.length : 0) : 0
+          );
+
+        if (arrayProps.length > 0) {
+          const [propName, array] = arrayProps[0];
+          console.log(
+            `[Messages Store] Found array property '${propName}' in response`,
+            array
+          );
+          messagesArray = array as any[];
+        }
+      }
+
+      // Normalize message field names for consistency
+      messagesArray = messagesArray.map((msg: any) => ({
+        ...msg,
+        // Ensure both id and message_id are available for compatibility
+        id: msg.id || msg.message_id,
+        message_id: msg.message_id || msg.id,
+      }));
+
+      console.log(
+        `[Messages Store] Retrieved ${messagesArray.length} messages`
+      );
+
+      // Handle message array updates based on load type
+      if (isInitialLoad && !before) {
+        // Initial load - replace messages array
+        setMessages(messagesArray);
+        console.log(
+          `[Messages Store] Initial load: Set ${messagesArray.length} messages`
+        );
+      } else {
+        // Pagination - safely merge messages without duplicates
+        const existingIds = new Set(
+          messages.map((m) => m.id || m.message_id).filter(Boolean)
+        );
+
+        const newMessages = messagesArray.filter((msg: any) => {
+          const msgId = msg.id || msg.message_id;
+          return msgId && !existingIds.has(msgId);
+        });
+
+        if (newMessages.length > 0) {
+          if (before) {
+            // Cursor pagination - add older messages at the beginning
+            console.log(
+              `[Messages Store] Pagination: Adding ${newMessages.length} older messages`
             );
+            setMessages((prevMessages) => [...newMessages, ...prevMessages]);
           } else {
-            response = await apiCall("messages", {
-              method: "POST",
-              body: JSON.stringify({
-                userId,
-                page,
-                limit,
-              }),
-            });
-          }
-
-          console.log(`[Messages] ${method} request successful:`, response);
-
-          if (page === 1 || page <= 0) {
-            setMessages(response.data || response.messages || []);
-          } else {
-            // For pagination, append older messages
-            setMessages((prevMessages) => [
-              ...(response.data || response.messages || []),
-              ...prevMessages,
-            ]);
-          }
-
-          // Update pagination info
-          if (response.pagination) {
-            setMessagesPagination(response.pagination);
-          }
-
-          setLoading(false);
-          return response;
-        } catch (err: any) {
-          console.warn(`[Messages] ${method} request failed:`, err);
-          lastError = err;
-
-          // If method is GET, try POST next
-          if (method === "GET") {
-            continue;
+            // Page pagination - add older messages at the beginning
+            console.log(
+              `[Messages Store] Page load: Adding ${newMessages.length} messages`
+            );
+            setMessages((prevMessages) => [...newMessages, ...prevMessages]);
           }
         }
       }
 
-      // If we get here, both methods failed
-      setError(
-        `Failed to fetch messages: ${lastError?.message || "Unknown error"}`
-      );
-      console.error(
-        `[Messages] Error fetching messages with user ${userId}:`,
-        lastError
-      );
-      setLoading(false);
+      // Update pagination info if provided
+      if (response.pagination) {
+        setMessagesPagination(response.pagination);
+      }
 
-      // Return a fallback response instead of throwing to prevent UI breakage
-      return {
-        data: [],
-        messages: [],
-        success: false,
-        error: lastError?.message || "Failed to fetch messages",
-      };
+      const endTime = performance.now();
+      console.log(
+        `[Messages Store] getUnifiedMessages completed in ${(
+          endTime - startTime
+        ).toFixed(2)}ms`
+      );
+
+      setLoading(false);
+      return response;
     } catch (err: any) {
-      setError(`Failed to fetch messages: ${err.message}`);
+      const endTime = performance.now();
       console.error(
-        `[Messages] Error fetching messages with user ${userId}:`,
+        `[Messages Store] Failed to fetch unified messages after ${(
+          endTime - startTime
+        ).toFixed(2)}ms:`,
         err
       );
+
+      const errorMsg = err.message || "Failed to fetch messages";
+      setError(errorMsg);
       setLoading(false);
 
       // Return a fallback response instead of throwing
@@ -437,21 +603,62 @@ export const useMessages = () => {
         data: [],
         messages: [],
         success: false,
-        error: err.message || "Failed to fetch messages",
+        error: errorMsg,
+        pagination: {
+          current_page: page || 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
       };
     }
   };
 
   /**
-   * Load more messages (pagination)
+   * Legacy function to get messages with a specific user
+   * Now delegates to the unified messages function for consistent API patterns
+   * Default is to get the latest messages (page 1, limit 20)
+   */
+  const getMessages = async (
+    userId: string,
+    page = 1,
+    limit = 20
+  ): Promise<ApiResponse> => {
+    console.log(
+      `[Messages Store] Legacy getMessages called - converting to unified format`
+    );
+    return getUnifiedMessages({
+      target_id: userId,
+      type: "private",
+      page,
+      limit,
+      // Ensure we're getting the most recent messages
+      before: undefined,
+    });
+  };
+
+  /**
+   * Load more messages for pagination using unified approach
    */
   const loadMoreMessages = async (
-    userId: string
+    targetId: string,
+    type: "private" | "group" = "private"
   ): Promise<ApiResponse | null> => {
     if (messagesPagination.has_more_pages) {
       const nextPage = messagesPagination.current_page + 1;
-      return getMessages(userId, nextPage);
+      console.log(
+        `[Messages Store] loadMoreMessages: Loading page ${nextPage} for ${type} chat with ${targetId}`
+      );
+
+      return getUnifiedMessages({
+        target_id: targetId,
+        type,
+        page: nextPage,
+        limit: messagesPagination.items_per_page,
+      });
     }
+    console.log(`[Messages Store] loadMoreMessages: No more pages available`);
     return null;
   };
 
@@ -593,16 +800,69 @@ export const useMessages = () => {
   };
 
   /**
-   * Edit a message
+   * Edit a message with improved error handling and temporary message support
    */
   const editMessage = async (
     messageId: string,
     content: string
   ): Promise<ApiResponse> => {
+    console.log(`[Messages Store] Editing message ${messageId}`);
     setLoading(true);
     setError(null);
+    const startTime = performance.now();
 
     try {
+      // Check if this is a temporary ID that needs special handling
+      if (messageId.startsWith("temp-")) {
+        console.log(
+          `[Messages Store] Attempting to edit a temp message: ${messageId}`
+        );
+
+        // Find the message in our local state to check if it has a real message_id
+        const messageToEdit = messages.find((msg) => msg.id === messageId);
+
+        if (
+          messageToEdit?.message_id &&
+          !messageToEdit.message_id.startsWith("temp-")
+        ) {
+          // If the message has a real message_id, use that instead
+          console.log(
+            `[Messages Store] Using real message_id ${messageToEdit.message_id} instead of temp ID`
+          );
+          messageId = messageToEdit.message_id;
+        } else {
+          // For truly temporary messages that haven't been sent to the server yet,
+          // just update them in the local state without making an API call
+          messages.forEach((message) => {
+            if (message.id === messageId) {
+              message.content = content;
+              message.updated_at = new Date().toISOString();
+              message.is_edited = true;
+            }
+          });
+          console.log(
+            `[Messages Store] Updated local-only temporary message without API call`
+          );
+
+          const endTime = performance.now();
+          console.log(
+            `[Messages Store] Edit completed locally in ${(
+              endTime - startTime
+            ).toFixed(2)}ms`
+          );
+
+          return {
+            message: "Local temporary message updated",
+            success: true,
+          };
+        }
+      }
+
+      // Send the edit request to the API
+      console.log(
+        `[Messages Store] Sending edit request for message ${messageId}`
+      );
+
       const response = await apiCall(`messages/${messageId}`, {
         method: "PUT",
         body: JSON.stringify({
@@ -610,10 +870,16 @@ export const useMessages = () => {
         }),
       });
 
-      // Update the message in our local state
+      console.log(`[Messages Store] Edit API response:`, response);
+
+      // Update the message in our local state - handle both id and message_id
+      const beforeCount = messages.length;
       setMessages(
         messages.map((message) => {
-          if (message.id === messageId) {
+          if (message.id === messageId || message.message_id === messageId) {
+            console.log(
+              `[Messages Store] Updating message ${messageId} in local state`
+            );
             return {
               ...message,
               content,
@@ -625,86 +891,324 @@ export const useMessages = () => {
         })
       );
 
-      setLoading(false);
-      return response;
-    } catch (err: any) {
-      setError(`Failed to edit message: ${err.message}`);
-      console.error(`Error editing message ${messageId}:`, err);
-      setLoading(false);
-      throw err;
-    }
-  };
-
-  /**
-   * Delete a message
-   */
-  const deleteMessage = async (messageId: string): Promise<ApiResponse> => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await apiCall(`messages/${messageId}`, {
-        method: "DELETE",
-      });
-
-      // Update the message in our local state
-      setMessages(
-        messages.map((message) => {
-          if (message.id === messageId) {
-            return {
-              ...message,
-              content: "This message has been deleted",
-              is_deleted: true,
-            };
-          }
-          return message;
-        })
+      const endTime = performance.now();
+      console.log(
+        `[Messages Store] Edit completed in ${(endTime - startTime).toFixed(
+          2
+        )}ms`
       );
 
       setLoading(false);
       return response;
     } catch (err: any) {
-      setError(`Failed to delete message: ${err.message}`);
-      console.error(`Error deleting message ${messageId}:`, err);
+      const endTime = performance.now();
+      console.error(
+        `[Messages Store] Failed to edit message after ${(
+          endTime - startTime
+        ).toFixed(2)}ms:`,
+        err
+      );
+
+      setError(`Failed to edit message: ${err.message}`);
       setLoading(false);
       throw err;
     }
   };
 
   /**
-   * Mark messages as read
+   * Delete a message with enhanced error handling and temporary message support
+   * @param messageId - ID of the message to delete
+   * @param isGroupMessage - Indicates if the message is from a group chat (optional)
+   */
+  const deleteMessage = async (
+    messageId: string,
+    isGroupMessage?: boolean
+  ): Promise<ApiResponse> => {
+    console.log(
+      `[Messages Store] Deleting message ${messageId}, is group message: ${!!isGroupMessage}`
+    );
+    setLoading(true);
+    setError(null);
+    const startTime = performance.now();
+
+    try {
+      // Check if this is a temporary ID that needs special handling
+      if (messageId.startsWith("temp-")) {
+        console.log(
+          `[Messages Store] Attempting to delete a temp message: ${messageId}`
+        );
+
+        // Find the message in our local state to check if it has a real message_id
+        const messageToDelete = messages.find((msg) => msg.id === messageId);
+
+        if (messageToDelete) {
+          // Check if the message has a real message_id that's not a temporary ID
+          if (
+            messageToDelete.message_id &&
+            typeof messageToDelete.message_id === "string" &&
+            !messageToDelete.message_id.startsWith("temp-")
+          ) {
+            // If the message has a real message_id, use that instead
+            console.log(
+              `[Messages Store] Using real message_id ${messageToDelete.message_id} instead of temp ID`
+            );
+            messageId = messageToDelete.message_id;
+          } else {
+            // For truly temporary messages that haven't been sent to the server yet,
+            // just remove them from the local state without making an API call
+            console.log(
+              `[Messages Store] Removing local-only temporary message without API call`
+            );
+            setMessages(messages.filter((message) => message.id !== messageId));
+
+            const endTime = performance.now();
+            console.log(
+              `[Messages Store] Delete completed locally in ${(
+                endTime - startTime
+              ).toFixed(2)}ms`
+            );
+
+            return {
+              message: "Local temporary message removed",
+              success: true,
+            };
+          }
+        } else {
+          console.log(
+            `[Messages Store] Could not find message with ID: ${messageId}`
+          );
+
+          const endTime = performance.now();
+          console.log(
+            `[Messages Store] Delete abandoned (message not found) in ${(
+              endTime - startTime
+            ).toFixed(2)}ms`
+          );
+
+          return {
+            message: "Message not found in local state",
+            success: false,
+          };
+        }
+      }
+
+      // Determine the proper endpoint based on whether it's a group message
+      let deleteEndpoint = `messages/${messageId}`;
+
+      // If it's explicitly a group message, use the group-specific endpoint format
+      if (isGroupMessage) {
+        console.log(`[Messages Store] Using group message deletion endpoint`);
+        // Add group-specific logic if needed, or keep consistent endpoint format
+      }
+
+      console.log(
+        `[Messages Store] Sending delete request for message ${messageId}`
+      );
+
+      // Find the original message to get any additional metadata that might be needed
+      const originalMessage = messages.find(
+        (msg) => msg.id === messageId || msg.message_id === messageId
+      );
+
+      // Send delete request with additional context if available
+      const deleteRequestBody = originalMessage?.sent_at
+        ? {
+            sent_at: originalMessage.sent_at,
+            recipient_id: originalMessage.recipient_id,
+            sender_id: originalMessage.sender_id,
+          }
+        : undefined;
+
+      const response = await apiCall(deleteEndpoint, {
+        method: "DELETE",
+        ...(deleteRequestBody && { body: JSON.stringify(deleteRequestBody) }),
+      });
+
+      // Remove the message from our local state or mark as deleted
+      const beforeCount = messages.length;
+
+      // Some implementations might really delete, others just mark as deleted
+      // First try to find the message to determine what to do
+      const messageToDelete = messages.find(
+        (msg) => msg.id === messageId || msg.message_id === messageId
+      );
+
+      if (messageToDelete) {
+        // Option 1: Mark as deleted but keep in history (recommended for better UX)
+        setMessages(
+          messages.map((message) => {
+            if (message.id === messageId || message.message_id === messageId) {
+              return {
+                ...message,
+                content: "This message was deleted",
+                is_deleted: true,
+              };
+            }
+            return message;
+          })
+        );
+      } else {
+        // Option 2: Remove completely from state
+        setMessages(
+          messages.filter(
+            (message) =>
+              message.id !== messageId && message.message_id !== messageId
+          )
+        );
+      }
+
+      const afterCount = messages.length;
+      console.log(
+        `[Messages Store] Updated ${
+          beforeCount - afterCount === 0 ? "marked as deleted" : "removed"
+        } message from local state`
+      );
+
+      const endTime = performance.now();
+      console.log(
+        `[Messages Store] Delete completed in ${(endTime - startTime).toFixed(
+          2
+        )}ms`
+      );
+
+      setLoading(false);
+      return response;
+    } catch (err: any) {
+      const endTime = performance.now();
+      console.error(
+        `[Messages Store] Failed to delete message after ${(
+          endTime - startTime
+        ).toFixed(2)}ms:`,
+        err
+      );
+
+      // Provide more specific error messages based on the error type
+      let errorMessage = "Failed to delete message";
+      if (err.message?.includes("clustering keys")) {
+        errorMessage = "Unable to delete message: Database constraint error";
+      } else if (err.message?.includes("not found")) {
+        errorMessage = "Message not found or already deleted";
+      } else if (err.message?.includes("permission")) {
+        errorMessage = "You don't have permission to delete this message";
+      } else if (err.message) {
+        errorMessage = `Failed to delete message: ${err.message}`;
+      }
+
+      setError(errorMessage);
+      console.error(
+        `[Messages Store] Error deleting message ${messageId}:`,
+        err
+      );
+      setLoading(false);
+      throw new Error(errorMessage);
+    }
+  };
+
+  /**
+   * Mark messages as read with enhanced error handling and temp message support
    */
   const markMessagesAsRead = async (
     messageIds: string[]
   ): Promise<ApiResponse> => {
+    console.log(
+      `[Messages Store] Marking ${messageIds.length} messages as read`
+    );
     setLoading(true);
     setError(null);
+    const startTime = performance.now();
 
     try {
+      // Filter out temporary message IDs and replace with real message_ids if available
+      const finalMessageIds = messageIds
+        .map((id) => {
+          if (id.startsWith("temp-")) {
+            const message = messages.find((msg) => msg.id === id);
+            return message?.message_id || id;
+          }
+          return id;
+        })
+        .filter((id) => !id.startsWith("temp-")); // Remove any remaining temp IDs
+
+      // If we have no valid IDs after filtering, return early
+      if (finalMessageIds.length === 0) {
+        console.log("[Messages Store] No valid message IDs to mark as read");
+        const endTime = performance.now();
+        console.log(
+          `[Messages Store] Operation completed (no action) in ${(
+            endTime - startTime
+          ).toFixed(2)}ms`
+        );
+
+        return {
+          message: "No valid messages to mark as read",
+          success: true,
+        };
+      }
+
+      console.log(
+        `[Messages Store] Sending read status update for ${finalMessageIds.length} messages`
+      );
+
       const response = await apiCall("messages/read", {
         method: "PUT",
         body: JSON.stringify({
-          message_ids: messageIds,
+          message_ids: finalMessageIds,
         }),
       });
 
-      // Update messages in our local state
+      // Update messages in our local state - handle both id and message_id matching
       setMessages(
         messages.map((message) => {
-          if (messageIds.includes(message.id)) {
+          if (
+            messageIds.includes(message.id) ||
+            (message.message_id && finalMessageIds.includes(message.message_id))
+          ) {
             return { ...message, read: true };
           }
           return message;
         })
       );
 
+      const endTime = performance.now();
+      console.log(
+        `[Messages Store] Mark as read completed in ${(
+          endTime - startTime
+        ).toFixed(2)}ms`
+      );
+
       setLoading(false);
       return response;
     } catch (err: any) {
+      const endTime = performance.now();
+      console.error(
+        `[Messages Store] Failed to mark messages as read after ${(
+          endTime - startTime
+        ).toFixed(2)}ms:`,
+        err
+      );
+
       setError(`Failed to mark messages as read: ${err.message}`);
-      console.error("Error marking messages as read:", err);
       setLoading(false);
-      throw err;
+
+      // Update local state even if the API call fails for better UX
+      setMessages(
+        messages.map((message) => {
+          if (
+            messageIds.includes(message.id) ||
+            messageIds.includes(message.message_id || "")
+          ) {
+            return { ...message, read: true };
+          }
+          return message;
+        })
+      );
+
+      // Return a partial success response
+      return {
+        message: "Updated read status locally, but server update failed",
+        success: false,
+        error: err.message,
+      };
     }
   };
 
@@ -798,225 +1302,25 @@ export const useMessages = () => {
   };
 
   /**
-   * Get message history for a private conversation or group
+   * Get message history for private chat or group conversation
+   * @deprecated This function now delegates to the unified getUnifiedMessages function
    */
   const getMessageHistory = async (
     params: MessageHistoryParams
   ): Promise<ApiResponse> => {
-    setLoading(true);
-    setError(null);
+    console.log(
+      `[Messages Store] getMessageHistory called - delegating to unified getUnifiedMessages`
+    );
 
-    try {
-      const { type, target_id, limit = 20, before, _retryCount = 0 } = params;
+    // Convert MessageHistoryParams to UnifiedMessageParams
+    const unifiedParams: UnifiedMessageParams = {
+      target_id: params.target_id,
+      type: params.type,
+      limit: params.limit,
+      before: params.before,
+    };
 
-      // Log the parameters for debugging
-      console.log("[Messages] GetMessageHistory parameters:", {
-        type,
-        target_id,
-        limit,
-        before,
-        _retryCount,
-      });
-
-      // Set initial empty state if no messages loaded yet
-      if (messages.length === 0) {
-        console.log("[Messages] Setting initial empty state while loading");
-      }
-
-      // Try multiple endpoint formats to handle different API implementations
-      // If we're retrying, prioritize different formats based on retry count
-      const endpoints =
-        _retryCount > 0
-          ? [
-              // On retry, prioritize POST methods first
-              // Format 4: POST to history endpoint (moved up for retries)
-              {
-                url: `messages/history`,
-                method: "POST",
-                body: {
-                  type,
-                  target_id,
-                  limit,
-                  ...(before ? { before } : {}),
-                },
-              },
-
-              // Format 5: POST to RESTful format (moved up for retries)
-              {
-                url: `messages/${type}/${target_id}/history`,
-                method: "POST",
-                body: {
-                  limit,
-                  ...(before ? { before } : {}),
-                },
-              },
-
-              // Format 1: RESTful format
-              {
-                url: `messages/${type}/${target_id}/history${
-                  before
-                    ? `?before=${before}&limit=${limit}`
-                    : `?limit=${limit}`
-                }${_retryCount ? `&_retryCount=${_retryCount}` : ""}`,
-                method: "GET",
-              },
-            ]
-          : [
-              // Standard order for first attempts
-              // Format 1: RESTful format
-              {
-                url: `messages/${type}/${target_id}/history${
-                  before
-                    ? `?before=${before}&limit=${limit}`
-                    : `?limit=${limit}`
-                }`,
-                method: "GET",
-              },
-
-              // Format 2: Traditional query params
-              {
-                url: `messages/history?type=${encodeURIComponent(
-                  type
-                )}&target_id=${encodeURIComponent(target_id)}&limit=${limit}${
-                  before ? `&before=${encodeURIComponent(before)}` : ""
-                }`,
-                method: "GET",
-              },
-
-              // Format 3: Alternative path format
-              {
-                url: `messages/history/${type}/${target_id}${
-                  before
-                    ? `?before=${before}&limit=${limit}`
-                    : `?limit=${limit}`
-                }`,
-                method: "GET",
-              },
-
-              // Format 4: POST to history endpoint
-              {
-                url: `messages/history`,
-                method: "POST",
-                body: {
-                  type,
-                  target_id,
-                  limit,
-                  ...(before ? { before } : {}),
-                },
-              },
-
-              // Format 5: POST to RESTful format
-              {
-                url: `messages/${type}/${target_id}/history`,
-                method: "POST",
-                body: {
-                  limit,
-                  ...(before ? { before } : {}),
-                },
-              },
-            ];
-
-      let lastError = null;
-
-      // Try each endpoint until one works
-      for (const endpoint of endpoints) {
-        try {
-          console.log(
-            `[Messages] Trying endpoint: ${endpoint.url} with method ${endpoint.method}`
-          );
-
-          const options: RequestInit =
-            endpoint.method === "POST"
-              ? {
-                  method: "POST",
-                  body: JSON.stringify(endpoint.body),
-                }
-              : {};
-
-          const response = await apiCall(endpoint.url, options);
-
-          // Process messages from response
-          const messages =
-            response.data?.messages || response.messages || response.data || [];
-          console.log(
-            `[Messages] Got ${messages.length} messages from endpoint ${endpoint.url}`
-          );
-
-          // Update state with messages
-          if (!before) {
-            setMessages(messages);
-          } else {
-            setMessages((prevMessages) => [...messages, ...prevMessages]);
-          }
-
-          setLoading(false);
-          return response;
-        } catch (error) {
-          console.warn(`[Messages] Endpoint ${endpoint} failed:`, error);
-          lastError = error;
-        }
-      }
-
-      // If we get here, all endpoints failed
-      console.error(
-        "[Messages] All endpoints failed for message history:",
-        lastError
-      );
-
-      // For critical UI components, return an empty array instead of throwing
-      console.warn("[Messages] Returning empty messages array as fallback");
-      setMessages([]);
-      setLoading(false);
-
-      // Return a valid response structure to prevent UI errors
-      return {
-        messages: [],
-        data: [],
-        pagination: {
-          current_page: 1,
-          total_pages: 1,
-          total_items: 0,
-          items_per_page: 20,
-          has_more_pages: false,
-        },
-        error: lastError
-          ? lastError.toString()
-          : "Failed to fetch messages history",
-        success: false,
-      };
-    } catch (err: any) {
-      const errorMsg = err.message || "Unknown error";
-      setError(`Failed to get message history: ${errorMsg}`);
-      console.error(`[Messages] Error getting message history:`, err);
-
-      // Log more details about the error for debugging
-      if (err.response) {
-        console.error("[Messages] Error response:", err.response);
-      }
-      if (err.request) {
-        console.error("[Messages] Error request:", err.request);
-      }
-
-      // Log the parameters that caused the error for debugging
-      console.error("[Messages] Failed request parameters:", params);
-
-      setLoading(false);
-
-      // Return a fallback response for UI resilience
-      return {
-        messages: [],
-        data: [],
-        pagination: {
-          current_page: 1,
-          total_pages: 1,
-          total_items: 0,
-          items_per_page: 20,
-          has_more_pages: false,
-        },
-        error: errorMsg,
-        success: false,
-      };
-    }
+    return getUnifiedMessages(unifiedParams);
   };
 
   /**
@@ -1185,24 +1489,32 @@ export const useMessages = () => {
     unreadCount,
     messagesPagination,
 
+    // Unified API
+    getUnifiedMessages, // New unified function - primary recommended API
+
+    // Legacy Actions for backward compatibility
+    getMessages, // Now delegates to getUnifiedMessages
+    getMessageHistory, // Now delegates to getUnifiedMessages
+
     // Actions
-    getMessages,
-    loadMoreMessages,
+    loadMoreMessages, // Enhanced to support unified params
     getConversations,
     sendMessage,
     sendMessageToFriend,
     sendMessageToGroup,
-    editMessage,
-    deleteMessage,
-    markMessagesAsRead,
+    editMessage, // Enhanced with temp message support
+    deleteMessage, // Enhanced with temp message and group support
+    markMessagesAsRead, // Enhanced with temp message support
     markAsRead,
     sendMessageWithMedia,
     uploadMedia,
     uploadAttachment,
     searchMessages,
-    getMessageHistory,
     postMessage,
     getUnreadCount,
     sendMessageWithAttachment,
+
+    // Performance metrics access if needed by consumers
+    perfMetrics: perfMetrics.current,
   };
 };

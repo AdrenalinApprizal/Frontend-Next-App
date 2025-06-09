@@ -4,11 +4,11 @@ import { useState, useEffect, useRef } from "react";
 import { Search, UserPlus, Check, X, Plus, Users } from "lucide-react";
 import { FaUsers, FaUser, FaTimes } from "react-icons/fa";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "react-hot-toast";
 import { useGroup, Group as ApiGroup } from "@/hooks/auth/useGroup";
 import { useFriendship } from "@/hooks/auth/useFriends";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMessages } from "@/hooks/messages/useMessages";
 import { NotificationDropdown } from "@/components/notification-dropdown";
 
 // Interface for group data
@@ -45,6 +45,20 @@ interface Friend {
 
 export function GroupsList() {
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Handle group selection
+  const handleGroupSelect = async (groupId: string) => {
+    try {
+      // Navigate to the chat with this group
+      router.push(`/chat/messages/${groupId}?type=group`);
+    } catch (err) {
+      console.error("[GroupsList] Error navigating to group:", err);
+      toast.error("Failed to open group chat");
+    }
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateGroupPopup, setShowCreateGroupPopup] = useState(false);
   const [groupName, setGroupName] = useState("");
@@ -78,6 +92,14 @@ export function GroupsList() {
     loading: groupsLoading,
     error: groupsError,
   } = useGroup();
+
+  // Messages hook for group navigation
+  const {
+    getMessages,
+    getMessageHistory,
+    getUnreadCount,
+    loading: loadingMessages,
+  } = useMessages();
 
   // Fetch all groups on component mount
   useEffect(() => {
@@ -123,15 +145,25 @@ export function GroupsList() {
   // Update groups state when data is fetched
   useEffect(() => {
     if (hookGroups) {
-      const formattedGroups: Group[] = hookGroups.map((group: ApiGroup) => ({
-        id: group.id,
-        name: group.name,
-        lastActivity: formatLastActivity(group.updated_at),
-        memberCount: group.member_count,
-        avatar: group.avatar_url,
-        last_message: group.last_message,
-        unread_count: group.unread_count,
-      }));
+      const formattedGroups: Group[] = hookGroups.map((group: ApiGroup) => {
+        // Log one group to check avatar fields
+        if (hookGroups.length > 0 && group === hookGroups[0]) {
+          console.log("[GroupsList] First group avatar fields:", {
+            avatar_url: group.avatar_url,
+            profile_picture_url: (group as any).profile_picture_url,
+          });
+        }
+
+        return {
+          id: group.id,
+          name: group.name,
+          lastActivity: formatLastActivity(group.updated_at),
+          memberCount: group.member_count,
+          avatar: group.avatar_url || (group as any).profile_picture_url,
+          last_message: group.last_message,
+          unread_count: group.unread_count,
+        };
+      });
       setGroups(formattedGroups);
     }
   }, [hookGroups]);
@@ -407,6 +439,16 @@ export function GroupsList() {
 
       {/* Groups list */}
       <div className="flex-1 overflow-auto">
+        {/* ALL GROUPS heading with count */}
+        {!groupsLoading && !groupsError && filteredGroups.length > 0 && (
+          <h2 className="font-medium text-gray-500 text-xs uppercase tracking-wider mb-3">
+            ALL GROUPS{" "}
+            <span className="ml-1 text-gray-400">
+              ({filteredGroups.length})
+            </span>
+          </h2>
+        )}
+
         {groupsLoading ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-3"></div>
@@ -432,11 +474,17 @@ export function GroupsList() {
           </div>
         ) : (
           <div className="space-y-3">
-            {sortedGroups.map((group) => (
-              <Link key={group.id} href={`/chat/groups/${group.id}`}>
+            {sortedGroups.map((group) => {
+              const isActive =
+                pathname === `/chat/messages/${group.id}` &&
+                searchParams.get("type") === "group";
+
+              return (
                 <div
-                  className={`flex items-center p-4 rounded-lg transition-colors ${
-                    pathname === `/chat/groups/${group.id}`
+                  key={group.id}
+                  onClick={() => handleGroupSelect(group.id)}
+                  className={`flex items-center p-4 rounded-lg transition-colors cursor-pointer ${
+                    isActive
                       ? "bg-blue-50 border border-blue-100"
                       : "hover:bg-gray-50"
                   }`}
@@ -471,29 +519,34 @@ export function GroupsList() {
                     <div className="flex justify-between items-center mt-1">
                       {group.last_message ? (
                         <p className="text-xs text-gray-600 truncate max-w-[80%]">
-                          <span className="font-medium">
-                            {group.last_message.sender_name}
-                          </span>
-                          : {group.last_message.content}
+                          {group.last_message.sender_name && (
+                            <>
+                              <span className="font-medium">
+                                {group.last_message.sender_name}
+                              </span>
+                              {": "}
+                            </>
+                          )}
+                          {group.last_message.content}
                         </p>
                       ) : (
-                        <p className="text-xs text-gray-400 italic">
-                          No messages yet
+                        <p className="text-xs text-gray-600">
+                          <span className="flex items-center">
+                            <FaUsers className="mr-1 h-3 w-3" />{" "}
+                            {group.memberCount} members
+                          </span>
                         </p>
                       )}
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                        {group.memberCount}
-                      </span>
+                      {group.unread_count && group.unread_count > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-red-500 text-white font-medium">
+                          {group.unread_count}
+                        </span>
+                      )}
                     </div>
-                    {group.unread_count && group.unread_count > 0 && (
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 ml-2 text-xs font-medium leading-none text-red-100 bg-red-600 rounded-full">
-                        {group.unread_count}
-                      </span>
-                    )}
                   </div>
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

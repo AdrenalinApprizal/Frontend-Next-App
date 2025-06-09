@@ -1,156 +1,299 @@
 "use client";
 
-import { useState, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
-  FaUser,
-  FaFile,
-  FaImage,
   FaTimes,
-  FaLink,
+  FaUser,
   FaEnvelope,
-  FaPhone,
-  FaCalendarAlt,
-  FaMapMarkerAlt,
-  FaUserPlus,
   FaDownload,
   FaShareAlt,
+  FaFile,
   FaCheck,
   FaChevronLeft,
   FaChevronRight,
 } from "react-icons/fa";
-import { toast } from "react-hot-toast";
-
-interface FriendDetails {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  joinDate: string;
-  location: string;
-  status: "online" | "offline";
-  avatar?: string;
-}
+import { useFriendship } from "@/hooks/auth/useFriends";
+import { useFiles } from "@/hooks/files/useFiles";
+import toast from "react-hot-toast";
 
 interface Friend {
   id: string;
   name: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  username?: string;
+  profile_picture_url?: string;
   avatar?: string;
   shareSelected?: boolean;
+  status?: "online" | "offline";
+  phone?: string;
+  last_seen?: string;
+  unread_count?: number;
+  display_name?: string;
+  full_name?: string;
+  avatar_url?: string;
+  created_at?: string;
+}
+
+interface FriendDetails {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  status: "online" | "offline";
+  avatar?: string;
+  first_name?: string;
+  last_name?: string;
+  profile_picture_url?: string;
+  username?: string;
+  avatar_url?: string;
+  display_name?: string;
+  full_name?: string;
 }
 
 interface MediaItem {
   id: string;
-  url: string;
+  name: string;
+  size: number;
   type: string;
+  url?: string;
+  thumbnail_url?: string;
 }
 
 interface FileItem {
   id: string;
   name: string;
-  size: string;
-  date: string;
+  size: number;
+  type: string;
+  url?: string;
 }
 
-interface UserProfileInfoProps {
-  username?: string;
+interface Pagination {
+  current_page: number;
+  total_pages: number;
+  total_items: number;
+  items_per_page: number;
+  has_more_pages: boolean;
+}
+
+interface FriendInfoPanelProps {
   friendDetails?: FriendDetails;
-  onClose?: () => void;
+  onClose: () => void;
 }
 
-export default function UserProfileInfo({
-  username,
+const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   friendDetails,
   onClose,
-}: UserProfileInfoProps) {
-  // Menggunakan data dari friendDetails jika tersedia, atau fallback ke username
-  const displayName = friendDetails?.name || username || "User";
-
-  // State for modal displays
-  const [showMediaModal, setShowMediaModal] = useState(false);
-  const [showFilesModal, setShowFilesModal] = useState(false);
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [showMediaPreview, setShowMediaPreview] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
-  const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
+}) => {
+  // State management
+  const [userMedia, setUserMedia] = useState<MediaItem[]>([]);
+  const [userFiles, setUserFiles] = useState<FileItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMoreFiles, setIsLoadingMoreFiles] = useState(false);
 
-  // Mock data for media, files, and friends list
-  const [userMedia, setUserMedia] = useState<MediaItem[]>([
-    { id: "1", url: "/images/voxtalogo.png", type: "image" },
-    { id: "2", url: "/images/voxtalogo.png", type: "image" },
-    { id: "3", url: "/images/voxtalogo.png", type: "image" },
-    { id: "4", url: "/images/voxtalogo.png", type: "image" },
-    { id: "5", url: "/images/voxtalogo.png", type: "image" },
-  ]);
+  // Modal states
+  const [showMediaModal, setShowMediaModal] = useState(false);
+  const [showFilesModal, setShowFilesModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [showMediaPreview, setShowMediaPreview] = useState(false);
 
-  const [userFiles, setUserFiles] = useState<FileItem[]>([
-    {
-      id: "1",
-      name: "Project_Proposal.pdf",
-      size: "1.2 MB",
-      date: "12 Apr 2025",
-    },
-    { id: "2", name: "Meeting_Notes.docx", size: "604 KB", date: "2 Mar 2025" },
-    { id: "3", name: "Budget_2025.xlsx", size: "845 KB", date: "15 Feb 2025" },
-  ]);
+  // Selection states
+  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
+  const [friendsList, setFriendsList] = useState<Friend[]>([]);
 
-  // Mock friends list for sharing functionality
-  const [friendsList, setFriendsList] = useState<Friend[]>([
-    { id: "101", name: "Rudi Setiawan", shareSelected: false },
-    { id: "102", name: "Lina Kartika", shareSelected: false },
-    { id: "103", name: "Budi Santoso", shareSelected: false },
-    { id: "104", name: "Ratna Dewi", shareSelected: false },
-    { id: "105", name: "Dimas Prasetyo", shareSelected: false },
-  ]);
+  // Pagination states
+  const [currentMediaPage, setCurrentMediaPage] = useState(1);
+  const [currentFilesPage, setCurrentFilesPage] = useState(1);
+  const [mediaPagination, setMediaPagination] = useState<Pagination>({
+    current_page: 1,
+    total_pages: 1,
+    total_items: 0,
+    items_per_page: 8,
+    has_more_pages: false,
+  });
+  const [filesPagination, setFilesPagination] = useState<Pagination>({
+    current_page: 1,
+    total_pages: 1,
+    total_items: 0,
+    items_per_page: 8,
+    has_more_pages: false,
+  });
 
-  // Media preview navigation functions
-  const currentMediaIndex = selectedMedia
-    ? userMedia.findIndex((item) => item.id === selectedMedia.id)
-    : -1;
+  // Hooks
+  const { friends } = useFriendship();
+  const {
+    getUserMedia,
+    getUserFiles,
+    downloadFile: downloadFileAction,
+    shareFile,
+    getFileUrl,
+    getThumbnailUrl,
+    formatFileSize,
+  } = useFiles();
 
-  const hasPreviousMedia = currentMediaIndex > 0;
-  const hasNextMedia = currentMediaIndex < userMedia.length - 1;
+  // Computed values
+  const displayName = useMemo(() => {
+    if (!friendDetails) return "User";
 
-  // Helper functions for file operations
-  const formatFileSize = (size: string) => size; // In a real app, this would convert bytes to human-readable format
+    return friendDetails.first_name && friendDetails.last_name
+      ? `${friendDetails.first_name} ${friendDetails.last_name}`
+      : friendDetails.name;
+  }, [friendDetails]);
 
-  const getThumbnailUrl = (id: string) => {
-    const media = userMedia.find((item) => item.id === id);
-    return media?.url || "";
+  const currentMediaIndex = useMemo(() => {
+    if (!selectedMedia) return -1;
+    return userMedia.findIndex((item) => item.id === selectedMedia.id);
+  }, [selectedMedia, userMedia]);
+
+  const hasPreviousMedia = useMemo(() => {
+    return currentMediaIndex > 0;
+  }, [currentMediaIndex]);
+
+  const hasNextMedia = useMemo(() => {
+    return currentMediaIndex < userMedia.length - 1;
+  }, [currentMediaIndex, userMedia.length]);
+
+  // Initialize friends list
+  useEffect(() => {
+    if (friends) {
+      setFriendsList(
+        friends.map((friend) => ({
+          ...friend,
+          shareSelected: false,
+        }))
+      );
+    }
+  }, [friends]);
+
+  // Load data when friend details change
+  useEffect(() => {
+    if (friendDetails?.id) {
+      setCurrentMediaPage(1);
+      setCurrentFilesPage(1);
+      loadUserMedia();
+      loadUserFiles();
+    }
+  }, [friendDetails?.id]);
+
+  // Load user media files
+  const loadUserMedia = async () => {
+    if (!friendDetails?.id) return;
+
+    try {
+      setIsLoading(true);
+      const response = await getUserMedia(friendDetails.id, "all", 1, 8);
+
+      if (response?.data) {
+        setUserMedia(response.data);
+      }
+      if (response?.pagination) {
+        setMediaPagination(response.pagination);
+      }
+      setCurrentMediaPage(1);
+    } catch (error) {
+      console.error("Error loading media:", error);
+      toast.error("Failed to load media files");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const getFileUrl = (id: string) => {
-    const media = userMedia.find((item) => item.id === id);
-    return media?.url || "";
+  // Load more media
+  const loadMoreMedia = async () => {
+    if (!friendDetails?.id || isLoadingMore) return;
+
+    try {
+      setIsLoadingMore(true);
+      const nextPage = currentMediaPage + 1;
+
+      const response = await getUserMedia(friendDetails.id, "all", nextPage, 8);
+
+      if (response?.data) {
+        setUserMedia((prev) => [...prev, ...response.data]);
+      }
+      if (response?.pagination) {
+        setMediaPagination(response.pagination);
+      }
+      setCurrentMediaPage(nextPage);
+    } catch (error) {
+      console.error("Error loading more media:", error);
+      toast.error("Failed to load more media");
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
-  // Toggle friend selection in the Share dialog
-  const toggleFriendSelection = (id: string) => {
-    setFriendsList(
-      friendsList.map((friend) =>
-        friend.id === id
-          ? { ...friend, shareSelected: !friend.shareSelected }
-          : friend
-      )
-    );
+  // Load user files
+  const loadUserFiles = async () => {
+    if (!friendDetails?.id) return;
+
+    try {
+      setIsLoadingFiles(true);
+      const response = await getUserFiles(friendDetails.id, 1, 8);
+
+      if (response?.data) {
+        setUserFiles(response.data);
+      }
+      if (response?.pagination) {
+        setFilesPagination(response.pagination);
+      }
+      setCurrentFilesPage(1);
+    } catch (error) {
+      console.error("Error loading files:", error);
+      toast.error("Failed to load files");
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  // Load more files
+  const loadMoreFiles = async () => {
+    if (!friendDetails?.id || isLoadingMoreFiles) return;
+
+    try {
+      setIsLoadingMoreFiles(true);
+      const nextPage = currentFilesPage + 1;
+
+      const response = await getUserFiles(friendDetails.id, nextPage, 8);
+
+      if (response?.data) {
+        setUserFiles((prev) => [...prev, ...response.data]);
+      }
+      if (response?.pagination) {
+        setFilesPagination(response.pagination);
+      }
+      setCurrentFilesPage(nextPage);
+    } catch (error) {
+      console.error("Error loading more files:", error);
+      toast.error("Failed to load more files");
+    } finally {
+      setIsLoadingMoreFiles(false);
+    }
   };
 
   // Download file
-  const handleDownload = (fileId: string) => {
-    // In a real app, this would trigger an actual download
-    toast.success("File download started");
+  const downloadFile = async (fileId: string) => {
+    try {
+      await downloadFileAction(fileId);
+      toast.success("File download started");
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      toast.error("Failed to download file");
+    }
   };
 
   // Show share dialog
-  const showShareDialog = (file: FileItem) => {
-    setSelectedFile(file);
+  const showShareDialog = (file: FileItem | MediaItem) => {
+    setSelectedFile(file as FileItem);
     setShowShareModal(true);
+
     // Reset share selections
-    setFriendsList(
-      friendsList.map((friend) => ({
+    setFriendsList((prev) =>
+      prev.map((friend) => ({
         ...friend,
         shareSelected: false,
       }))
@@ -163,8 +306,19 @@ export default function UserProfileInfo({
     setSelectedFile(null);
   };
 
-  // Share file with users
-  const handleShareFile = () => {
+  // Toggle friend selection in share dialog
+  const toggleShareSelection = (friendId: string) => {
+    setFriendsList((prev) =>
+      prev.map((friend) =>
+        friend.id === friendId
+          ? { ...friend, shareSelected: !friend.shareSelected }
+          : friend
+      )
+    );
+  };
+
+  // Handle sharing file
+  const handleShareFile = async () => {
     if (!selectedFile) return;
 
     const selectedUserIds = friendsList
@@ -173,21 +327,26 @@ export default function UserProfileInfo({
 
     if (selectedUserIds.length === 0) return;
 
-    // In a real app, this would call an API to share the file
-    toast.success("File shared successfully");
+    try {
+      await shareFile(selectedFile.id, selectedUserIds);
+      toast.success("File shared successfully");
 
-    // Reset selection state
-    setFriendsList(
-      friendsList.map((friend) => ({
-        ...friend,
-        shareSelected: false,
-      }))
-    );
+      // Reset selection state
+      setFriendsList((prev) =>
+        prev.map((friend) => ({
+          ...friend,
+          shareSelected: false,
+        }))
+      );
 
-    closeShareDialog();
+      closeShareDialog();
+    } catch (error) {
+      console.error("Error sharing file:", error);
+      toast.error("Failed to share file");
+    }
   };
 
-  // Media preview functionality
+  // Media preview functions
   const openMediaPreview = (media: MediaItem) => {
     setSelectedMedia(media);
     setShowMediaPreview(true);
@@ -199,57 +358,35 @@ export default function UserProfileInfo({
   };
 
   const navigateMedia = (direction: "prev" | "next") => {
-    if (currentMediaIndex === -1) return;
+    const currentIndex = currentMediaIndex;
+    if (currentIndex === -1) return;
 
-    if (direction === "prev" && currentMediaIndex > 0) {
-      setSelectedMedia(userMedia[currentMediaIndex - 1]);
-    } else if (
-      direction === "next" &&
-      currentMediaIndex < userMedia.length - 1
-    ) {
-      setSelectedMedia(userMedia[currentMediaIndex + 1]);
+    if (direction === "prev" && currentIndex > 0) {
+      setSelectedMedia(userMedia[currentIndex - 1]);
+    } else if (direction === "next" && currentIndex < userMedia.length - 1) {
+      setSelectedMedia(userMedia[currentIndex + 1]);
     }
-  };
-
-  // Load more functionality (mock implementation)
-  const loadMoreMedia = () => {
-    setIsLoadingMore(true);
-    // Simulate API call delay
-    setTimeout(() => {
-      setIsLoadingMore(false);
-      toast.success("More media loaded");
-    }, 1000);
-  };
-
-  const loadMoreFiles = () => {
-    setIsLoadingMoreFiles(true);
-    // Simulate API call delay
-    setTimeout(() => {
-      setIsLoadingMoreFiles(false);
-      toast.success("More files loaded");
-    }, 1000);
   };
 
   return (
     <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto h-full">
+      {/* Header */}
       <div className="p-4 border-b border-gray-200">
-        {onClose && (
-          <div className="flex justify-between items-center mb-4">
-            <div></div>
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-gray-700"
-            >
-              <FaTimes size={20} />
-            </button>
-          </div>
-        )}
+        <div className="flex justify-between items-center mb-4">
+          <div></div>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+          >
+            <FaTimes className="h-5 w-5" />
+          </button>
+        </div>
 
         <div className="flex flex-col items-center">
           <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center">
-            {friendDetails?.avatar ? (
+            {friendDetails?.avatar || friendDetails?.profile_picture_url ? (
               <img
-                src={friendDetails.avatar}
+                src={friendDetails.avatar || friendDetails.profile_picture_url}
                 alt={friendDetails.name}
                 className="h-full w-full object-cover"
               />
@@ -257,72 +394,18 @@ export default function UserProfileInfo({
               <FaUser className="h-12 w-12 text-gray-400" />
             )}
           </div>
-          <h2 className="text-xl font-semibold">{displayName}</h2>
+          <h2 className="text-black text-xl font-semibold">{displayName}</h2>
           <p className="text-gray-500 text-sm">
-            {friendDetails?.status === "online" ? "Online" : "Offline"} • Last
-            seen today at 2:45 PM
+            @{friendDetails?.username || friendDetails?.name || "user"}
           </p>
         </div>
       </div>
 
-      {/* Contact Information Section - New */}
-      <div className="p-4 border-b border-gray-200">
-        <h3 className="font-medium mb-4">Contact Information</h3>
-
-        {friendDetails?.email && (
-          <div className="flex items-center mb-3">
-            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
-              <FaEnvelope className="h-4 w-4 text-blue-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Email</p>
-              <p className="text-sm">{friendDetails.email}</p>
-            </div>
-          </div>
-        )}
-
-        {friendDetails?.phone && (
-          <div className="flex items-center mb-3">
-            <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-              <FaPhone className="h-4 w-4 text-green-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Phone</p>
-              <p className="text-sm">{friendDetails.phone}</p>
-            </div>
-          </div>
-        )}
-
-        {friendDetails?.joinDate && (
-          <div className="flex items-center mb-3">
-            <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center mr-3">
-              <FaCalendarAlt className="h-4 w-4 text-purple-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Joined</p>
-              <p className="text-sm">{friendDetails.joinDate}</p>
-            </div>
-          </div>
-        )}
-
-        {friendDetails?.location && (
-          <div className="flex items-center">
-            <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center mr-3">
-              <FaMapMarkerAlt className="h-4 w-4 text-red-500" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Location</p>
-              <p className="text-sm">{friendDetails.location}</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Media Section - Updated */}
+      {/* Media Section */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium">
-            Media{" "}
+          <h3 className="text-black font-medium">
+            Media
             <span className="text-gray-500 text-sm">({userMedia.length})</span>
           </h3>
           <button
@@ -332,12 +415,16 @@ export default function UserProfileInfo({
             View All
           </button>
         </div>
+
+        {/* Media Grid */}
         <div className="relative">
-          {isLoading ? (
+          {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
               <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-          ) : userMedia.length === 0 ? (
+          )}
+
+          {userMedia.length === 0 && !isLoading ? (
             <div className="py-4 text-center text-gray-500">No media files</div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
@@ -356,7 +443,7 @@ export default function UserProfileInfo({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDownload(item.id);
+                        downloadFile(item.id);
                       }}
                       className="bg-white text-blue-500 p-2 rounded-full"
                     >
@@ -370,11 +457,11 @@ export default function UserProfileInfo({
         </div>
       </div>
 
-      {/* Files Section - Updated */}
+      {/* Files Section */}
       <div className="p-4">
         <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium">
-            File{" "}
+          <h3 className="text-black font-medium">
+            File
             <span className="text-gray-500 text-sm">({userFiles.length})</span>
           </h3>
           <button
@@ -384,12 +471,16 @@ export default function UserProfileInfo({
             View All
           </button>
         </div>
+
+        {/* File List */}
         <div className="relative">
-          {isLoadingFiles ? (
+          {isLoadingFiles && (
             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
               <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-          ) : userFiles.length === 0 ? (
+          )}
+
+          {userFiles.length === 0 && !isLoadingFiles ? (
             <div className="py-4 text-center text-gray-500">No files</div>
           ) : (
             <div className="space-y-3">
@@ -411,14 +502,20 @@ export default function UserProfileInfo({
                   </div>
                   <div className="ml-2 flex">
                     <button
-                      onClick={() => handleDownload(file.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(file.id);
+                      }}
                       className="p-1 text-gray-500 hover:text-blue-500"
                       title="Download"
                     >
                       <FaDownload className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => showShareDialog(file)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        showShareDialog(file);
+                      }}
                       className="p-1 text-gray-500 hover:text-blue-500"
                       title="Share"
                     >
@@ -472,7 +569,7 @@ export default function UserProfileInfo({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDownload(item.id);
+                          downloadFile(item.id);
                         }}
                         className="bg-white text-blue-500 p-2 rounded-full"
                       >
@@ -484,15 +581,17 @@ export default function UserProfileInfo({
               </div>
 
               {/* Load more button */}
-              <div className="flex justify-center mt-4">
-                <button
-                  onClick={loadMoreMedia}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                  disabled={isLoadingMore}
-                >
-                  {isLoadingMore ? "Loading..." : "Load More"}
-                </button>
-              </div>
+              {mediaPagination.has_more_pages && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={loadMoreMedia}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300"
+                    disabled={isLoadingMore}
+                  >
+                    {isLoadingMore ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -522,7 +621,6 @@ export default function UserProfileInfo({
                 </div>
               )}
 
-              {/* File list for modal */}
               <div className="space-y-3">
                 {userFiles.map((file) => (
                   <div
@@ -544,7 +642,7 @@ export default function UserProfileInfo({
                     </div>
                     <div className="ml-2 flex">
                       <button
-                        onClick={() => handleDownload(file.id)}
+                        onClick={() => downloadFile(file.id)}
                         className="p-2 text-gray-500 hover:text-blue-500"
                         title="Download"
                       >
@@ -563,15 +661,17 @@ export default function UserProfileInfo({
               </div>
 
               {/* Load more button */}
-              <div className="flex justify-center mt-4">
-                <button
-                  onClick={loadMoreFiles}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                  disabled={isLoadingMoreFiles}
-                >
-                  {isLoadingMoreFiles ? "Loading..." : "Load More"}
-                </button>
-              </div>
+              {filesPagination.has_more_pages && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={loadMoreFiles}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300"
+                    disabled={isLoadingMoreFiles}
+                  >
+                    {isLoadingMoreFiles ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -618,13 +718,13 @@ export default function UserProfileInfo({
                     className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
                       friend.shareSelected ? "bg-blue-50" : ""
                     }`}
-                    onClick={() => toggleFriendSelection(friend.id)}
+                    onClick={() => toggleShareSelection(friend.id)}
                   >
                     <div className="flex items-center">
                       <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
-                        {friend.avatar ? (
+                        {friend.avatar || friend.profile_picture_url ? (
                           <img
-                            src={friend.avatar}
+                            src={friend.avatar || friend.profile_picture_url}
                             alt={friend.name}
                             className="h-full w-full object-cover"
                           />
@@ -658,7 +758,7 @@ export default function UserProfileInfo({
       )}
 
       {/* Media Preview Modal */}
-      {showMediaPreview && (
+      {showMediaPreview && selectedMedia && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center">
           <div className="relative w-full max-w-4xl">
             <button
@@ -668,68 +768,59 @@ export default function UserProfileInfo({
               <FaTimes className="h-6 w-6" />
             </button>
 
-            {selectedMedia && (
-              <div className="flex flex-col items-center">
-                <img
-                  src={getFileUrl(selectedMedia.id)}
-                  alt=""
-                  className="max-h-[80vh] max-w-full object-contain"
-                />
+            <div className="flex flex-col items-center">
+              <img
+                src={getFileUrl(selectedMedia.id)}
+                alt=""
+                className="max-h-[80vh] max-w-full object-contain"
+              />
 
-                <div className="mt-4 flex justify-center space-x-4">
-                  <button
-                    onClick={() => handleDownload(selectedMedia.id)}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 flex items-center"
-                  >
-                    <FaDownload className="h-4 w-4 mr-2" />
-                    Download
-                  </button>
+              <div className="mt-4 flex justify-center space-x-4">
+                <button
+                  onClick={() => downloadFile(selectedMedia.id)}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 flex items-center"
+                >
+                  <FaDownload className="h-4 w-4 mr-2" />
+                  Download
+                </button>
 
-                  <button
-                    onClick={() => {
-                      // Convert media to file format for sharing
-                      const mediaAsFile = {
-                        id: selectedMedia.id,
-                        name: `Image-${selectedMedia.id}.jpg`,
-                        size: "Unknown size",
-                        date: new Date().toLocaleDateString(),
-                      };
-                      showShareDialog(mediaAsFile);
-                    }}
-                    className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
-                  >
-                    <FaShareAlt className="h-4 w-4 mr-2" />
-                    Share
-                  </button>
-                </div>
-
-                {/* Navigation arrows for multiple media items */}
-                <div className="absolute inset-y-0 left-0 flex items-center">
-                  {hasPreviousMedia && (
-                    <button
-                      onClick={() => navigateMedia("prev")}
-                      className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
-                    >
-                      <FaChevronLeft className="h-6 w-6" />
-                    </button>
-                  )}
-                </div>
-
-                <div className="absolute inset-y-0 right-0 flex items-center">
-                  {hasNextMedia && (
-                    <button
-                      onClick={() => navigateMedia("next")}
-                      className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
-                    >
-                      <FaChevronRight className="h-6 w-6" />
-                    </button>
-                  )}
-                </div>
+                <button
+                  onClick={() => showShareDialog(selectedMedia)}
+                  className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
+                >
+                  <FaShareAlt className="h-4 w-4 mr-2" />
+                  Share
+                </button>
               </div>
-            )}
+
+              {/* Navigation arrows */}
+              {hasPreviousMedia && (
+                <div className="absolute inset-y-0 left-0 flex items-center">
+                  <button
+                    onClick={() => navigateMedia("prev")}
+                    className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
+                  >
+                    <FaChevronLeft className="h-6 w-6" />
+                  </button>
+                </div>
+              )}
+
+              {hasNextMedia && (
+                <div className="absolute inset-y-0 right-0 flex items-center">
+                  <button
+                    onClick={() => navigateMedia("next")}
+                    className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
+                  >
+                    <FaChevronRight className="h-6 w-6" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
-}
+};
+
+export default FriendInfoPanel;

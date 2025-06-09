@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { Search, Plus, UserPlus, Users, AlertTriangle } from "lucide-react";
-import { FaUser, FaTimes, FaUsers, FaEnvelope } from "react-icons/fa";
+import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  Search,
+  Plus,
+  UserPlus,
+  Users,
+  AlertTriangle,
+  RefreshCw,
+} from "lucide-react";
+import { FaUser, FaTimes, FaUsers, FaEnvelope, FaCircle } from "react-icons/fa";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { toast } from "react-hot-toast";
@@ -10,24 +17,39 @@ import { NotificationDropdown } from "@/components/notification-dropdown";
 import { useGroup } from "@/hooks/auth/useGroup";
 import { useFriendship } from "@/hooks/auth/useFriends";
 import { useMessages } from "@/hooks/messages/useMessages";
-import { usePresence } from "@/hooks/presence/usePresence";
-import { useWebSocketContext } from "@/hooks/websocket/WebSocketProvider";
+import usePresence from "@/hooks/presence/usePresence";
+import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
+import {
+  formatMessageTimestamp,
+  formatTimeString,
+} from "@/utils/timestampHelper";
 
 type MessageType = "friend" | "group";
+
+// Status type for users
+type UserStatus = "online" | "offline";
+
+// Message read status type
+type ReadStatus = "read" | "delivered" | "sent" | "unread";
 
 // Tipe data untuk pesan
 interface Message {
   id: string;
   sender: {
     name: string;
-    avatar?: string;
+    profile_picture_url?: string;
     id?: string;
+    status?: UserStatus; // Added status for friend messages
   };
   content: string;
   timestamp: string;
-  read: boolean;
+  formattedTime?: string; // For displaying formatted time
+  readStatus?: ReadStatus;
   unreadCount?: number;
   type: MessageType; // Add type to distinguish between friend and group messages
+  lastActivity?: string; // ISO date string for the last activity
+  isTyping?: boolean; // Added to show typing indicator
+  hasMessages?: boolean; // Flag to identify which have real messages
 }
 
 // Interface untuk friend data
@@ -35,7 +57,18 @@ interface Friend {
   id: string;
   name: string;
   username: string;
-  avatar?: string;
+  profile_picture_url?: string;
+  status?: UserStatus;
+  selected?: boolean;
+}
+
+// Extended interface for Friends from API
+interface FriendFromAPI {
+  id: string;
+  username: string;
+  first_name?: string;
+  last_name?: string;
+  profile_picture_url?: string;
   selected?: boolean;
 }
 
@@ -51,8 +84,10 @@ export function MessagesList() {
   const [groupName, setGroupName] = useState("");
   const [groupDescription, setGroupDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isTyping, setIsTyping] = useState<{ [key: string]: boolean }>({});
 
   // States for data
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -60,7 +95,9 @@ export function MessagesList() {
   const [error, setError] = useState<string | null>(null);
 
   // Custom hooks
-  const { isConnected, messages: wsMessages } = useWebSocketContext();
+  const webSocketContext = useWebSocketContext();
+  const { isConnected } = webSocketContext;
+  const wsMessages = (webSocketContext as any).messages || [];
   const {
     friends: hookFriends,
     loading: friendsLoading,
@@ -82,96 +119,130 @@ export function MessagesList() {
   const {
     loading: messageLoading,
     error: messageError,
-    getConversations,
     getUnreadCount,
   } = useMessages();
 
   const presence = usePresence();
 
-  // Fetch friends, groups and conversations when component mounts
+  // Load friends and groups data directly when component mounts
   useEffect(() => {
-    // We're now using the refreshData function that uses hooks
-    // No need for the old implementation
-    refreshData();
-  }, []);
+    getFriends();
+    getGroups();
+  }, [getFriends, getGroups]);
 
-  // Fetch data when component mounts
+  // Update local state when hook data changes
   useEffect(() => {
-    refreshData();
-
-    // Subscribe to WebSocket for realtime updates if needed
-    if (isConnected) {
-      // Subscribe to unread counts or other relevant data
+    if (hookFriends && Array.isArray(hookFriends)) {
+      console.log("[MessagesList] Transforming friends data:", hookFriends);
+      const friendsWithMessages = transformFriendsToMessages(hookFriends);
+      console.log(
+        "[MessagesList] Transformed friends with profile pictures:",
+        friendsWithMessages.map((f) => ({
+          id: f.id,
+          name: f.sender.name,
+          profile_url: f.sender.profile_picture_url,
+        }))
+      );
+      setMessages((prevMessages) => {
+        // Remove old friend messages and add new ones
+        const nonFriendMessages = prevMessages.filter(
+          (msg) => msg.type !== "friend"
+        );
+        return [...nonFriendMessages, ...friendsWithMessages];
+      });
     }
+  }, [hookFriends]);
 
-    return () => {
-      // Cleanup - unsubscribe from WebSocket events if needed
-    };
-  }, [isConnected]);
+  useEffect(() => {
+    if (hookGroups && Array.isArray(hookGroups)) {
+      const groupsWithMessages = transformGroupsToMessages(hookGroups);
+      setMessages((prevMessages) => {
+        // Remove old group messages and add new ones
+        const nonGroupMessages = prevMessages.filter(
+          (msg) => msg.type !== "group"
+        );
+        return [...nonGroupMessages, ...groupsWithMessages];
+      });
+    }
+  }, [hookGroups]);
+
+  // WebSocket handling for real-time updates
+  useEffect(() => {
+    // Subscribe to WebSocket for realtime updates
+    if (isConnected) {
+      // Subscribe to friend status changes
+      const handlePresenceUpdate = (data: any) => {
+        if (data.type === "presence" && data.user_id) {
+          // Trigger fresh data fetch when friend status changes
+          getFriends();
+        }
+      };
+
+      // Subscribe to new message events
+      const handleNewMessage = (data: any) => {
+        if (data.type === "new_message") {
+          // Trigger fresh data fetch when new message arrives
+          getFriends();
+          getGroups();
+        }
+      };
+
+      // Subscribe to typing indicators
+      const handleTypingEvent = (data: any) => {
+        if (data.type === "typing" && data.user_id) {
+          setIsTyping((prev) => ({
+            ...prev,
+            [data.user_id]: data.isTyping,
+          }));
+        }
+      };
+
+      // Process existing messages and register for new ones
+      if (wsMessages && wsMessages.length > 0) {
+        // Process existing messages
+        wsMessages.forEach((message: any) => {
+          if (message.type === "presence") handlePresenceUpdate(message);
+          if (message.type === "message") handleNewMessage(message);
+          if (message.type === "typing") handleTypingEvent(message);
+        });
+      }
+
+      // No cleanup needed for this approach since we're just processing the array
+      // The WebSocketProvider handles the actual connection management
+    }
+  }, [isConnected, wsMessages]);
 
   // Function to refresh data
   const refreshData = async () => {
-    setIsLoading(true);
+    const isInitialLoad = !messages.length;
+
+    if (isInitialLoad) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
     setError(null);
 
     try {
-      // Load data in parallel
-      await Promise.all([getGroups(), getFriends(), getUnreadCount()]);
+      // Just trigger fresh data fetch from hooks
+      await Promise.all([getFriends(), getGroups()]);
 
-      // Transform and combine the data
-      const groupMessages = transformGroupsToMessages(hookGroups || []);
-      const friendMessages = transformFriendsToMessages(hookFriends || []);
-
-      // Update our messages list
-      setMessages([...groupMessages, ...friendMessages]);
+      // The useEffect hooks will automatically update the messages when hookFriends and hookGroups change
+      console.log("[MessagesList] Data refresh completed");
     } catch (err: any) {
-      setError(err.message || "Failed to load messages");
-      console.error("Error loading messages data:", err);
+      setError(err.message || "Failed to load conversations");
+      console.error("Error loading conversations data:", err);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  // Helper function to format timestamps
+  // Helper function to format timestamps using centralized helper
   const formatTimestamp = (timestamp: string | undefined): string => {
     if (!timestamp) return "Never";
-
-    const messageDate = new Date(timestamp);
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    // Check if message is from today
-    if (messageDate >= today) {
-      return messageDate.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      });
-    }
-    // Check if message is from yesterday
-    else if (messageDate >= yesterday) {
-      return "Yesterday";
-    }
-    // For older messages show the date
-    else {
-      const months = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      return `${months[messageDate.getMonth()]} ${messageDate.getDate()}`;
-    }
+    return formatMessageTimestamp({ timestamp, format: "relative" });
   };
 
   // Filter messages based on active tab and search query
@@ -209,11 +280,32 @@ export function MessagesList() {
   });
 
   const toggleFriendSelection = (id: string) => {
-    setFriends(
-      friends.map((friend) =>
-        friend.id === id ? { ...friend, selected: !friend.selected } : friend
-      )
+    // We need to work with hookFriends directly and then update local state
+    if (!hookFriends) return;
+
+    // Create updated friends with selection toggled
+    const updatedHookFriends = hookFriends.map((friend: any) =>
+      friend.id === id ? { ...friend, selected: !friend.selected } : friend
     );
+
+    // Update local friends state for UI
+    const localFriendsUpdate = updatedHookFriends.map((friend: any) => {
+      const friendStatus = presence.getStatus(friend.id);
+      return {
+        id: friend.id,
+        name: friend.full_name || friend.username,
+        username: friend.username,
+        profile_picture_url: friend.profile_picture_url,
+        // Map any status that's not 'online' to 'offline' for compatibility
+        status:
+          friendStatus === "online"
+            ? ("online" as UserStatus)
+            : ("offline" as UserStatus),
+        selected: friend.selected,
+      };
+    });
+
+    setFriends(localFriendsUpdate);
   };
 
   // Function to handle adding a friend using the hook
@@ -269,11 +361,12 @@ export function MessagesList() {
       // Reset form and close popup
       setGroupName("");
       setGroupDescription("");
+      // Reset friend selections
       setFriends(friends.map((friend) => ({ ...friend, selected: false })));
       setShowCreateGroupPopup(false);
 
       // Refresh data to show the new group
-      await refreshData();
+      await getGroups();
     } catch (err: any) {
       console.error("Failed to create group:", err);
       toast.error(err.message || "Failed to create group");
@@ -288,60 +381,194 @@ export function MessagesList() {
     if (option === "friend") {
       setShowAddFriendPopup(true);
     } else {
+      // Load friends when opening create group popup
+      getFriends();
       setShowCreateGroupPopup(true);
     }
   };
 
   // Helper functions for data transformation
   const transformGroupsToMessages = (groups: any[]): Message[] => {
-    return groups.map((group) => {
-      const lastMessage = group.last_message;
-      return {
-        id: group.id,
-        sender: {
-          name: group.name,
-          avatar: group.avatar_url,
+    // Filter out invalid groups first
+    const validGroups = groups
+      .filter((group) => group && group.id)
+      .map((group) => {
+        // Handle different formats of last_message
+        const lastMessage = group.last_message || {};
+
+        // Check if there's actual message content
+        const hasMessage =
+          lastMessage && typeof lastMessage === "object" && lastMessage.content;
+
+        // Find a valid timestamp for sorting
+        const lastActivity =
+          lastMessage?.sent_at ||
+          lastMessage?.created_at ||
+          group.updated_at ||
+          group.created_at ||
+          new Date().toISOString();
+
+        // Format content properly with sender name if it's a group message
+        let content;
+        if (hasMessage) {
+          // Include sender name in the preview if available
+          content = lastMessage.sender_name
+            ? `${lastMessage.sender_name}: ${lastMessage.content}`
+            : lastMessage.content;
+        } else {
+          // Show "No messages yet" for groups without messages
+          content = "No messages yet";
+        }
+
+        return {
           id: group.id,
-        },
-        content: lastMessage
-          ? `${lastMessage.sender_name}: ${lastMessage.content}`
-          : "No messages yet",
-        timestamp: lastMessage
-          ? formatTimestamp(lastMessage.created_at)
-          : formatTimestamp(
-              group.created_at || group.updated_at || new Date().toISOString()
-            ),
-        read: true,
-        unreadCount: group.unread_count || 0,
-        type: "group",
-      };
+          sender: {
+            name: group.name || "Unnamed Group",
+            profile_picture_url:
+              group.avatar_url || group.profile_picture_url || null,
+            id: group.id,
+          },
+          content: content,
+          timestamp: hasMessage
+            ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+            : "",
+          formattedTime: formatTimestamp(lastActivity),
+          read: !group.unread_count || group.unread_count === 0,
+          readStatus:
+            group.unread_count && group.unread_count > 0
+              ? ("unread" as ReadStatus)
+              : ("read" as ReadStatus),
+          unreadCount:
+            group.unread_count && group.unread_count > 0
+              ? group.unread_count
+              : undefined,
+          type: "group" as MessageType,
+          lastActivity,
+          isTyping: false, // Will be updated by WebSocket events
+          hasMessages: hasMessage, // Flag to identify which have real messages
+        } as Message;
+      });
+
+    // Sort groups (we're sure all values are valid now after filtering)
+    return validGroups.sort((a, b) => {
+      // First sort by whether they have messages (those with messages come first)
+      const aHasMessages = a.hasMessages ? 1 : 0;
+      const bHasMessages = b.hasMessages ? 1 : 0;
+
+      if (aHasMessages !== bHasMessages) {
+        return bHasMessages - aHasMessages; // Groups with messages first
+      }
+
+      // Then sort by last activity time (most recent first)
+      const aTime = new Date(a.lastActivity || "").getTime();
+      const bTime = new Date(b.lastActivity || "").getTime();
+      return bTime - aTime;
     });
   };
 
   const transformFriendsToMessages = (friends: any[]): Message[] => {
-    return friends.map((friend) => {
-      // In a real app this would come from message data
-      return {
-        id: friend.id,
-        sender: {
-          name: friend.full_name || friend.username,
-          avatar: friend.avatar_url || friend.profile_picture_url,
-          id: friend.id,
-        },
-        content: "Click to start chatting", // This would be the last message in real implementation
-        timestamp: formatTimestamp(new Date().toISOString()),
-        read: true,
-        unreadCount: 0,
-        type: "friend",
-      };
-    });
+    // Show ALL friends, not just those with messages
+    return (
+      friends
+        .map((friend) => {
+          const userId = friend.id;
+          const friendStatus = presence.getStatus(userId);
+          const lastMessage = friend.last_message;
+          const hasMessage = lastMessage && lastMessage.content;
+          const lastActivity =
+            friend.last_active ||
+            lastMessage?.sent_at ||
+            lastMessage?.created_at ||
+            friend.created_at ||
+            new Date().toISOString();
+
+          // Build full name from first_name and last_name if available
+          let displayName = "";
+          if (friend.first_name && friend.last_name) {
+            displayName = `${friend.first_name} ${friend.last_name}`;
+          } else if (friend.full_name) {
+            displayName = friend.full_name;
+          } else if (friend.display_name) {
+            displayName = friend.display_name;
+          } else if (friend.name) {
+            displayName = friend.name;
+          } else if (friend.username) {
+            displayName = friend.username;
+          } else {
+            // Just display "User" instead of the ID
+            displayName = "User";
+          }
+
+          return {
+            id: friend.id,
+            sender: {
+              name: displayName,
+              profile_picture_url: friend.profile_picture_url || null,
+              id: friend.id,
+              // Map any status that's not 'online' to 'offline' for compatibility
+              status:
+                friendStatus === "online"
+                  ? ("online" as UserStatus)
+                  : ("offline" as UserStatus),
+            },
+            content: hasMessage ? lastMessage.content : "No messages yet",
+            timestamp: hasMessage
+              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+              : friendStatus === "online"
+              ? "Online"
+              : "Offline",
+            formattedTime: formatTimestamp(lastActivity),
+            read: !friend.unread_count || friend.unread_count === 0,
+            readStatus:
+              friend.unread_count && friend.unread_count > 0
+                ? ("unread" as ReadStatus)
+                : ("read" as ReadStatus),
+            unreadCount:
+              friend.unread_count && friend.unread_count > 0
+                ? friend.unread_count
+                : undefined,
+            type: "friend" as MessageType,
+            lastActivity,
+            isTyping: isTyping[userId] || false,
+            hasMessages: hasMessage, // Add flag to identify which have real messages
+          };
+        })
+        // Sort to show friends with messages first, then those without messages
+        .sort((a, b) => {
+          const aHasMessages = a.hasMessages ? 1 : 0;
+          const bHasMessages = b.hasMessages ? 1 : 0;
+
+          // If one has messages and the other doesn't, prioritize the one with messages
+          if (aHasMessages !== bHasMessages) {
+            return bHasMessages - aHasMessages;
+          }
+
+          // If both have messages or both don't have messages, sort by activity time
+          const aTime = new Date(a.lastActivity).getTime();
+          const bTime = new Date(b.lastActivity).getTime();
+          return bTime - aTime;
+        })
+    );
   };
 
   return (
     <div className="h-full flex flex-col p-6 bg-white">
-      {/* Header with title and action button */}
+      {/* Header with title and action buttons */}
       <div className="mb-6 flex justify-between items-center">
-        <h1 className="text-xl font-bold text-gray-800">Messages</h1>
+        <div className="flex items-center">
+          <h1 className="text-xl font-bold text-gray-800">Messages</h1>
+          <button
+            onClick={refreshData}
+            disabled={isRefreshing}
+            className="ml-2 p-1.5 text-gray-400 hover:text-blue-500 rounded-full focus:outline-none transition-colors"
+            title="Refresh Messages"
+          >
+            <RefreshCw
+              size={16}
+              className={isRefreshing ? "animate-spin" : ""}
+            />
+          </button>
+        </div>
         <div className="flex items-center space-x-2">
           <NotificationDropdown />
           <button
@@ -429,90 +656,134 @@ export function MessagesList() {
           {filteredMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6">
               <FaEnvelope className="h-12 w-12 text-gray-300 mb-3" />
-              <p className="text-gray-500 font-medium">No messages yet</p>
+              <p className="text-gray-500 font-medium">No conversations yet</p>
               <p className="text-sm text-gray-400 mt-2">
-                Start a conversation with friends or groups
+                Start chatting with friends or groups to see them here
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {sortedMessages.map((message) => (
-                <Link
-                  key={message.id}
-                  href={
-                    message.type === "friend"
-                      ? `/chat/messages/${message.id}`
-                      : `/chat/messages/${message.id}?type=group`
-                  }
-                >
-                  <div
-                    className={`flex items-start p-4 rounded-lg transition-colors ${
-                      (message.type === "friend" &&
-                        pathname === `/chat/messages/${message.id}`) ||
-                      (message.type === "group" &&
-                        pathname === `/chat/messages/${message.id}` &&
-                        pathname.includes("type=group"))
-                        ? "bg-blue-50 border border-blue-100"
-                        : "hover:bg-gray-50"
-                    }`}
-                  >
-                    {/* Avatar with online status */}
-                    <div className="relative">
-                      <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 mr-3 flex-shrink-0 flex items-center justify-center">
-                        {message.sender.avatar ? (
-                          <img
-                            src={message.sender.avatar}
-                            alt={message.sender.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : message.type === "friend" ? (
-                          <FaUser className="h-5 w-5 text-gray-500" />
-                        ) : (
-                          <FaUsers className="h-5 w-5 text-gray-500" />
+              {sortedMessages.map((message) => {
+                // Debug logging for navigation URL construction
+                const friendUrl =
+                  message.type === "friend"
+                    ? `/chat/messages/${message.id}${
+                        message.sender.name
+                          ? `?name=${encodeURIComponent(message.sender.name)}`
+                          : ""
+                      }`
+                    : `/chat/messages/${message.id}?type=group`;
+
+                console.log("🔍 [MessagesList] Building URL:", {
+                  messageId: message.id,
+                  messageType: message.type,
+                  senderName: message.sender.name,
+                  finalUrl: friendUrl,
+                });
+
+                return (
+                  <Link key={message.id} href={friendUrl}>
+                    <div
+                      className={`flex items-start p-4 rounded-lg transition-colors ${
+                        (message.type === "friend" &&
+                          pathname === `/chat/messages/${message.id}`) ||
+                        (message.type === "group" &&
+                          pathname === `/chat/messages/${message.id}` &&
+                          pathname.includes("type=group"))
+                          ? "bg-blue-50 border border-blue-100"
+                          : "hover:bg-gray-50"
+                      }`}
+                    >
+                      {/* Avatar with online status */}
+                      <div className="relative">
+                        <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 mr-3 flex-shrink-0 flex items-center justify-center">
+                          {message.sender.profile_picture_url ? (
+                            <img
+                              src={message.sender.profile_picture_url}
+                              alt={message.sender.name}
+                              className="h-full w-full object-cover"
+                              onError={(e) => {
+                                console.log(
+                                  "[MessagesList] Avatar failed to load:",
+                                  message.sender.profile_picture_url,
+                                  "Type:",
+                                  message.type,
+                                  "Full message:",
+                                  message
+                                );
+                                // If image fails to load, fall back to icon
+                                (e.target as HTMLImageElement).style.display =
+                                  "none";
+                                (
+                                  e.currentTarget.parentElement as HTMLElement
+                                ).classList.add("avatar-error");
+                                (
+                                  e.currentTarget.parentElement as HTMLElement
+                                ).innerHTML +=
+                                  message.type === "friend"
+                                    ? '<svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg>'
+                                    : '<svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"></path></svg>';
+                              }}
+                            />
+                          ) : message.type === "friend" ? (
+                            <FaUser className="h-5 w-5 text-gray-500" />
+                          ) : (
+                            <FaUsers className="h-5 w-5 text-gray-500" />
+                          )}
+                        </div>
+                        {/* Status indicator (only for friends) */}
+                        {message.type === "friend" && (
+                          <div
+                            className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
+                              presence.getStatus(message.id) === "online"
+                                ? "bg-green-500"
+                                : "bg-gray-400" // Offline status
+                            }`}
+                          ></div>
                         )}
                       </div>
-                      {/* Status indicator (only for friends) */}
-                      {message.type === "friend" && (
-                        <div
-                          className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${
-                            presence.getStatus(message.id) === "online"
-                              ? "bg-green-500"
-                              : presence.getStatus(message.id) === "busy"
-                              ? "bg-red-500"
-                              : presence.getStatus(message.id) === "away"
-                              ? "bg-yellow-500"
-                              : "bg-gray-400"
-                          }`}
-                        ></div>
-                      )}
-                    </div>
 
-                    <div className="flex-1 min-w-0">
-                      {/* Top row with name and timestamp */}
-                      <div className="flex justify-between items-start">
-                        <h3 className="font-medium text-gray-900 truncate text-sm">
-                          {message.sender.name}
-                        </h3>
-                        <span className="text-xs text-gray-500 ml-1 whitespace-nowrap">
-                          {message.timestamp}
-                        </span>
-                      </div>
+                      <div className="flex-1 min-w-0">
+                        {/* Top row with name and timestamp */}
+                        <div className="flex justify-between items-start">
+                          <h3 className="font-medium text-gray-900 truncate text-sm">
+                            {message.sender.name}
+                          </h3>
+                          <span className="text-xs text-gray-500 ml-1 whitespace-nowrap">
+                            {message.timestamp}
+                          </span>
+                        </div>
 
-                      {/* Second row with message and badge */}
-                      <div className="flex justify-between items-start mt-1">
-                        <p className="text-xs text-gray-600 truncate flex-1">
-                          {message.content}
-                        </p>
-                        {message.unreadCount && message.unreadCount > 0 && (
-                          <div className="ml-2 h-5 w-5 min-w-5 bg-blue-500 rounded-full text-white text-xs flex items-center justify-center flex-shrink-0">
-                            {message.unreadCount}
+                        {/* Second row with message and badge */}
+                        <div className="flex justify-between items-start mt-1">
+                          <div className="flex-1 relative">
+                            {/* Show typing indicator when active */}
+                            {message.isTyping ? (
+                              <p className="text-xs text-blue-500 truncate flex items-center">
+                                <span className="mr-1">Typing</span>
+                                <span className="flex">
+                                  <FaCircle className="animate-pulse h-1 w-1 mx-0.5" />
+                                  <FaCircle className="animate-pulse h-1 w-1 mx-0.5 animate-delay-100" />
+                                  <FaCircle className="animate-pulse h-1 w-1 mx-0.5 animate-delay-200" />
+                                </span>
+                              </p>
+                            ) : (
+                              <p className="text-xs text-gray-600 truncate flex-1">
+                                {message.content}
+                              </p>
+                            )}
                           </div>
-                        )}
+                          {message.unreadCount && message.unreadCount > 0 && (
+                            <div className="ml-2 h-5 w-5 min-w-5 bg-blue-500 rounded-full text-white text-xs flex items-center justify-center flex-shrink-0">
+                              {message.unreadCount}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
@@ -662,39 +933,63 @@ export function MessagesList() {
                 Select Friends
               </label>
               <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg">
-                {friends.map((friend) => (
-                  <div
-                    key={friend.id}
-                    className={`flex items-center p-2 cursor-pointer hover:bg-gray-50 transition-colors ${
-                      friend.selected ? "bg-blue-50" : ""
-                    }`}
-                    onClick={() => toggleFriendSelection(friend.id)}
-                  >
-                    <div className="h-8 w-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex-shrink-0 flex items-center justify-center">
-                      {friend.avatar ? (
-                        <img
-                          src={friend.avatar}
-                          alt={friend.name}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <FaUser className="h-4 w-4 text-gray-500" />
-                      )}
+                {friends && friends.length > 0 ? (
+                  friends.map((friend) => (
+                    <div
+                      key={friend.id}
+                      className={`flex items-center p-2 cursor-pointer hover:bg-gray-50 transition-colors ${
+                        friend.selected ? "bg-blue-50" : ""
+                      }`}
+                      onClick={() => toggleFriendSelection(friend.id)}
+                    >
+                      <div className="h-8 w-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex-shrink-0 flex items-center justify-center">
+                        {friend.profile_picture_url ? (
+                          <img
+                            src={friend.profile_picture_url}
+                            alt={friend.name}
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              console.log(
+                                "[MessagesList] Friend avatar failed to load:",
+                                friend
+                              );
+                              // If image fails to load, fall back to icon
+                              (e.target as HTMLImageElement).style.display =
+                                "none";
+                              (
+                                e.currentTarget.parentElement as HTMLElement
+                              ).classList.add("avatar-error");
+                              (
+                                e.currentTarget.parentElement as HTMLElement
+                              ).innerHTML +=
+                                '<svg class="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg>';
+                            }}
+                          />
+                        ) : (
+                          <FaUser className="h-4 w-4 text-gray-500" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">{friend.name}</p>
+                        <p className="text-xs text-gray-500">
+                          @{friend.username}
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={!!friend.selected}
+                        onChange={() => {}} // Handled by the div onClick
+                        className="h-4 w-4 text-blue-600"
+                      />
                     </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">{friend.name}</p>
-                      <p className="text-xs text-gray-500">
-                        @{friend.username}
-                      </p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={!!friend.selected}
-                      onChange={() => {}} // Handled by the div onClick
-                      className="h-4 w-4 text-blue-600"
-                    />
+                  ))
+                ) : (
+                  <div className="p-4 text-center text-gray-500 text-sm">
+                    {friendsLoading
+                      ? "Loading friends..."
+                      : "No friends available"}
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
