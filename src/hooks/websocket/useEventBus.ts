@@ -106,7 +106,7 @@ export function useEventBus() {
       try {
         // Emit message-sent event to update UI immediately
         emit("message-sent", {
-          receiver_id: recipientId,
+          recipient_id: recipientId,
           content,
           type,
           timestamp: new Date().toISOString(),
@@ -122,7 +122,7 @@ export function useEventBus() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            receiver_id: recipientId,
+            recipient_id: recipientId,
             content,
             type,
           }),

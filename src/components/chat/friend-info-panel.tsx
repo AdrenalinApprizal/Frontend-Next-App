@@ -196,7 +196,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       setCurrentMediaPage(1);
     } catch (error) {
       console.error("Error loading media:", error);
-      toast.error("Failed to load media files");
+      // Silently handle error - file service might not be available
     } finally {
       setIsLoading(false);
     }
@@ -221,7 +221,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       setCurrentMediaPage(nextPage);
     } catch (error) {
       console.error("Error loading more media:", error);
-      toast.error("Failed to load more media");
+      // Silently handle error - file service might not be available
     } finally {
       setIsLoadingMore(false);
     }
@@ -244,7 +244,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       setCurrentFilesPage(1);
     } catch (error) {
       console.error("Error loading files:", error);
-      toast.error("Failed to load files");
+      // Silently handle error - file service might not be available
     } finally {
       setIsLoadingFiles(false);
     }
@@ -269,7 +269,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       setCurrentFilesPage(nextPage);
     } catch (error) {
       console.error("Error loading more files:", error);
-      toast.error("Failed to load more files");
+      // Silently handle error - file service might not be available
     } finally {
       setIsLoadingMoreFiles(false);
     }
@@ -282,7 +282,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       toast.success("File download started");
     } catch (error) {
       console.error("Error downloading file:", error);
-      toast.error("Failed to download file");
+      // Silently handle error - file service might not be available
     }
   };
 
@@ -342,7 +342,7 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       closeShareDialog();
     } catch (error) {
       console.error("Error sharing file:", error);
-      toast.error("Failed to share file");
+      // Silently handle error - file service might not be available
     }
   };
 
@@ -369,21 +369,22 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   };
 
   return (
-    <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto h-full">
+    <div className="w-80 border-l border-gray-200 bg-white overflow-y-auto h-full flex-shrink-0">
       {/* Header */}
-      <div className="p-4 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200 bg-white shadow-sm">
         <div className="flex justify-between items-center mb-4">
-          <div></div>
+          <h3 className="text-lg font-semibold text-gray-900">Profile</h3>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700"
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Close profile"
           >
             <FaTimes className="h-5 w-5" />
           </button>
         </div>
 
         <div className="flex flex-col items-center">
-          <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center">
+          <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center ring-2 ring-gray-100">
             {friendDetails?.avatar || friendDetails?.profile_picture_url ? (
               <img
                 src={friendDetails.avatar || friendDetails.profile_picture_url}
@@ -394,10 +395,24 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
               <FaUser className="h-12 w-12 text-gray-400" />
             )}
           </div>
-          <h2 className="text-black text-xl font-semibold">{displayName}</h2>
+          <h2 className="text-black text-xl font-semibold text-center">
+            {displayName}
+          </h2>
           <p className="text-gray-500 text-sm">
             @{friendDetails?.username || friendDetails?.name || "user"}
           </p>
+          <div className="flex items-center space-x-2 mt-2">
+            <div
+              className={`w-3 h-3 rounded-full ${
+                friendDetails?.status === "online"
+                  ? "bg-green-500"
+                  : "bg-gray-400"
+              }`}
+            />
+            <span className="text-sm text-gray-600 capitalize">
+              {friendDetails?.status || "offline"}
+            </span>
+          </div>
         </div>
       </div>
 

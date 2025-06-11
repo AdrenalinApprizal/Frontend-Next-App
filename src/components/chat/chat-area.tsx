@@ -162,7 +162,8 @@ export function ChatArea({
     deleteMessage,
   } = useMessages();
 
-  const { getFriendById, recipientData, setRecipientData } = useFriendship();
+  const { getFriendById, recipientData, setRecipientData, blockedUsers } =
+    useFriendship();
   const presence = usePresence();
 
   const {
@@ -196,17 +197,8 @@ export function ChatArea({
       recipientData.name?.startsWith("User "); // API returned fallback data
 
     if (shouldUseProvidedName) {
-      console.log(
-        `[ChatArea] Using provided recipientName '${recipientName}' over API fallback '${recipientData.name}'`
-      );
+      // Log removed for cleaner code
     }
-
-    console.log(`[ChatArea] Recipient data analysis:`, {
-      recipientName,
-      friendId,
-      recipientDataName: recipientData?.name,
-      shouldUseProvidedName,
-    });
 
     // Get online status from presence service
     const onlineStatus =
@@ -226,9 +218,6 @@ export function ChatArea({
       !recipientName.startsWith("User ")
     ) {
       displayName = recipientName;
-      console.log(
-        `[ChatArea] Using provided recipientName: '${recipientName}'`
-      );
     } else {
       // Second priority: Try to construct from API data
       const recipientDataAny = recipientData as any; // Type cast to access additional properties
@@ -236,38 +225,28 @@ export function ChatArea({
       // Check if API returned proper first_name and last_name
       if (recipientDataAny.first_name && recipientDataAny.last_name) {
         displayName = `${recipientDataAny.first_name} ${recipientDataAny.last_name}`;
-        console.log(
-          `[ChatArea] Using API first_name + last_name: '${displayName}'`
-        );
       } else if (
         recipientData.full_name &&
         !recipientData.full_name.startsWith("User ")
       ) {
         displayName = recipientData.full_name;
-        console.log(`[ChatArea] Using API full_name: '${displayName}'`);
       } else if (
         recipientData.display_name &&
         !recipientData.display_name.startsWith("User ")
       ) {
         displayName = recipientData.display_name;
-        console.log(`[ChatArea] Using API display_name: '${displayName}'`);
       } else if (
         recipientData.name &&
         !recipientData.name.startsWith("User ")
       ) {
         displayName = recipientData.name;
-        console.log(`[ChatArea] Using API name: '${displayName}'`);
       } else if (recipientData.username) {
         displayName = recipientData.username;
-        console.log(`[ChatArea] Using API username: '${displayName}'`);
       } else {
         // Last resort: use recipientName even if it's a fallback, or fallback to "User"
         displayName = recipientName || "User";
-        console.log(`[ChatArea] Using fallback name: '${displayName}'`);
       }
     }
-
-    console.log(`[ChatArea] Final display name: '${displayName}'`);
 
     // Parse name parts for header display
     const nameParts = displayName.split(" ");
@@ -286,76 +265,166 @@ export function ChatArea({
     };
   }, [friendId, recipientName, recipientData, presence]);
 
-  // Enhanced message ownership detection with better validation
+  // Enhanced message ownership detection with conversation-aware logic for corrupted data
   const isCurrentUserMessage = useCallback(
     (message: any): boolean => {
-      if (!currentUserId || !message) return false;
+      if (!currentUserId || !message) {
+        return false;
+      }
 
       const currentUserIdStr = String(currentUserId);
+      const friendIdStr = String(friendId);
 
       // Temp messages are always from current user
       if (message.id?.startsWith("temp-")) return true;
 
-      // Check multiple possible sender ID fields
-      const messageIds = [
-        message.sender_id,
-        message.sender?.id,
-        message.from_id,
-        message.user_id,
-        message.author_id,
-      ]
-        .filter(Boolean)
-        .map(String);
-
-      // If message has any sender ID that matches current user
-      if (messageIds.includes(currentUserIdStr)) return true;
-      
-      // Check receiver_id first (API standard)
-      if (message.receiver_id) {
-        const receiverIdStr = String(message.receiver_id);
-        // If receiver is current user, then message is not from current user
-        if (receiverIdStr === currentUserIdStr) return false;
-        // If receiver is friend and we have a valid sender ID, then message is from current user
-        if (receiverIdStr === friendId && messageIds.length > 0) return true;
+      // Primary check: sender_id
+      const senderId = String(message.sender_id || message.sender?.id || "");
+      if (senderId) {
+        const isFromCurrentUser = senderId === currentUserIdStr;
+        return isFromCurrentUser;
       }
 
-      // For message from API/WebSocket that has recipientId (legacy/backup check)
-      if (message.recipient_id) {
-        const recipientIdStr = String(message.recipient_id);
-        // If recipient is current user, then message is not from current user
-        if (recipientIdStr === currentUserIdStr) return false;
-        // If recipient is friend and we have a valid sender ID, then message is from current user
-        if (recipientIdStr === friendId && messageIds.length > 0) return true;
+      // Fallback: Use recipient_id/receiver_id logic (if available)
+      const recipientId = String(
+        message.recipient_id || message.receiver_id || ""
+      );
+      if (recipientId) {
+        if (recipientId === currentUserIdStr) {
+          // Message TO current user = FROM friend
+          return false;
+        } else if (recipientId === friendIdStr) {
+          // Message TO friend = FROM current user
+          return true;
+        }
       }
 
-      // If we have an explicit sender that's different from current user
-      if (messageIds.length > 0 && !messageIds.includes(currentUserIdStr))
-        return false;
+      // Enhanced fallback for corrupted data
+      if (senderId) {
+        // If sender_id matches friend ID, it's from friend
+        if (senderId === friendIdStr) {
+          return false; // Message from friend
+        }
 
-      return false; // Default to false if ownership cannot be determined
+        // If sender_id matches current user, it's from current user
+        if (senderId === currentUserIdStr) {
+          return true; // Message from current user
+        }
+
+        // Data corruption scenario - use heuristic approach
+        const messageIndex = localMessages.findIndex(
+          (msg) => msg.id === message.id
+        );
+        const isEvenIndex = messageIndex % 2 === 0;
+
+        // Check if all messages have the same sender_id
+        const uniqueSenderIds = [
+          ...new Set(localMessages.map((m) => m.sender_id).filter(Boolean)),
+        ];
+        if (uniqueSenderIds.length === 1) {
+          const singleSenderId = uniqueSenderIds[0];
+
+          if (singleSenderId === currentUserIdStr) {
+            return true; // All messages from current user
+          } else if (singleSenderId === friendIdStr) {
+            return false; // All messages from friend
+          } else {
+            return isEvenIndex; // Alternating pattern for unknown sender
+          }
+        }
+
+        return isEvenIndex; // Multiple senders - use alternating pattern
+      }
+
+      // Final default to current user if we can't determine otherwise
+      return true;
     },
-    [currentUserId, friendId] // Add friendId to dependencies
+    [currentUserId, friendId, localMessages]
+  ); // Function to filter out messages from blocked users (for current user only)
+  const filterBlockedMessages = useCallback(
+    (messages: Message[]): Message[] => {
+      if (!blockedUsers || blockedUsers.length === 0) {
+        return messages; // No blocked users, return all messages
+      }
+
+      const filtered = messages.filter((message) => {
+        // If current user sent the message, always show it
+        if (message.isCurrentUser) {
+          return true;
+        }
+
+        // Check if message is from a blocked user
+        const senderId = message.sender_id;
+        if (senderId) {
+          const isBlocked = blockedUsers.some((blockedUser) => {
+            // For individual chats, blockedUsers are of type User[] and only have id field
+            const blockedUserId = blockedUser.id;
+            const match = blockedUserId === senderId;
+
+            if (match) {
+              console.log(
+                `[ChatArea] Found blocked user match: sender=${senderId}, blocked=${blockedUserId}`
+              );
+            }
+
+            return match;
+          });
+
+          if (isBlocked) {
+            console.log(
+              `[ChatArea] Filtering out message from blocked user: ${senderId}`
+            );
+            return false; // Hide message from blocked user
+          }
+        }
+
+        return true; // Show message if not from blocked user
+      });
+
+      if (filtered.length !== messages.length) {
+        console.log(
+          `[ChatArea] Filtered ${
+            messages.length - filtered.length
+          } messages from blocked users`
+        );
+        console.log(
+          `[ChatArea] Blocked users list:`,
+          blockedUsers.map((u) => ({ id: u.id, name: u.name }))
+        );
+      }
+
+      return filtered;
+    },
+    [blockedUsers]
   );
 
-  // Validate and fix message bubble positioning
-  const validateMessageBubbles = useCallback((): number => {
-    let fixedCount = 0;
-    setLocalMessages((prev) =>
-      prev.map((msg) => {
-        const correctIsCurrentUser = isCurrentUserMessage(msg);
-        if (msg.isCurrentUser !== correctIsCurrentUser) {
-          fixedCount++;
-          return { ...msg, isCurrentUser: correctIsCurrentUser };
-        }
-        return msg;
-      })
-    );
-    return fixedCount;
-  }, [isCurrentUserMessage]);
+  // Debug function to check current session and message data
+  const debugSessionAndMessages = useCallback(() => {
+    // Simple debug function - logs removed for cleaner production code
+    // Basic session validation
+    const sessionValid = !!(session && currentUserId && friendId);
+    const messageCount = localMessages.length;
+
+    if (!sessionValid) {
+      toast.error("Session validation failed", {
+        duration: 2000,
+        position: "top-center",
+      });
+      return;
+    }
+
+    toast.success(`Debug: ${messageCount} messages loaded`, {
+      duration: 2000,
+      position: "top-center",
+    });
+  }, [session, currentUserId, friendId, localMessages]);
 
   // Enhanced message grouping by date with better formatting
   const groupedMessages = useMemo(() => {
     if (!localMessages || !Array.isArray(localMessages)) return [];
+
+    // First filter out messages from blocked users
+    const filteredMessages = filterBlockedMessages(localMessages);
 
     const messagesByDate: Record<
       string,
@@ -371,8 +440,8 @@ export function ChatArea({
     const today = new Date().toDateString();
     const yesterday = new Date(Date.now() - 86400000).toDateString();
 
-    // Sort messages by timestamp first
-    const sortedMessages = [...localMessages].sort((a, b) => {
+    // Sort filtered messages by timestamp first
+    const sortedMessages = [...filteredMessages].sort((a, b) => {
       // Use raw_timestamp for most accurate sorting, fallback to other timestamps
       const timeA = new Date(
         a.raw_timestamp || a.sent_at || a.created_at || a.timestamp || 0
@@ -408,9 +477,7 @@ export function ChatArea({
           isToday: dateKey === today,
           isYesterday: dateKey === yesterday,
         };
-      }
-
-      // Ensure message has correct ownership before adding
+      } // Ensure message has correct ownership before adding
       const validatedMessage = {
         ...message,
         isCurrentUser: isCurrentUserMessage(message),
@@ -429,7 +496,7 @@ export function ChatArea({
     return Object.values(messagesByDate).sort(
       (a, b) => new Date(a.dateKey).getTime() - new Date(b.dateKey).getTime()
     );
-  }, [localMessages, isCurrentUserMessage]);
+  }, [localMessages, isCurrentUserMessage, filterBlockedMessages]);
 
   // Session storage management for message caching
   const saveToSessionStorage = useCallback(
@@ -474,9 +541,6 @@ export function ChatArea({
           conversationKey,
           JSON.stringify(optimizedMessages)
         );
-        console.log(
-          `[ChatArea] Saved ${optimizedMessages.length} messages to session storage`
-        );
       } catch (error) {
         console.warn("[ChatArea] Failed to save to session storage:", error);
         // Handle QuotaExceededError by keeping only 50 latest messages
@@ -515,6 +579,205 @@ export function ChatArea({
     [friendId]
   );
 
+  // Comprehensive function to debug and fix recipient_id issues
+  const debugAndFixRecipientIds = useCallback(() => {
+    // Analyze current messages for recipient_id issues
+    const problematicMessages: any[] = [];
+    const fixedMessages: Message[] = [];
+
+    localMessages.forEach((msg) => {
+      const isProblematic =
+        !msg.recipient_id || msg.recipient_id === "undefined";
+
+      if (isProblematic) {
+        problematicMessages.push(msg);
+
+        // Attempt to fix the message
+        let fixedRecipientId = msg.recipient_id;
+
+        // Fix logic: infer recipient_id based on sender_id
+        if (!fixedRecipientId || fixedRecipientId === "undefined") {
+          if (msg.sender_id === String(currentUserId)) {
+            // Current user sent this message, recipient should be friend
+            fixedRecipientId = friendId;
+          } else if (msg.sender_id === String(friendId)) {
+            // Friend sent this message, recipient should be current user
+            fixedRecipientId = String(currentUserId);
+          } else if (msg.receiver_id && msg.receiver_id !== "undefined") {
+            // Use receiver_id as fallback
+            fixedRecipientId = msg.receiver_id;
+          }
+        }
+
+        // Create fixed message
+        const fixedMessage: Message = {
+          ...msg,
+          recipient_id: fixedRecipientId,
+          receiver_id: fixedRecipientId, // Also update receiver_id for consistency
+        };
+
+        // Recalculate ownership
+        fixedMessage.isCurrentUser = isCurrentUserMessage(fixedMessage);
+        fixedMessages.push(fixedMessage);
+      }
+    });
+
+    // Store fixes for potential application
+    if (fixedMessages.length > 0) {
+      (window as any).__messageFixData = {
+        fixedMessages,
+        originalProblematicMessages: problematicMessages,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    return {
+      total: localMessages.length,
+      problematic: problematicMessages.length,
+      fixed: fixedMessages.length,
+      recommendations:
+        problematicMessages.length > 0
+          ? [
+              `Found ${problematicMessages.length} messages with missing/invalid recipient_id`,
+            ]
+          : [],
+    };
+  }, [
+    localMessages,
+    currentUserId,
+    friendId,
+    recipient.name,
+    isCurrentUserMessage,
+  ]);
+
+  // Function to apply recipient_id fixes stored by debugAndFixRecipientIds
+  const applyRecipientIdFixes = useCallback(() => {
+    const fixData = (window as any).__messageFixData;
+    if (!fixData || !fixData.fixedMessages) {
+      toast.error("No fixes available. Run debugAndFixRecipientIds first.", {
+        duration: 3000,
+        position: "top-center",
+      });
+      return;
+    }
+
+    // Create a map of message ID to fixed data
+    const fixMap = new Map();
+    fixData.fixedMessages.forEach((fixed: Message) => {
+      fixMap.set(fixed.id, fixed);
+    });
+
+    // Apply fixes to local messages
+    setLocalMessages((prev) => {
+      const updatedMessages = prev.map((msg) => {
+        const fix = fixMap.get(msg.id);
+        if (fix) {
+          return fix;
+        }
+        return msg;
+      });
+
+      // Save to session storage
+      saveToSessionStorage(updatedMessages);
+      return updatedMessages;
+    });
+
+    toast.success(
+      `Applied ${fixData.fixedMessages.length} recipient_id fixes!`,
+      {
+        duration: 3000,
+        position: "top-center",
+      }
+    );
+
+    // Clear fix data
+    delete (window as any).__messageFixData;
+  }, [saveToSessionStorage]);
+
+  // Force fix all existing messages
+  const forceFixAllMessages = useCallback(() => {
+    let fixedCount = 0;
+
+    setLocalMessages((prev) => {
+      const fixedMessages = prev.map((msg) => {
+        const correctIsCurrentUser = isCurrentUserMessage(msg);
+        const wasChanged = msg.isCurrentUser !== correctIsCurrentUser;
+
+        if (wasChanged) {
+          fixedCount++;
+        }
+
+        return {
+          ...msg,
+          isCurrentUser: correctIsCurrentUser,
+        };
+      });
+
+      if (fixedCount > 0) {
+        toast.success(
+          `Fixed ${fixedCount} message bubble${fixedCount > 1 ? "s" : ""}`,
+          {
+            duration: 3000,
+            position: "top-center",
+          }
+        );
+      } else {
+        toast.success("All message bubbles are already correctly positioned", {
+          duration: 2000,
+          position: "top-center",
+        });
+      }
+
+      // Save fixed messages to session storage
+      saveToSessionStorage(fixedMessages);
+
+      return fixedMessages;
+    });
+  }, [isCurrentUserMessage, saveToSessionStorage]);
+
+  // Auto-fix existing messages when component loads
+  useEffect(() => {
+    if (currentUserId && friendId && localMessages.length > 0) {
+      // Only run once by checking if we've already run the fix
+      const hasFixRun = localStorage.getItem(`bubble-fix-${friendId}`);
+      if (!hasFixRun) {
+        setTimeout(() => {
+          forceFixAllMessages();
+          localStorage.setItem(`bubble-fix-${friendId}`, "true");
+        }, 1000); // Run fix after 1 second
+      }
+    }
+  }, [currentUserId, friendId, localMessages.length, forceFixAllMessages]);
+
+  // Validate and fix message bubble positioning whenever messages change
+  useEffect(() => {
+    if (localMessages.length > 0 && currentUserId && friendId) {
+      let needsFixing = false;
+
+      // Check if any messages have incorrect positioning
+      const fixedMessages = localMessages.map((msg) => {
+        const correctIsCurrentUser = isCurrentUserMessage(msg);
+        if (msg.isCurrentUser !== correctIsCurrentUser) {
+          needsFixing = true;
+          return { ...msg, isCurrentUser: correctIsCurrentUser };
+        }
+        return msg;
+      });
+
+      // Apply fixes if needed
+      if (needsFixing) {
+        setLocalMessages(fixedMessages);
+        saveToSessionStorage(fixedMessages);
+      }
+    }
+  }, [
+    localMessages.length,
+    currentUserId,
+    friendId,
+    isCurrentUserMessage,
+    saveToSessionStorage,
+  ]);
+
   // Load messages from session storage
   const loadFromSessionStorage = useCallback((): Message[] => {
     if (!friendId) return [];
@@ -524,9 +787,6 @@ export function ChatArea({
       const stored = sessionStorage.getItem(conversationKey);
       if (stored) {
         const parsedMessages = JSON.parse(stored);
-        console.log(
-          `[ChatArea] Loaded ${parsedMessages.length} messages from session storage`
-        );
         return parsedMessages;
       }
     } catch (error) {
@@ -535,10 +795,41 @@ export function ChatArea({
     return [];
   }, [friendId]);
 
-  // Enhanced message validation and processing
+  // Enhanced message validation and processing with recipient_id extraction
   const processApiMessages = useCallback(
     (messagesArray: any[]): Message[] => {
       return messagesArray.map((message: any) => {
+        // Enhanced recipient_id extraction from multiple possible sources
+        let extractedRecipientId = message.recipient_id || message.receiver_id;
+
+        // If recipient_id is missing, try to extract from other fields
+        if (!extractedRecipientId) {
+          // Check nested objects that might contain recipient info
+          if (message.recipient?.id) {
+            extractedRecipientId = message.recipient.id;
+          } else if (message.receiver?.id) {
+            extractedRecipientId = message.receiver.id;
+          } else if (message.conversation?.recipient_id) {
+            extractedRecipientId = message.conversation.recipient_id;
+          } else if (message.chat_room_id) {
+            extractedRecipientId = message.chat_room_id;
+          } else if (message.conversation_id) {
+            extractedRecipientId = message.conversation_id;
+          }
+        }
+
+        // Infer recipient_id based on conversation context if still missing
+        if (!extractedRecipientId && currentUserId && friendId) {
+          // If sender is current user, recipient should be friend
+          if (message.sender_id === String(currentUserId)) {
+            extractedRecipientId = friendId;
+          }
+          // If sender is friend, recipient should be current user
+          else if (message.sender_id === String(friendId)) {
+            extractedRecipientId = String(currentUserId);
+          }
+        }
+
         // Ensure consistent message structure with proper timestamp handling
         const processedMessage: Message = {
           ...message,
@@ -547,21 +838,19 @@ export function ChatArea({
             message.message_id ||
             `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           message_id: message.message_id || message.id,
-          receiver_id: message.receiver_id || message.recipient_id, // Ensure receiver_id is set
-          recipient_id: message.recipient_id || message.receiver_id, // Ensure recipient_id is set
-          isCurrentUser: isCurrentUserMessage(message),
-          // Format timestamp for display using priority: sent_at > created_at > timestamp
+          sender_id: message.sender_id,
+          receiver_id: message.receiver_id || extractedRecipientId,
+          recipient_id: extractedRecipientId || message.receiver_id,
+          isCurrentUser: false, // Will be determined after processing
           timestamp: formatTimestamp(
             message.sent_at || message.created_at || message.timestamp
           ),
-          // Preserve raw timestamp for accurate sorting
           raw_timestamp:
             message.sent_at || message.created_at || message.timestamp,
           created_at:
             message.created_at || message.sent_at || new Date().toISOString(),
-          sent_at: message.sent_at, // Keep original sent_at
+          sent_at: message.sent_at,
           content: message.content || "",
-          // Normalize boolean fields
           read: Boolean(message.read || message.is_read),
           isEdited: Boolean(message.isEdited || message.is_edited),
           isDeleted: Boolean(message.isDeleted || message.is_deleted),
@@ -569,10 +858,13 @@ export function ChatArea({
           failed: Boolean(message.failed),
         };
 
+        // Determine ownership AFTER processing recipient_id
+        processedMessage.isCurrentUser = isCurrentUserMessage(processedMessage);
+
         return processedMessage;
       });
     },
-    [isCurrentUserMessage]
+    [isCurrentUserMessage, currentUserId, friendId]
   );
 
   // Enhanced message loading with session storage integration (Vue.js style)
@@ -591,14 +883,10 @@ export function ChatArea({
     setIsSearching(false);
 
     setIsLoading(true);
-    console.log(`[ChatArea] Loading data for recipient ID: ${friendId}`);
 
-    // 1. Load cached messages first for instant display (Vue.js style)
+    // 1. Load cached messages first for instant display
     const cachedMessages = loadFromSessionStorage();
     if (cachedMessages.length > 0) {
-      console.log(
-        `[ChatArea] Displaying ${cachedMessages.length} cached messages for instant UX`
-      );
       const processedCachedMessages = processApiMessages(cachedMessages);
       setLocalMessages(processedCachedMessages);
       setIsLoading(false); // Hide loading for cached content
@@ -624,19 +912,14 @@ export function ChatArea({
         }
       })
       .catch((err) => {
-        console.error("[ChatArea] Error loading friend details:", err);
         if (isMountedRef.current) {
           toast.error("Could not load contact information");
         }
       });
 
-    // 3. Always load fresh messages from API, even if cached messages are available
-    // This ensures we have the latest messages, including any sent while in other rooms
+    // Always load fresh messages from API
     const loadFreshMessages = async () => {
       try {
-        console.log(
-          `[ChatArea] Fetching fresh messages from API for ${friendId}`
-        );
         // Always get the latest messages when switching rooms
         const response = await getMessages(friendId);
 
@@ -647,16 +930,11 @@ export function ChatArea({
 
         // Check if response indicates an error state
         if (response && response.success === false) {
-          console.warn(`[ChatArea] API returned error response:`, response);
-
           // Handle specific error cases
           if (
             response.errorCode === "ALL_METHODS_FAILED" ||
             response.error?.includes("Could not retrieve message history")
           ) {
-            console.log(
-              "[ChatArea] Message history retrieval failed, using cached messages"
-            );
             // Don't throw error, just use cached messages
             messagesArray = [];
           } else {
@@ -683,20 +961,13 @@ export function ChatArea({
 
             if (arrayProps.length > 0) {
               const [propName, array] = arrayProps[0];
-              console.log(
-                `[ChatArea] Found messages in '${propName}' property`
-              );
               messagesArray = array;
             }
           }
         }
 
-        // Add this enhanced logic to ensure latest messages are properly displayed
+        // Enhanced logic to ensure latest messages are properly displayed
         if (messagesArray.length > 0) {
-          console.log(
-            `[ChatArea] Loaded ${messagesArray.length} fresh messages from API`
-          );
-
           const processedMessages = processApiMessages(messagesArray);
 
           // Enhanced deduplication: compare with cached messages
@@ -706,9 +977,6 @@ export function ChatArea({
           );
 
           if (newMessages.length > 0) {
-            console.log(
-              `[ChatArea] Found ${newMessages.length} new messages from API`
-            );
             setLocalMessages((prev) => {
               // Merge cached and fresh messages, removing duplicates
               const allMessages = [...prev, ...newMessages];
@@ -719,7 +987,6 @@ export function ChatArea({
 
               // Sort by timestamp
               const sortedMessages = uniqueMessages.sort((a, b) => {
-                // Use raw_timestamp for most accurate sorting, fallback to other timestamps
                 const timeA = new Date(
                   a.raw_timestamp ||
                     a.sent_at ||
@@ -743,12 +1010,8 @@ export function ChatArea({
               return sortedMessages;
             });
           } else {
-            // No new messages found in the API response that aren't already in local state
             // Check if we need to update anyway - compare message counts
             if (processedMessages.length > localMessages.length) {
-              console.log(
-                "[ChatArea] API has more messages than local state, updating"
-              );
               setLocalMessages(processedMessages);
               saveToSessionStorage(processedMessages);
             } else if (
@@ -758,12 +1021,9 @@ export function ChatArea({
               // First load and we have some messages from API
               setLocalMessages(processedMessages);
               saveToSessionStorage(processedMessages);
-            } else {
-              console.log("[ChatArea] Local state is already up to date");
             }
           }
         } else {
-          console.log(`[ChatArea] No messages found for ${friendId}`);
           if (cachedMessages.length === 0) {
             setLocalMessages([]);
           }
@@ -771,26 +1031,16 @@ export function ChatArea({
           saveToSessionStorage([]);
         }
       } catch (error: any) {
-        console.error("[ChatArea] Error loading fresh messages:", error);
-
         // Handle specific API error cases
         if (
           error?.message?.includes("ALL_METHODS_FAILED") ||
           error?.errorCode === "ALL_METHODS_FAILED"
         ) {
-          console.warn(
-            "[ChatArea] All message retrieval methods failed, using cached messages only"
-          );
-
           // If we have cached messages, use them and don't show error
           if (cachedMessages.length > 0) {
-            console.log("[ChatArea] Using cached messages as fallback");
             // Keep the cached messages already displayed
           } else {
             // No cached messages available, show empty state
-            console.log(
-              "[ChatArea] No cached messages available, showing empty state"
-            );
             setLocalMessages([]);
             if (isMountedRef.current) {
               // Show a more informative message for connection issues
@@ -805,9 +1055,6 @@ export function ChatArea({
             }
           }
         } else if (error?.message?.includes("MAX_RETRIES_EXCEEDED")) {
-          console.warn(
-            "[ChatArea] Maximum retries exceeded for message loading"
-          );
           if (isMountedRef.current && cachedMessages.length === 0) {
             toast(
               "Message loading is temporarily unavailable. Please try again later.",
@@ -853,11 +1100,6 @@ export function ChatArea({
 
     // Handler for new messages with enhanced deduplication
     const handleNewMessage = (messageData: any) => {
-      console.log(
-        "[ChatArea] Received new message via WebSocket:",
-        messageData
-      );
-
       // Only handle messages for current conversation
       const isRelevantMessage =
         messageData.sender_id === friendId ||
@@ -867,7 +1109,6 @@ export function ChatArea({
         messageData.chat_room_id === friendId;
 
       if (!isRelevantMessage) {
-        console.log("[ChatArea] Ignoring message for different conversation");
         return;
       }
 
@@ -930,19 +1171,10 @@ export function ChatArea({
         });
 
         if (messageExists) {
-          console.log(
-            "[ChatArea] Duplicate WebSocket message filtered out:",
-            enhancedMessage.id
-          );
           return prev;
         }
 
-        console.log(
-          "[ChatArea] Adding new WebSocket message:",
-          enhancedMessage.id
-        );
         const updatedMessages = [...prev, enhancedMessage].sort((a, b) => {
-          // Use raw_timestamp for most accurate sorting, fallback to other timestamps
           const timeA = new Date(
             a.raw_timestamp || a.sent_at || a.created_at || a.timestamp || 0
           ).getTime();
@@ -987,10 +1219,6 @@ export function ChatArea({
       // Only show typing indicator for current conversation
       if (data.userId === friendId || data.recipientId === currentUserId) {
         setIsTyping(data.isTyping);
-        console.log("[ChatArea] Updated typing status:", {
-          user: data.user?.name || data.userId,
-          isTyping: data.isTyping,
-        });
 
         // Auto-clear typing indicator after 5 seconds
         if (data.isTyping) {
@@ -1015,7 +1243,6 @@ export function ChatArea({
               : msg
           )
         );
-        console.log("[ChatArea] Message marked as read:", data.messageId);
       }
     };
 
@@ -1041,7 +1268,6 @@ export function ChatArea({
           return msg;
         })
       );
-      console.log("[ChatArea] Message updated via WebSocket:", data.messageId);
     };
 
     // Register enhanced event listeners
@@ -1069,18 +1295,14 @@ export function ChatArea({
   useEffect(() => {
     if (!friendId || !currentUserId) return;
 
-    console.log(`[ChatArea] Setting up WebSocket for chat with ${friendId}`);
-
     const setupWebSocket = async () => {
       // Connect to WebSocket if not already connected
       if (!isConnected && !isConnecting) {
-        console.log("[ChatArea] Initiating WebSocket connection...");
         await connect();
       }
 
       // Subscribe to private messages for this conversation
       if (isConnected) {
-        console.log(`[ChatArea] Subscribing to messages with ${friendId}`);
         subscribeToPrivateMessages(friendId);
       }
     };
@@ -1091,7 +1313,6 @@ export function ChatArea({
     return () => {
       // Unsubscribe from WebSocket events
       if (isConnected) {
-        console.log(`[ChatArea] Unsubscribing from messages with ${friendId}`);
         unsubscribeFromPrivateMessages(friendId);
       }
     };
@@ -1206,24 +1427,14 @@ export function ChatArea({
 
       // Enhanced sending logic with WebSocket priority and API fallback
       if (isConnected) {
-        console.log(`[ChatArea] Sending message via WebSocket to ${friendId}`);
         try {
           const wsResult = await sendPrivateMessage(friendId, messageContent);
-          console.log(
-            "[ChatArea] Message sent via WebSocket successfully",
-            wsResult
-          );
-
           // WebSocket returns boolean, use temp ID for now
           if (wsResult) {
             // Keep temp ID for WebSocket messages since they don't return message ID
             messageId = tempId;
           }
         } catch (wsError) {
-          console.warn(
-            "[ChatArea] WebSocket send failed, falling back to API:",
-            wsError
-          );
           response = await sendMessage(friendId, messageContent);
 
           if (
@@ -1236,7 +1447,6 @@ export function ChatArea({
           }
         }
       } else {
-        console.log(`[ChatArea] WebSocket not connected, sending via API`);
         response = await sendMessage(friendId, messageContent);
 
         if (
@@ -1775,10 +1985,10 @@ export function ChatArea({
             </div>
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center space-x-2">
             <button
               onClick={() => setShowSearch(true)}
-              className="p-2 rounded-md text-gray-500 hover:bg-gray-100 hover:text-blue-500 transition-colors duration-200 mr-2"
+              className="p-2 rounded-md text-gray-500 hover:bg-gray-100 hover:text-blue-500 transition-colors duration-200"
               title="Search in conversation"
             >
               <FaSearch className="h-4 w-4" />
@@ -1885,6 +2095,11 @@ export function ChatArea({
                     className={`flex ${
                       message.isCurrentUser ? "justify-end" : "justify-start"
                     } mb-4`}
+                    data-message-id={message.id}
+                    data-sender-id={message.sender_id}
+                    data-recipient-id={message.recipient_id}
+                    data-is-current-user={message.isCurrentUser}
+                    data-positioning={message.isCurrentUser ? "right" : "left"}
                   >
                     <div className="flex flex-col max-w-[70%]">
                       <div

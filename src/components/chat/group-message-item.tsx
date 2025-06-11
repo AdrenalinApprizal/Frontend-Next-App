@@ -36,7 +36,7 @@ interface MessageItemProps {
     delivered?: boolean;
     _isOptimisticMessage?: boolean;
   };
-  onRetryClick: (messageId: string) => void;
+  onRetryClick?: (messageId: string) => void;
   onEditClick?: (messageId: string, currentContent: string) => void;
   onDeleteClick?: (messageId: string) => void;
 }
@@ -55,21 +55,31 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
   // State for edited content
   const [editedContent, setEditedContent] = useState(message.content);
 
-  // CRITICAL FIX: Force messages dengan "You" sebagai sender untuk selalu dianggap dari current user
+  // CRITICAL FIX: Enhanced logic to determine if message is from current user
   const isDefinitelyCurrentUser =
     message.isCurrentUser === true ||
     message.sender.name === "You" ||
-    message._isOptimisticMessage === true;
+    message._isOptimisticMessage === true ||
+    // Additional check for optimistic messages
+    message.id?.startsWith("temp-");
 
   // Debug info untuk setiap pesan yang di-render
-  console.log(`🟢 Rendering message in separate component ID ${message.id}:`, {
-    content: message.content,
-    isCurrentUser: message.isCurrentUser,
-    forcedIsCurrentUser: isDefinitelyCurrentUser,
-    senderName: message.sender.name,
-    showActions,
-    isEditing,
-  });
+  console.log(
+    `🟢 DETAILED: Rendering message in GroupMessageItem ID ${message.id}:`,
+    {
+      content: message.content,
+      isCurrentUser: message.isCurrentUser,
+      forcedIsCurrentUser: isDefinitelyCurrentUser,
+      senderName: message.sender.name,
+      senderId: message.sender.id,
+      messageId: message.id,
+      isOptimistic: message._isOptimisticMessage,
+      isTemp: message.id?.startsWith("temp-"),
+      allMessageProps: Object.keys(message),
+      showActions,
+      isEditing,
+    }
+  );
 
   // Handler for edit button click
   const handleEditClick = () => {
@@ -169,7 +179,11 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 : "bg-blue-500 text-white"
               : "bg-white border border-gray-200 text-gray-800"
           }`}
-          onClick={message.failed ? () => onRetryClick(message.id) : undefined}
+          onClick={
+            message.failed && onRetryClick
+              ? () => onRetryClick(message.id)
+              : undefined
+          }
           title={
             message.failed ? "Click to retry sending this message" : undefined
           }

@@ -7,6 +7,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  first_name?: string;
+  last_name?: string;
   full_name?: string;
   profile_picture_url?: string;
   avatar_url?: string;
@@ -728,34 +730,126 @@ export const useFriendship = () => {
       setError(null);
       try {
         console.log("[Friends Store] Accepting friend request:", friendshipId);
+        console.log(
+          "[Friends Store] All available friend requests:",
+          friendRequests
+        );
 
         // 1. Find the friend request before accepting it
         const request = friendRequests.find(
-          (req) => req.friendship_id === friendshipId
+          (req) => req.friendship_id === friendshipId || req.id === friendshipId
         );
+
         if (!request) {
           console.error(
             "[Friends Store] Could not find friend request with ID:",
             friendshipId
           );
-          throw new Error("Friend request not found");
+          console.error(
+            "[Friends Store] Available friendship_ids:",
+            friendRequests.map((req) => ({
+              friendship_id: req.friendship_id,
+              id: req.id,
+              user: req.user?.username || req.user?.name,
+            }))
+          );
+          console.warn(
+            "[Friends Store] BYPASSING validation and trying API call anyway..."
+          );
+          // Don't throw error, continue with API call
         }
 
         console.log("[Friends Store] Found friend request:", request);
 
-        // 2. Accept the friend request
-        const acceptResponse = await apiCall("friends/accept", {
-          method: "POST",
-          body: JSON.stringify({ friendship_id: friendshipId }),
-        });
-        console.log(
-          "[Friends Store] Friend request accept response:",
-          acceptResponse
-        );
+        // 2. Accept the friend request - use the provided ID directly
+        const actualId = request?.friendship_id || request?.id || friendshipId;
+        console.log("[Friends Store] Using ID for API call:", actualId);
+
+        let acceptResponse;
+        let lastError: any;
+
+        // Try multiple approaches to accept the friend request
+        const acceptMethods = [
+          // Method 1: Current approach (POST /friends/accept with friendship_id)
+          {
+            url: "friends/accept",
+            method: "POST",
+            body: { friendship_id: actualId },
+            description: "POST /friends/accept with friendship_id",
+          },
+          // Method 2: Try with 'id' field instead
+          {
+            url: "friends/accept",
+            method: "POST",
+            body: { id: actualId },
+            description: "POST /friends/accept with id",
+          },
+          // Method 3: Try with request_id field
+          {
+            url: "friends/accept",
+            method: "POST",
+            body: { request_id: actualId },
+            description: "POST /friends/accept with request_id",
+          },
+          // Method 4: Try PUT method
+          {
+            url: "friends/accept",
+            method: "PUT",
+            body: { friendship_id: actualId },
+            description: "PUT /friends/accept with friendship_id",
+          },
+          // Method 5: Try URL parameter approach
+          {
+            url: `friends/${actualId}/accept`,
+            method: "POST",
+            body: {},
+            description: "POST /friends/{id}/accept",
+          },
+        ];
+
+        for (const method of acceptMethods) {
+          try {
+            console.log(`[Friends Store] Trying: ${method.description}`);
+
+            acceptResponse = await apiCall(method.url, {
+              method: method.method,
+              body:
+                Object.keys(method.body).length > 0
+                  ? JSON.stringify(method.body)
+                  : undefined,
+            });
+
+            console.log(
+              `[Friends Store] ✅ Success with: ${method.description}`
+            );
+            console.log(
+              "[Friends Store] Friend request accept response:",
+              acceptResponse
+            );
+            break; // Success! Exit the loop
+          } catch (err: any) {
+            console.log(
+              `[Friends Store] ❌ Failed with: ${method.description}`,
+              err.message
+            );
+            lastError = err;
+            continue; // Try next method
+          }
+        }
+
+        // If all methods failed, throw the last error
+        if (!acceptResponse) {
+          console.error(
+            "[Friends Store] All accept methods failed, throwing last error"
+          );
+          throw (
+            lastError || new Error("All friend request accept methods failed")
+          );
+        }
 
         // 3. Immediately update the local friend requests state to remove the accepted request
         const updatedRequests = friendRequests.filter(
-          (req) => req.friendship_id !== friendshipId
+          (req) => req.friendship_id !== actualId && req.id !== actualId
         );
         setFriendRequests(updatedRequests);
         console.log(
@@ -764,7 +858,7 @@ export const useFriendship = () => {
         );
 
         // 4. Add the new friend to the friends list immediately if they were the sender
-        if (request.user) {
+        if (request && request.user) {
           const newFriend: Friend = {
             id: request.user.id,
             name:
@@ -794,6 +888,10 @@ export const useFriendship = () => {
             setFriends(updatedFriends);
             console.log("[Friends Store] Added new friend locally:", newFriend);
           }
+        } else {
+          console.log(
+            "[Friends Store] No user data available, skipping friend addition"
+          );
         }
 
         // 5. Refresh both lists from the server to ensure consistency (like Vue implementation)

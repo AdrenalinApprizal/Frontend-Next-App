@@ -113,6 +113,7 @@ export function MessagesList() {
     error: groupsError,
     getGroups,
     createGroup,
+    getGroupMessages,
   } = useGroup();
 
   // Get data from the messages hook
@@ -120,6 +121,8 @@ export function MessagesList() {
     loading: messageLoading,
     error: messageError,
     getUnreadCount,
+    getMessages,
+    getUnifiedMessages,
   } = useMessages();
 
   const presence = usePresence();
@@ -134,35 +137,47 @@ export function MessagesList() {
   useEffect(() => {
     if (hookFriends && Array.isArray(hookFriends)) {
       console.log("[MessagesList] Transforming friends data:", hookFriends);
-      const friendsWithMessages = transformFriendsToMessages(hookFriends);
-      console.log(
-        "[MessagesList] Transformed friends with profile pictures:",
-        friendsWithMessages.map((f) => ({
-          id: f.id,
-          name: f.sender.name,
-          profile_url: f.sender.profile_picture_url,
-        }))
-      );
-      setMessages((prevMessages) => {
-        // Remove old friend messages and add new ones
-        const nonFriendMessages = prevMessages.filter(
-          (msg) => msg.type !== "friend"
+
+      const transformAndSetFriends = async () => {
+        const friendsWithMessages = await transformFriendsToMessages(
+          hookFriends
         );
-        return [...nonFriendMessages, ...friendsWithMessages];
-      });
+        console.log(
+          "[MessagesList] Transformed friends with profile pictures:",
+          friendsWithMessages.map((f) => ({
+            id: f.id,
+            name: f.sender.name,
+            profile_url: f.sender.profile_picture_url,
+            content: f.content,
+          }))
+        );
+        setMessages((prevMessages) => {
+          // Remove old friend messages and add new ones
+          const nonFriendMessages = prevMessages.filter(
+            (msg) => msg.type !== "friend"
+          );
+          return [...nonFriendMessages, ...friendsWithMessages];
+        });
+      };
+
+      transformAndSetFriends();
     }
   }, [hookFriends]);
 
   useEffect(() => {
     if (hookGroups && Array.isArray(hookGroups)) {
-      const groupsWithMessages = transformGroupsToMessages(hookGroups);
-      setMessages((prevMessages) => {
-        // Remove old group messages and add new ones
-        const nonGroupMessages = prevMessages.filter(
-          (msg) => msg.type !== "group"
-        );
-        return [...nonGroupMessages, ...groupsWithMessages];
-      });
+      const transformAndSetGroups = async () => {
+        const groupsWithMessages = await transformGroupsToMessages(hookGroups);
+        setMessages((prevMessages) => {
+          // Remove old group messages and add new ones
+          const nonGroupMessages = prevMessages.filter(
+            (msg) => msg.type !== "group"
+          );
+          return [...nonGroupMessages, ...groupsWithMessages];
+        });
+      };
+
+      transformAndSetGroups();
     }
   }, [hookGroups]);
 
@@ -211,6 +226,40 @@ export function MessagesList() {
       // The WebSocketProvider handles the actual connection management
     }
   }, [isConnected, wsMessages]);
+
+  // Function to get last message for a conversation
+  const getLastMessageForConversation = async (
+    conversationId: string,
+    type: "friend" | "group"
+  ) => {
+    try {
+      if (type === "group") {
+        // For groups, use the group messages API from the hook
+        const response = await getGroupMessages(conversationId, 1, 1); // Get only 1 message (latest)
+        if (response && response.messages && response.messages.length > 0) {
+          return response.messages[0]; // Return the latest message
+        }
+      } else {
+        // For friends, try the unified messages API with correct type
+        const response = await getUnifiedMessages({
+          target_id: conversationId,
+          type: "private",
+          limit: 1,
+          page: 1,
+        });
+        if (response && response.data && response.data.length > 0) {
+          return response.data[0]; // Return the latest message
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error(
+        `[MessagesList] Failed to get last message for ${type} ${conversationId}:`,
+        error
+      );
+      return null;
+    }
+  };
 
   // Function to refresh data
   const refreshData = async () => {
@@ -388,66 +437,109 @@ export function MessagesList() {
   };
 
   // Helper functions for data transformation
-  const transformGroupsToMessages = (groups: any[]): Message[] => {
+  const transformGroupsToMessages = async (
+    groups: any[]
+  ): Promise<Message[]> => {
     // Filter out invalid groups first
-    const validGroups = groups
-      .filter((group) => group && group.id)
-      .map((group) => {
-        // Handle different formats of last_message
-        const lastMessage = group.last_message || {};
+    const validGroups = await Promise.all(
+      groups
+        .filter((group) => group && group.id)
+        .map(async (group) => {
+          // Handle different formats of last_message
+          let lastMessage = group.last_message || {};
 
-        // Check if there's actual message content
-        const hasMessage =
-          lastMessage && typeof lastMessage === "object" && lastMessage.content;
+          // Debug: Log the actual last_message structure for groups
+          console.log(
+            `[MessagesList] Group ${group.name || group.id} last_message:`,
+            lastMessage
+          );
 
-        // Find a valid timestamp for sorting
-        const lastActivity =
-          lastMessage?.sent_at ||
-          lastMessage?.created_at ||
-          group.updated_at ||
-          group.created_at ||
-          new Date().toISOString();
+          // If no last_message from group data, try to fetch from messages API
+          if (!lastMessage || !Object.keys(lastMessage).length) {
+            console.log(
+              `[MessagesList] No last_message for group ${
+                group.name || group.id
+              }, fetching from API...`
+            );
+            lastMessage = await getLastMessageForConversation(
+              group.id,
+              "group"
+            );
+          }
 
-        // Format content properly with sender name if it's a group message
-        let content;
-        if (hasMessage) {
-          // Include sender name in the preview if available
-          content = lastMessage.sender_name
-            ? `${lastMessage.sender_name}: ${lastMessage.content}`
-            : lastMessage.content;
-        } else {
-          // Show "No messages yet" for groups without messages
-          content = "No messages yet";
-        }
+          // Enhanced check for message existence - check multiple possible content fields
+          let messageContent = "";
+          let hasMessage = false;
 
-        return {
-          id: group.id,
-          sender: {
-            name: group.name || "Unnamed Group",
-            profile_picture_url:
-              group.avatar_url || group.profile_picture_url || null,
+          if (lastMessage && typeof lastMessage === "object") {
+            // Try multiple possible content fields for groups
+            messageContent =
+              lastMessage.content ||
+              lastMessage.message_content ||
+              lastMessage.text ||
+              lastMessage.message ||
+              "";
+
+            // Check if we have actual content
+            hasMessage = !!(messageContent && messageContent.trim() !== "");
+
+            console.log(
+              `[MessagesList] Group ${
+                group.name || group.id
+              } - Content: "${messageContent}", HasMessage: ${hasMessage}, LastMessage:`,
+              lastMessage
+            );
+          }
+
+          // Find a valid timestamp for sorting
+          const lastActivity =
+            lastMessage?.sent_at ||
+            lastMessage?.created_at ||
+            group.updated_at ||
+            group.created_at ||
+            new Date().toISOString();
+
+          // Format content properly with sender name if it's a group message
+          let content;
+          if (hasMessage) {
+            // Include sender name in the preview if available
+            content = lastMessage.sender_name
+              ? `${lastMessage.sender_name}: ${messageContent}`
+              : messageContent;
+          } else {
+            // Show "No messages yet" for groups without messages
+            content = "No messages yet";
+          }
+
+          return {
             id: group.id,
-          },
-          content: content,
-          timestamp: hasMessage
-            ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-            : "",
-          formattedTime: formatTimestamp(lastActivity),
-          read: !group.unread_count || group.unread_count === 0,
-          readStatus:
-            group.unread_count && group.unread_count > 0
-              ? ("unread" as ReadStatus)
-              : ("read" as ReadStatus),
-          unreadCount:
-            group.unread_count && group.unread_count > 0
-              ? group.unread_count
-              : undefined,
-          type: "group" as MessageType,
-          lastActivity,
-          isTyping: false, // Will be updated by WebSocket events
-          hasMessages: hasMessage, // Flag to identify which have real messages
-        } as Message;
-      });
+            sender: {
+              name: group.name || "Unnamed Group",
+              profile_picture_url:
+                group.avatar_url || group.profile_picture_url || null,
+              id: group.id,
+            },
+            content: content,
+            timestamp: hasMessage
+              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+              : "",
+            formattedTime: formatTimestamp(lastActivity),
+            read: !group.unread_count || group.unread_count === 0,
+            readStatus:
+              group.unread_count && group.unread_count > 0
+                ? ("unread" as ReadStatus)
+                : ("read" as ReadStatus),
+            unreadCount:
+              group.unread_count && group.unread_count > 0
+                ? group.unread_count
+                : undefined,
+            type: "group" as MessageType,
+            lastActivity,
+            isTyping: false, // Will be updated by WebSocket events
+            hasMessages: hasMessage, // Flag to identify which have real messages
+          } as Message;
+        })
+    );
 
     // Sort groups (we're sure all values are valid now after filtering)
     return validGroups.sort((a, b) => {
@@ -466,89 +558,136 @@ export function MessagesList() {
     });
   };
 
-  const transformFriendsToMessages = (friends: any[]): Message[] => {
+  const transformFriendsToMessages = async (
+    friends: any[]
+  ): Promise<Message[]> => {
     // Show ALL friends, not just those with messages
-    return (
-      friends
-        .map((friend) => {
-          const userId = friend.id;
-          const friendStatus = presence.getStatus(userId);
-          const lastMessage = friend.last_message;
-          const hasMessage = lastMessage && lastMessage.content;
-          const lastActivity =
-            friend.last_active ||
-            lastMessage?.sent_at ||
-            lastMessage?.created_at ||
-            friend.created_at ||
-            new Date().toISOString();
+    const friendMessages = await Promise.all(
+      friends.map(async (friend) => {
+        const userId = friend.id;
+        const friendStatus = presence.getStatus(userId);
+        let lastMessage = friend.last_message;
 
-          // Build full name from first_name and last_name if available
-          let displayName = "";
-          if (friend.first_name && friend.last_name) {
-            displayName = `${friend.first_name} ${friend.last_name}`;
-          } else if (friend.full_name) {
-            displayName = friend.full_name;
-          } else if (friend.display_name) {
-            displayName = friend.display_name;
-          } else if (friend.name) {
-            displayName = friend.name;
-          } else if (friend.username) {
-            displayName = friend.username;
-          } else {
-            // Just display "User" instead of the ID
-            displayName = "User";
-          }
+        // Debug: Log the actual last_message structure
+        console.log(
+          `[MessagesList] Friend ${
+            friend.username || friend.name || friend.id
+          } last_message:`,
+          lastMessage
+        );
 
-          return {
+        // If no last_message from friend data, try to fetch from messages API
+        if (!lastMessage || !Object.keys(lastMessage).length) {
+          console.log(
+            `[MessagesList] No last_message for friend ${
+              friend.username || friend.name || friend.id
+            }, fetching from API...`
+          );
+          lastMessage = await getLastMessageForConversation(
+            friend.id,
+            "friend"
+          );
+        }
+
+        // Enhanced check for message existence - check multiple possible content fields
+        let messageContent = "";
+        let hasMessage = false;
+
+        if (lastMessage && typeof lastMessage === "object") {
+          // Try multiple possible content fields for friends
+          messageContent =
+            lastMessage.content ||
+            lastMessage.message_content ||
+            lastMessage.text ||
+            lastMessage.message ||
+            "";
+
+          // Check if we have actual content
+          hasMessage = !!(messageContent && messageContent.trim() !== "");
+
+          console.log(
+            `[MessagesList] Friend ${
+              friend.username || friend.name || friend.id
+            } - Content: "${messageContent}", HasMessage: ${hasMessage}, LastMessage:`,
+            lastMessage
+          );
+        }
+
+        const lastActivity =
+          friend.last_active ||
+          lastMessage?.sent_at ||
+          lastMessage?.created_at ||
+          friend.created_at ||
+          new Date().toISOString();
+
+        // Build full name from first_name and last_name if available
+        let displayName = "";
+        if (friend.first_name && friend.last_name) {
+          displayName = `${friend.first_name} ${friend.last_name}`;
+        } else if (friend.full_name) {
+          displayName = friend.full_name;
+        } else if (friend.display_name) {
+          displayName = friend.display_name;
+        } else if (friend.name) {
+          displayName = friend.name;
+        } else if (friend.username) {
+          displayName = friend.username;
+        } else {
+          // Just display "User" instead of the ID
+          displayName = "User";
+        }
+
+        return {
+          id: friend.id,
+          sender: {
+            name: displayName,
+            profile_picture_url: friend.profile_picture_url || null,
             id: friend.id,
-            sender: {
-              name: displayName,
-              profile_picture_url: friend.profile_picture_url || null,
-              id: friend.id,
-              // Map any status that's not 'online' to 'offline' for compatibility
-              status:
-                friendStatus === "online"
-                  ? ("online" as UserStatus)
-                  : ("offline" as UserStatus),
-            },
-            content: hasMessage ? lastMessage.content : "No messages yet",
-            timestamp: hasMessage
-              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-              : friendStatus === "online"
-              ? "Online"
-              : "Offline",
-            formattedTime: formatTimestamp(lastActivity),
-            read: !friend.unread_count || friend.unread_count === 0,
-            readStatus:
-              friend.unread_count && friend.unread_count > 0
-                ? ("unread" as ReadStatus)
-                : ("read" as ReadStatus),
-            unreadCount:
-              friend.unread_count && friend.unread_count > 0
-                ? friend.unread_count
-                : undefined,
-            type: "friend" as MessageType,
-            lastActivity,
-            isTyping: isTyping[userId] || false,
-            hasMessages: hasMessage, // Add flag to identify which have real messages
-          };
-        })
-        // Sort to show friends with messages first, then those without messages
-        .sort((a, b) => {
-          const aHasMessages = a.hasMessages ? 1 : 0;
-          const bHasMessages = b.hasMessages ? 1 : 0;
-
-          // If one has messages and the other doesn't, prioritize the one with messages
-          if (aHasMessages !== bHasMessages) {
-            return bHasMessages - aHasMessages;
-          }
-
-          // If both have messages or both don't have messages, sort by activity time
-          const aTime = new Date(a.lastActivity).getTime();
-          const bTime = new Date(b.lastActivity).getTime();
-          return bTime - aTime;
-        })
+            // Map any status that's not 'online' to 'offline' for compatibility
+            status:
+              friendStatus === "online"
+                ? ("online" as UserStatus)
+                : ("offline" as UserStatus),
+          },
+          content: hasMessage ? messageContent : "No messages yet",
+          timestamp: hasMessage
+            ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+            : friendStatus === "online"
+            ? "Online"
+            : "Offline",
+          formattedTime: formatTimestamp(lastActivity),
+          read: !friend.unread_count || friend.unread_count === 0,
+          readStatus:
+            friend.unread_count && friend.unread_count > 0
+              ? ("unread" as ReadStatus)
+              : ("read" as ReadStatus),
+          unreadCount:
+            friend.unread_count && friend.unread_count > 0
+              ? friend.unread_count
+              : undefined,
+          type: "friend" as MessageType,
+          lastActivity,
+          isTyping: isTyping[userId] || false,
+          hasMessages: hasMessage, // Add flag to identify which have real messages
+        };
+      })
     );
+
+    // Sort to show friends with messages first, then those without messages
+    return friendMessages.sort((a, b) => {
+      const aHasMessages = a.hasMessages ? 1 : 0;
+      const bHasMessages = b.hasMessages ? 1 : 0;
+
+      // If one has messages and the other doesn't, prioritize the one with messages
+      if (aHasMessages !== bHasMessages) {
+        return bHasMessages - aHasMessages;
+      }
+
+      // If both have messages or both don't have messages, sort by activity time
+      const aTime = new Date(a.lastActivity).getTime();
+      const bTime = new Date(b.lastActivity).getTime();
+      return bTime - aTime;
+    });
   };
 
   return (

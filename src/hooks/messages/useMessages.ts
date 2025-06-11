@@ -116,7 +116,7 @@ export interface MessageHistoryParams {
 // New message request interface
 export interface SendMessageRequest {
   content: string;
-  receiver_id?: string;
+  recipient_id?: string;
   group_id?: string;
   type?: string;
   attachment_url?: string;
@@ -161,7 +161,7 @@ export interface MessageRequest {
   attachment_url?: string;
   attachment_name?: string;
   attachment_size?: number;
-  receiver_id?: string;
+  recipient_id?: string;
   group_id?: string;
   type?: string;
 }
@@ -392,6 +392,78 @@ export const useMessages = () => {
 
     const { target_id, type = "private", limit = 20, page, before } = params;
 
+    // Parameter validation - prevent empty API calls
+    if (!target_id || target_id.trim() === "") {
+      console.error(`[Messages Store] Invalid target_id provided:`, target_id);
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error:
+          "Invalid target_id: cannot fetch messages without a valid target ID",
+        pagination: {
+          current_page: page || 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    if (!type || !["private", "group"].includes(type)) {
+      console.error(`[Messages Store] Invalid type provided:`, type);
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error: "Invalid type: must be 'private' or 'group'",
+        pagination: {
+          current_page: page || 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    // Parameter validation - prevent empty API calls
+    if (!target_id || target_id.trim() === "") {
+      console.error(`[Messages Store] Invalid target_id provided:`, target_id);
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error:
+          "Invalid target_id: cannot fetch messages without a valid target ID",
+        pagination: {
+          current_page: page || 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    if (!type || !["private", "group"].includes(type)) {
+      console.error(`[Messages Store] Invalid type provided:`, type);
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error: "Invalid type: must be 'private' or 'group'",
+        pagination: {
+          current_page: page || 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
     // Determine if this is pagination (before parameter) or page-based load
     const isPagination = !!before;
     const isInitialLoad = !page || page === 1;
@@ -433,9 +505,16 @@ export const useMessages = () => {
           }`
       );
 
+      // Use type directly like Vue.js implementation - no mapping needed
+      const apiType = type; // Keep original type: "private" or "group"
+
+      console.log(
+        `[Messages Store] Using type directly: '${type}' for unified messages API`
+      );
+
       // Build query parameters consistently
       let queryParams = new URLSearchParams({
-        type,
+        type: apiType,
         target_id,
         limit: limit.toString(),
       });
@@ -449,16 +528,16 @@ export const useMessages = () => {
 
       console.log(`[Messages Store] Query parameters:`, queryParams.toString());
 
-      // Try multiple endpoint formats, based on API compatibility needs
+      // Try multiple endpoint formats, based on Vue.js API compatibility
       const endpoints = [
-        // Primary endpoint with query params
+        // Primary endpoint with query params (matches Vue.js exactly)
         {
           url: `messages/history?${queryParams.toString()}`,
           method: "GET",
         },
-        // RESTful format
+        // Alternative endpoint formats
         {
-          url: `messages/${type}/${target_id}/history${
+          url: `messages/${apiType}/${target_id}/history${
             before
               ? `?before=${before}&limit=${limit}`
               : page && page > 1
@@ -498,30 +577,33 @@ export const useMessages = () => {
         throw lastError || new Error("All message history endpoints failed");
       }
 
-      // Extract messages from various response formats
+      // Extract messages from response (exactly like Vue.js implementation)
       let messagesArray = [];
       if (Array.isArray(response)) {
+        // If response itself is the array of messages
+        console.log(
+          `[Messages Store] Response is direct array with ${response.length} messages`
+        );
         messagesArray = response;
       } else if (Array.isArray(response.data)) {
+        // If data property contains the array
+        console.log(
+          `[Messages Store] Response.data contains ${response.data.length} messages`
+        );
         messagesArray = response.data;
       } else if (Array.isArray(response.messages)) {
         messagesArray = response.messages;
-      } else if (response && typeof response === "object") {
-        // Find the first array property in the response
-        const arrayProps = Object.entries(response)
-          .filter(([_, value]) => Array.isArray(value))
-          .sort(([_, a], [__, b]) =>
-            Array.isArray(b) ? b.length - (Array.isArray(a) ? a.length : 0) : 0
-          );
-
-        if (arrayProps.length > 0) {
-          const [propName, array] = arrayProps[0];
-          console.log(
-            `[Messages Store] Found array property '${propName}' in response`,
-            array
-          );
-          messagesArray = array as any[];
-        }
+      } else {
+        // Log the actual response structure to debug
+        console.warn(`[Messages Store] Unexpected response structure:`, {
+          responseKeys: Object.keys(response || {}),
+          responseType: typeof response,
+          isArray: Array.isArray(response),
+          dataExists: !!response?.data,
+          dataType: typeof response?.data,
+          dataIsArray: Array.isArray(response?.data),
+        });
+        messagesArray = [];
       }
 
       // Normalize message field names for consistency
@@ -628,8 +710,40 @@ export const useMessages = () => {
     console.log(
       `[Messages Store] Legacy getMessages called - converting to unified format`
     );
+
+    // Enhanced parameter validation - prevent empty API calls
+    if (!userId || userId.trim() === "") {
+      console.error(
+        `[Messages Store] Invalid userId provided to getMessages:`,
+        userId
+      );
+      console.error(`[Messages Store] userId type:`, typeof userId);
+      console.error(`[Messages Store] userId length:`, userId?.length);
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error: "Invalid userId: cannot fetch messages without a valid user ID",
+        pagination: {
+          current_page: page,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    const cleanUserId = userId.trim();
+    console.log(`[Messages Store] Calling getUnifiedMessages with:`, {
+      target_id: cleanUserId,
+      type: "private",
+      page,
+      limit,
+    });
+
     return getUnifiedMessages({
-      target_id: userId,
+      target_id: cleanUserId,
       type: "private",
       page,
       limit,
@@ -690,8 +804,8 @@ export const useMessages = () => {
   };
 
   /**
-   * Send a message to a user with improved error handling and multiple endpoint fallbacks
-   * Consistent with Swagger API endpoint: POST /messages or POST /messages/send
+   * Send a message to a user with improved error handling
+   * Uses API endpoint: POST /messages
    */
   const sendMessage = async (
     recipientId: string,
@@ -701,53 +815,36 @@ export const useMessages = () => {
     setLoading(true);
     setError(null);
 
-    // Try multiple endpoints in case one fails - ordered by preference according to Swagger
-    const endpoints = [
-      "messages", // Primary endpoint per Swagger
-      "messages/send", // Fallback endpoint
-    ];
-
-    let lastError = null;
-
     // Log the attempt
     console.log(`[Messages] Attempting to send message to ${recipientId}`);
 
-    // Try each endpoint until one works
-    for (const endpoint of endpoints) {
-      try {
-        console.log(`[Messages] Trying to send message via ${endpoint}`);
+    try {
+      console.log(`[Messages] Sending message via /messages endpoint`);
 
-        // Standardize on receiver_id for consistency with API specs
-        const payload = {
-          receiver_id: recipientId,
-          content,
-          type,
-        };
+      // Use recipient_id as the backend now supports it
+      const payload = {
+        recipient_id: recipientId, // ✅ Updated to use recipient_id
+        content,
+        type,
+      };
 
-        const response = await apiCall(endpoint, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+      const response = await apiCall("messages", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
 
-        console.log(`[Messages] Message sent successfully via ${endpoint}`);
-        setLoading(false);
-        return response;
-      } catch (err: any) {
-        console.warn(`[Messages] Failed to send message via ${endpoint}:`, err);
-        lastError = err;
-      }
+      console.log(`[Messages] Message sent successfully`);
+      setLoading(false);
+      return response;
+    } catch (err: any) {
+      console.error(`[Messages] Failed to send message:`, err);
+      setError(`Failed to send message: ${err.message}`);
+      setLoading(false);
+      throw err;
     }
+  };
 
-    // All endpoints failed
-    const errorMessage = lastError?.message || "Unknown error";
-    setError(`Failed to send message: ${errorMessage}`);
-    console.error(
-      `[Messages] Error sending message to user ${recipientId}:`,
-      lastError
-    );
-    setLoading(false);
-
-    throw (
+  /**
       lastError ||
       new Error("Failed to send message through all available endpoints")
     );
@@ -1465,7 +1562,7 @@ export const useMessages = () => {
       if (isGroup) {
         messageData.group_id = recipientId;
       } else {
-        messageData.receiver_id = recipientId;
+        messageData.recipient_id = recipientId; // ✅ Updated to use recipient_id
       }
 
       // Send the message with attachment
@@ -1477,6 +1574,141 @@ export const useMessages = () => {
       console.error("Error sending message with attachment:", err);
       setLoading(false);
       throw err;
+    }
+  };
+
+  /**
+   * Get conversation history - specifically for chat conversations
+   * This function explicitly calls /messages/history endpoint for conversation-specific messages
+   */
+  const getConversationHistory = async (
+    targetId: string,
+    type: "private" | "group" = "private",
+    limit = 20,
+    before?: string
+  ): Promise<ApiResponse> => {
+    console.log(
+      `[Messages Store] getConversationHistory: ${type} conversation with ${targetId}`
+    );
+
+    // Parameter validation - prevent empty API calls
+    if (!targetId || targetId.trim() === "") {
+      console.error(
+        `[Messages Store] Invalid targetId provided to getConversationHistory:`,
+        targetId
+      );
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error:
+          "Invalid targetId: cannot fetch conversation history without a valid target ID",
+        pagination: {
+          current_page: 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    if (!type || !["private", "group"].includes(type)) {
+      console.error(
+        `[Messages Store] Invalid type provided to getConversationHistory:`,
+        type
+      );
+      return {
+        data: [],
+        messages: [],
+        success: false,
+        error: "Invalid type: must be 'private' or 'group'",
+        pagination: {
+          current_page: 1,
+          total_pages: 1,
+          total_items: 0,
+          items_per_page: limit,
+          has_more_pages: false,
+        },
+      };
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Use type directly like Vue.js implementation - no mapping needed
+      const apiType = type; // Keep original type: "private" or "group"
+
+      console.log(
+        `[Messages Store] Using type directly: '${type}' for conversation history API`
+      );
+
+      // Build query parameters for conversation history
+      const queryParams = new URLSearchParams({
+        type: apiType,
+        target_id: targetId,
+        limit: limit.toString(),
+      });
+
+      if (before) {
+        queryParams.append("before", before);
+      }
+
+      console.log(
+        `[Messages Store] Conversation history query:`,
+        queryParams.toString()
+      );
+
+      // Direct call to messages/history endpoint
+      const response = await apiCall(
+        `messages/history?${queryParams.toString()}`,
+        {
+          method: "GET",
+        }
+      );
+
+      if (response) {
+        console.log(
+          `[Messages Store] Conversation history loaded successfully`
+        );
+
+        // Extract messages from response
+        let messagesArray = [];
+        if (Array.isArray(response)) {
+          messagesArray = response;
+        } else if (response.messages && Array.isArray(response.messages)) {
+          messagesArray = response.messages;
+        } else if (response.data && Array.isArray(response.data)) {
+          messagesArray = response.data;
+        } else if (
+          response.data &&
+          response.data.messages &&
+          Array.isArray(response.data.messages)
+        ) {
+          messagesArray = response.data.messages;
+        }
+
+        console.log(
+          `[Messages Store] Extracted ${messagesArray.length} messages from conversation history`
+        );
+
+        setMessages(messagesArray);
+        setLoading(false);
+        return response;
+      } else {
+        throw new Error(
+          "No response received from conversation history endpoint"
+        );
+      }
+    } catch (error: any) {
+      console.error(
+        `[Messages Store] Error loading conversation history:`,
+        error
+      );
+      setError(`Failed to load conversation history: ${error.message}`);
+      setLoading(false);
+      throw error;
     }
   };
 
@@ -1513,6 +1745,7 @@ export const useMessages = () => {
     postMessage,
     getUnreadCount,
     sendMessageWithAttachment,
+    getConversationHistory, // New dedicated function for conversation history
 
     // Performance metrics access if needed by consumers
     perfMetrics: perfMetrics.current,

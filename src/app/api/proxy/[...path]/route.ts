@@ -71,12 +71,13 @@ async function handleRequest(
       );
       console.log(`[Proxy] Query parameters:`, queryParams);
 
-      // Special handling for messages history endpoint with method checking
+      // Enhanced message history detection to match Vue.js patterns
       if (
         path.includes("messages") &&
         (path.includes("/history") ||
           path.includes("/private/") ||
-          path.includes("/group/"))
+          path.includes("/group/") ||
+          path === "messages/history") // Add exact match for root history endpoint
       ) {
         console.log(`[Proxy] Message history detected: ${path}`);
 
@@ -124,7 +125,8 @@ async function handleRequest(
 
         // Select the appropriate base URL
         const baseUrl = GROUP_API_BASE_URL;
-        const url = `${baseUrl}/${path}`;
+        // CRITICAL FIX: Include search parameters in the URL
+        const url = `${baseUrl}/${path}${searchParams}`;
 
         // Try each method
         for (const methodToTry of methodsToTry) {
@@ -273,7 +275,8 @@ async function handleRequest(
 
             // Use the selected base URL
             const baseUrl = GROUP_API_BASE_URL;
-            const url = `${baseUrl}/${path}`;
+            // CRITICAL FIX: Include search parameters for direct message requests too
+            const url = `${baseUrl}/${path}${searchParams}`;
 
             console.log(`[Proxy] Attempting to fetch direct message: ${url}`);
 
@@ -351,7 +354,9 @@ async function handleRequest(
       path === "files" ||
       path.startsWith("files/") ||
       path === "media" ||
-      path.startsWith("media/");
+      path.startsWith("media/") ||
+      path === "files-service" ||
+      path.startsWith("files-service/");
     const isPresenceEndpoint =
       path === "presence" || path.startsWith("presence/");
     const isWebSocketEndpoint = path === "messages/ws";
@@ -385,7 +390,8 @@ async function handleRequest(
       baseUrl = API_BASE_URL;
     }
 
-    const url = `${baseUrl}/${path}`;
+    // CRITICAL FIX: Include search parameters in all API requests
+    const url = `${baseUrl}/${path}${searchParams}`;
 
     // Special handling for WebSocket connection attempts through the proxy
     if (isWebSocketEndpoint) {
@@ -771,10 +777,7 @@ async function handleRequest(
     }
 
     // Handle message sending specially
-    if (
-      path === "messages/send" ||
-      (path === "messages" && method === "POST")
-    ) {
+    if (path === "messages" && method === "POST") {
       console.log(`[Proxy] Handling message send request: ${url}`);
 
       try {
@@ -1302,7 +1305,9 @@ async function handleRequest(
       path === "files" ||
       path.startsWith("files/") ||
       path === "media" ||
-      path.startsWith("media/")
+      path.startsWith("media/") ||
+      path === "files-service" ||
+      path.startsWith("files-service/")
     ) {
       try {
         const response = await fetch(url, options);

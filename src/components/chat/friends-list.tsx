@@ -44,6 +44,7 @@ export default function FriendsList() {
     acceptFriendRequest,
     rejectFriendRequest,
     searchFriends,
+    getBlockedUsers,
   } = useFriendship();
 
   const presence = usePresence();
@@ -63,13 +64,20 @@ export default function FriendsList() {
         const results = await Promise.allSettled([
           getFriends(),
           getFriendRequests(),
+          getBlockedUsers(), // Load blocked users on app startup
         ]);
 
         console.log(
           "[FriendsList] Initial data fetch results:",
           results.map(
             (r, i) =>
-              `${i === 0 ? "getFriends" : "getFriendRequests"}: ${r.status}`
+              `${
+                i === 0
+                  ? "getFriends"
+                  : i === 1
+                  ? "getFriendRequests"
+                  : "getBlockedUsers"
+              }: ${r.status}`
           )
         );
 
@@ -128,13 +136,37 @@ export default function FriendsList() {
 
   const handleAcceptRequest = async (friendshipId: string) => {
     try {
+      console.log("[FriendsList] ===== ACCEPT REQUEST DEBUG =====");
+      console.log("[FriendsList] Received friendshipId:", friendshipId);
+      console.log("[FriendsList] All current friend requests:", friendRequests);
+      console.log("[FriendsList] Friend request count:", friendRequests.length);
+
+      // Log each request's IDs
+      friendRequests.forEach((req, index) => {
+        console.log(`[FriendsList] Request ${index + 1}:`, {
+          friendship_id: req.friendship_id,
+          id: req.id,
+          user: req.user?.username || req.user?.name,
+          full_object: req,
+        });
+      });
+
       await acceptFriendRequest(friendshipId);
       toast.success("Friend request accepted");
       await getFriendRequests();
       await getFriends();
-    } catch (err) {
+    } catch (err: any) {
       console.error("[FriendsList] Failed to accept friend request:", err);
-      toast.error("Failed to accept friend request");
+      console.error("[FriendsList] Error details:", {
+        message: err.message,
+        stack: err.stack,
+        friendshipId: friendshipId,
+        availableRequests: friendRequests.map((req) => ({
+          friendship_id: req.friendship_id,
+          id: req.id,
+        })),
+      });
+      toast.error("Failed to accept friend request: " + err.message);
     }
   };
 
@@ -197,6 +229,15 @@ export default function FriendsList() {
         friend,
         friendName,
         sortedFriendsCount: sortedFriends.length,
+      });
+
+      // Enhanced debugging for API calls
+      console.log("🔍 [FriendsList] API Call Debug:", {
+        friendId,
+        friendIdType: typeof friendId,
+        friendIdLength: friendId?.length,
+        friendIdTrimmed: friendId?.trim(),
+        isEmptyOrWhitespace: !friendId || friendId.trim() === "",
       });
 
       // Fetch messages, history, and unread count when a friend is selected

@@ -89,6 +89,7 @@ export default function GroupProfileInfo({
     unblockGroupUser,
     addGroupMembers,
     getGroupBlocks,
+    blockedUsers,
     loading,
     error,
   } = useGroup();
@@ -151,16 +152,25 @@ export default function GroupProfileInfo({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const friendsFetchedRef = useRef(false);
 
-  // Fetch friends when component mounts (only once)
+  // Fetch friends and blocked users when component mounts (only once)
   useEffect(() => {
     if (!friendsFetchedRef.current && !friendsLoading) {
       friendsFetchedRef.current = true;
-      getFriends().catch(() => {
+      
+      // Fetch both friends and blocked users in parallel
+      Promise.allSettled([
+        getFriends(),
+        getGroupBlocks(groupDetails.id)
+      ]).then((results) => {
+        console.log("[GroupInfoPanel] Initialization completed:");
+        console.log("- Friends fetch:", results[0].status);
+        console.log("- Blocked users fetch:", results[1].status);
+      }).catch(() => {
         // Reset the flag on error to allow retry
         friendsFetchedRef.current = false;
       });
     }
-  }, []); // Empty dependency array - only run once on mount
+  }, [groupDetails.id]); // Include groupDetails.id in dependencies
 
   // Get available friends (excluding current group members)
   const availableFriends = apiFriends.filter((friend) => {
@@ -243,17 +253,33 @@ export default function GroupProfileInfo({
     const status = getMemberStatus(userId);
     const lastActive = formatLastActive(userId);
 
+    // Check if user is blocked by looking in the blockedUsers list
+    const isBlocked = blockedUsers.some((blockedUser) => {
+      // Handle different ID field structures
+      const blockedUserId = blockedUser.user_id || blockedUser.id;
+      return blockedUserId === userId || blockedUserId === member.id || blockedUserId === member.user_id;
+    });
+
     return {
       ...member,
       presenceStatus: status,
       lastActive,
+      isBlocked,
     };
   });
 
-  // Count of blocked members
-  const blockedMembersCount = groupDetails.members.filter(
+  // Count of blocked members (using actual blockedUsers list)
+  const blockedMembersCount = membersWithStatus.filter(
     (member) => member.isBlocked
   ).length;
+
+  // Debug logging for blocked users
+  console.log("[GroupInfoPanel] Blocked users data:", {
+    blockedUsersCount: blockedUsers.length,
+    blockedMembersCount,
+    blockedUsers: blockedUsers.map(u => ({ id: u.id, user_id: u.user_id, name: u.name })),
+    groupId: groupDetails.id
+  });
 
   // Function to handle blocking a member with real API
   const handleBlockMember = async (memberId: string) => {
@@ -261,19 +287,13 @@ export default function GroupProfileInfo({
       // Call the API to block the user
       await blockGroupUser(groupDetails.id, memberId);
 
-      // Update local state
-      setGroupDetails((prevDetails) => ({
-        ...prevDetails,
-        members: prevDetails.members.map((member) =>
-          member.id === memberId ? { ...member, isBlocked: true } : member
-        ),
-      }));
-
       // Show success notification
       toast.success("User blocked successfully");
 
       // Close the dropdown
       setActiveDropdown(null);
+      
+      console.log("[GroupInfoPanel] User blocked, blocked users updated automatically");
     } catch (error: any) {
       console.error("Error blocking user:", error);
       toast.error(error.message || "Failed to block user");
@@ -286,19 +306,13 @@ export default function GroupProfileInfo({
       // Call the API to unblock the user
       await unblockGroupUser(groupDetails.id, memberId);
 
-      // Update local state
-      setGroupDetails((prevDetails) => ({
-        ...prevDetails,
-        members: prevDetails.members.map((member) =>
-          member.id === memberId ? { ...member, isBlocked: false } : member
-        ),
-      }));
-
       // Show success notification
       toast.success("User unblocked successfully");
 
       // Close the dropdown
       setActiveDropdown(null);
+      
+      console.log("[GroupInfoPanel] User unblocked, blocked users updated automatically");
     } catch (error: any) {
       console.error("Error unblocking user:", error);
       toast.error(error.message || "Failed to unblock user");
@@ -577,7 +591,7 @@ export default function GroupProfileInfo({
                           display:
                             member.presenceStatus !== "online"
                               ? "block"
-                              : "none",
+                              : "offline",
                         }}
                       >
                         {member.lastActive}
