@@ -6,6 +6,8 @@
 export interface TimestampOptions {
   timestamp?: string;
   raw_timestamp?: string | number;
+  created_at?: string;
+  sent_at?: string;
   format?: "full" | "time" | "date" | "relative";
 }
 
@@ -14,11 +16,17 @@ export interface TimestampOptions {
  * Matches Vue.js reference implementation
  */
 export function formatMessageTimestamp(options: TimestampOptions): string {
-  const { timestamp, raw_timestamp, format = "time" } = options;
+  const {
+    timestamp,
+    raw_timestamp,
+    created_at,
+    sent_at,
+    format = "time",
+  } = options;
 
   try {
-    // Use raw_timestamp if available, otherwise use timestamp
-    const timestampToUse = raw_timestamp || timestamp;
+    // Use priority order: raw_timestamp > timestamp > created_at > sent_at
+    const timestampToUse = raw_timestamp || timestamp || created_at || sent_at;
     if (!timestampToUse) {
       return "";
     }
@@ -137,14 +145,36 @@ export function extractValidDate(
     }
 
     if (typeof timestamp === "string") {
+      // Check for invalid string values
+      const trimmedTimestamp = timestamp.trim();
+      if (
+        !trimmedTimestamp ||
+        trimmedTimestamp === "undefined" ||
+        trimmedTimestamp === "null" ||
+        trimmedTimestamp === "Invalid Date" ||
+        trimmedTimestamp === ""
+      ) {
+        console.warn("Invalid timestamp string detected:", timestamp);
+        return null;
+      }
+
       // Try parsing as ISO string or other common formats
-      const date = new Date(timestamp);
-      return isNaN(date.getTime()) ? null : date;
+      const date = new Date(trimmedTimestamp);
+      if (isNaN(date.getTime())) {
+        console.warn("Could not parse timestamp string:", timestamp);
+        return null;
+      }
+      return date;
     }
 
     return null;
   } catch (error) {
-    console.warn("Error extracting date from timestamp:", error);
+    console.warn(
+      "Error extracting date from timestamp:",
+      error,
+      "Input:",
+      timestamp
+    );
     return null;
   }
 }
@@ -158,6 +188,10 @@ export function formatDateForSeparator(
   try {
     const date = extractValidDate(timestamp);
     if (!date) {
+      console.warn(
+        "formatDateForSeparator received invalid timestamp:",
+        timestamp
+      );
       return "Unknown Date";
     }
 
@@ -191,7 +225,12 @@ export function formatDateForSeparator(
       });
     }
   } catch (error) {
-    console.warn("Error formatting date for separator:", error);
+    console.warn(
+      "Error formatting date for separator:",
+      error,
+      "Input:",
+      timestamp
+    );
     return "Unknown Date";
   }
 }

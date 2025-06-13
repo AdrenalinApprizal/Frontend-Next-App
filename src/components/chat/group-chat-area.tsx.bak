@@ -195,78 +195,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Add session storage constants
-  const GROUP_CHAT_STORAGE_PREFIX = "group_chat_";
-
-  // Utility to save messages to session storage
-  const saveMessagesToSessionStorage = useCallback(
-    (messagesList: GroupMessage[]) => {
-      if (!messagesList || messagesList.length === 0 || !groupId) return;
-
-      try {
-        const chatKey = `${GROUP_CHAT_STORAGE_PREFIX}${groupId}`;
-
-        // Sort messages by timestamp first to ensure newest messages are kept
-        const sortedMessages = [...messagesList].sort((a, b) => {
-          const timeA = new Date(a.timestamp).getTime();
-          const timeB = new Date(b.timestamp).getTime();
-          return timeB - timeA; // Sort in descending order (newest first)
-        });
-
-        // Optimize storage by saving only essential fields and limited number
-        const optimizedMessages = sortedMessages
-          .filter((msg) => !msg.id.startsWith("temp-")) // Exclude temp messages
-          .slice(0, 150) // Keep only last 150 messages to prevent storage quota issues
-          .map((msg) => ({
-            id: msg.id,
-            content: msg.content,
-            sender: msg.sender,
-            timestamp: msg.timestamp,
-            isCurrentUser: msg.isCurrentUser,
-            isEdited: msg.isEdited,
-            isDeleted: msg.isDeleted,
-            attachment: msg.attachment,
-            delivered: true,
-            pending: false,
-            failed: false,
-          }));
-
-        sessionStorage.setItem(chatKey, JSON.stringify(optimizedMessages));
-        console.log(
-          `[GroupChat] Saved ${optimizedMessages.length} messages to session storage for group ${groupId}`
-        );
-      } catch (error) {
-        console.warn("[GroupChat] Failed to save to session storage:", error);
-      }
-    },
-    [groupId]
-  );
-
-  // Utility to load messages from session storage
-  const loadMessagesFromSessionStorage = useCallback(():
-    | GroupMessage[]
-    | null => {
-    if (!groupId) return null;
-
-    try {
-      const chatKey = `${GROUP_CHAT_STORAGE_PREFIX}${groupId}`;
-      const storedData = sessionStorage.getItem(chatKey);
-
-      if (!storedData) return null;
-
-      const parsedMessages = JSON.parse(storedData) as GroupMessage[];
-      console.log(
-        `[GroupChat] Loaded ${parsedMessages.length} messages from session storage for group ${groupId}`
-      );
-      return parsedMessages;
-    } catch (error) {
-      console.warn("[GroupChat] Failed to load from session storage:", error);
-      return null;
-    }
-  }, [groupId]);
-
-  // Group details state
   const [groupDetails, setGroupDetails] = useState<GroupDetails>({
     id: groupId,
     name: "Loading...",
@@ -518,13 +446,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         `[GroupChat] Force refreshing messages for group ${groupId} (bypassing cache)`
       );
 
-      // Don't clear session storage!
-      // We need to keep our session storage intact to prevent losing messages
-      console.log(
-        `[GroupChat] Starting force refresh while preserving session storage`
-      );
-
-      // Instead of clearing, we'll preserve messages through our merge strategy
+      // Clear cache first
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
+        console.log(`[GroupChat] Cleared cache before force refresh`);
+      }
 
       try {
         setLoadingMessages(true);
@@ -607,50 +533,25 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           `[GroupChat] Force refresh setting ${sortedMessages.length} messages to state (preserving local edits)`
         );
 
-        // Enhanced preservation of messages during force refresh
+        // Preserve locally edited/deleted messages even during force refresh
         setMessages((prevMessages) => {
-          // First, preserve all edited/deleted messages
           const editedOrDeletedMessages = prevMessages.filter(
             (msg) => msg.isEdited || msg.isDeleted
           );
 
-          // Second, preserve all recently added messages (less than 30 seconds old)
-          // and messages that are still pending (not yet confirmed by server)
-          const recentTimestamp = new Date().getTime() - 30000; // Increased from 5s to 30s
-          const recentAndPendingMessages = prevMessages.filter(
-            (msg) =>
-              // Don't double-count edited/deleted messages
-              !(msg.isEdited || msg.isDeleted) &&
-              // Keep any new messages from the last 30 seconds
-              (new Date(msg.timestamp).getTime() > recentTimestamp ||
-                // Or any pending/failed/recently delivered messages
-                msg.pending === true ||
-                msg.failed === true ||
-                // Messages that the user just sent or that came in via WebSocket recently
-                (msg.delivered === true &&
-                  new Date(msg.timestamp).getTime() > recentTimestamp - 30000))
-          );
-
-          const localMessagesToPreserve = [
-            ...editedOrDeletedMessages,
-            ...recentAndPendingMessages,
-          ];
-
           console.log(
-            `[GroupChat] Preserving ${editedOrDeletedMessages.length} edited/deleted and ${recentAndPendingMessages.length} recent/pending messages`
+            `[GroupChat] Preserving ${editedOrDeletedMessages.length} locally modified messages`
           );
 
-          // Merge fresh data with locally modified/recent messages
+          // Merge fresh data with locally modified messages
           const freshMessages = sortedMessages.filter(
             (freshMsg) =>
-              !localMessagesToPreserve.some(
+              !editedOrDeletedMessages.some(
                 (localMsg) => localMsg.id === freshMsg.id
               )
           );
 
-          const mergedMessages = [...freshMessages, ...localMessagesToPreserve];
-
-          // Sort by timestamp
+          const mergedMessages = [...freshMessages, ...editedOrDeletedMessages];
           return mergedMessages.sort(
             (a, b) =>
               new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -674,22 +575,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     async (page = 1, limit = 20) => {
       try {
         setLoadingMessages(true);
-
-        // Try to load from cache first if it's page 1 request
-        if (page === 1) {
-          const cachedData = loadMessagesFromCache(groupId);
-          if (cachedData) {
-            console.log(
-              `[GroupChat] Using cached messages for group ${groupId}`
-            );
-            setMessages(cachedData.messages);
-            setPagination(cachedData.pagination);
-            setCanLoadMoreMessages(!!cachedData.pagination.has_more_pages);
-            setLoadingMessages(false);
-            return cachedData;
-          }
-        }
-
         const messagesData = await getGroupMessages(groupId, page, limit);
 
         const paginationData = {
@@ -781,23 +666,10 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         }
 
         if (page === 1) {
-          // Check for session storage first
-          const storedMessages = loadMessagesFromSessionStorage();
-
-          // For fresh data load with session storage available
+          // For fresh data load, preserve any locally edited/deleted messages
           setMessages((prevMessages) => {
-            // First try to use session storage for persistence
-            const baseMessages = storedMessages || prevMessages;
-
-            // Identify any edited/deleted messages
-            const editedOrDeletedMessages = baseMessages.filter(
+            const editedOrDeletedMessages = prevMessages.filter(
               (msg) => msg.isEdited || msg.isDeleted
-            );
-
-            console.log(
-              `[GroupChat] Using ${
-                storedMessages ? "session storage" : "state"
-              } with ${editedOrDeletedMessages.length} edited/deleted messages`
             );
 
             // Merge fresh data with locally modified messages
@@ -812,35 +684,14 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               ...freshMessages,
               ...editedOrDeletedMessages,
             ];
-
-            const finalSortedMessages = mergedMessages.sort(
+            return mergedMessages.sort(
               (a, b) =>
                 new Date(a.timestamp).getTime() -
                 new Date(b.timestamp).getTime()
             );
-
-            // Save the result to session storage
-            saveMessagesToSessionStorage(finalSortedMessages);
-
-            return finalSortedMessages;
           });
         } else {
-          // For pagination, append new messages
-          setMessages((prevMessages) => {
-            const combinedMessages = [...sortedMessages, ...prevMessages];
-
-            // Sort by timestamp
-            const sortedCombinedMessages = combinedMessages.sort(
-              (a, b) =>
-                new Date(a.timestamp).getTime() -
-                new Date(b.timestamp).getTime()
-            );
-
-            // Save to session storage
-            saveMessagesToSessionStorage(sortedCombinedMessages);
-
-            return sortedCombinedMessages;
-          });
+          setMessages((prevMessages) => [...sortedMessages, ...prevMessages]);
         }
 
         return messagesData;
@@ -853,70 +704,149 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         setLoadingMessages(false);
       }
     },
-    [
-      groupId,
-      getGroupMessages,
-      isMessageFromCurrentUser,
-      resolveSenderName,
-      isLoadingMore,
-    ]
+    [groupId, getGroupMessages, isMessageFromCurrentUser, resolveSenderName]
   );
 
-  // The duplicate forceRefreshMessages function declaration has been removed
+  // Force refresh messages from backend without cache
+  const forceRefreshMessages = useCallback(
+    async (page = 1, limit = 20) => {
+      console.log(
+        `[GroupChat] Force refreshing messages for group ${groupId} (bypassing cache)`
+      );
+
+      // Clear cache first
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
+        console.log(`[GroupChat] Cleared cache before force refresh`);
+      }
+
+      try {
+        setLoadingMessages(true);
+        const messagesData = await getGroupMessages(groupId, page, limit);
+        console.log(
+          `[GroupChat] Force refresh got ${
+            messagesData.messages?.length || 0
+          } messages from backend`
+        );
+
+        const paginationData = {
+          current_page: messagesData.current_page || page,
+          total_pages: Math.ceil((messagesData.total || 0) / limit) || 1,
+          total_items: messagesData.total || messagesData.messages?.length || 0,
+          items_per_page: limit,
+          has_more_pages:
+            (messagesData.current_page || 1) <
+            (Math.ceil((messagesData.total || 0) / limit) || 1),
+        };
+
+        setCanLoadMoreMessages(!!paginationData?.has_more_pages);
+
+        // Simple message transformation
+        const formattedMessages = messagesData.messages.map(
+          (apiMsg: ApiGroupMessage) => {
+            const messageId = apiMsg.id || `msg-${Date.now()}-${Math.random()}`;
+            const isCurrentUser = isMessageFromCurrentUser(apiMsg.sender_id);
+            const senderInfo = resolveSenderName(
+              apiMsg.sender_id,
+              isCurrentUser
+            );
+
+            let attachment = undefined;
+            if (apiMsg.attachment_url) {
+              const fileType = getFileTypeFromUrl(apiMsg.attachment_url);
+              const fileName = getFileNameFromUrl(apiMsg.attachment_url);
+
+              attachment = {
+                type: fileType,
+                url: apiMsg.attachment_url,
+                name: fileName,
+                size: "Unknown size",
+              };
+            }
+
+            const message: GroupMessage = {
+              id: messageId,
+              content: apiMsg.content || "",
+              sender: {
+                id: apiMsg.sender_id,
+                name: senderInfo.name,
+                avatar_url: senderInfo.avatar,
+              },
+              timestamp:
+                apiMsg.sent_at || apiMsg.created_at || new Date().toISOString(),
+              isCurrentUser: isCurrentUser,
+              attachment: attachment,
+              pending: false,
+              failed: false,
+              delivered: true,
+              // Preserve edit/delete state from API if available
+              isEdited: Boolean(
+                (apiMsg as any).isEdited || (apiMsg as any).is_edited
+              ),
+              isDeleted: Boolean(
+                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted
+              ),
+            };
+
+            return message;
+          }
+        );
+
+        const sortedMessages = formattedMessages.sort(
+          (a: GroupMessage, b: GroupMessage) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+
+        console.log(
+          `[GroupChat] Force refresh setting ${sortedMessages.length} messages to state (preserving local edits)`
+        );
+
+        // Preserve locally edited/deleted messages even during force refresh
+        setMessages((prevMessages) => {
+          const editedOrDeletedMessages = prevMessages.filter(
+            (msg) => msg.isEdited || msg.isDeleted
+          );
+
+          console.log(
+            `[GroupChat] Preserving ${editedOrDeletedMessages.length} locally modified messages`
+          );
+
+          // Merge fresh data with locally modified messages
+          const freshMessages = sortedMessages.filter(
+            (freshMsg) =>
+              !editedOrDeletedMessages.some(
+                (localMsg) => localMsg.id === freshMsg.id
+              )
+          );
+
+          const mergedMessages = [...freshMessages, ...editedOrDeletedMessages];
+          return mergedMessages.sort(
+            (a, b) =>
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+        });
+
+        return messagesData;
+      } catch (error: any) {
+        console.error("Force refresh failed:", error);
+        toast.error("Failed to refresh messages");
+        throw error;
+      } finally {
+        setLoadingMessages(false);
+      }
+    },
+    [groupId, getGroupMessages, isMessageFromCurrentUser, resolveSenderName]
+  );
 
   // Auto-refresh messages periodically to catch any updates from other clients
   useEffect(() => {
     if (!groupId) return;
-
+    
     const intervalId = setInterval(() => {
-      console.log("[GroupChat] Auto-refresh: checking for new messages");
-
-      // Check if we have any pending messages before triggering refresh
-      let hasPendingMessages = false;
-
-      setMessages((prevMessages) => {
-        // Check if there are any pending messages
-        hasPendingMessages = prevMessages.some(
-          (msg: GroupMessage) => msg.pending === true
-        );
-
-        // Don't refresh if there are pending messages
-        if (hasPendingMessages) {
-          console.log(
-            "[GroupChat] Auto-refresh skipped: pending messages found"
-          );
-          return prevMessages;
-        }
-
-        // Check if we've received WebSocket messages recently (within the last 10 seconds)
-        const lastWsTime =
-          typeof window !== "undefined"
-            ? (window as any).lastWebSocketMessageTime || 0
-            : 0;
-        const timeSinceLastWsMessage = Date.now() - lastWsTime;
-
-        if (timeSinceLastWsMessage < 10000) {
-          // 10 seconds
-          console.log(
-            "[GroupChat] Auto-refresh skipped: recent WebSocket messages"
-          );
-          return prevMessages;
-        }
-
-        // Before refreshing, make sure current messages are saved to session storage
-        saveMessagesToSessionStorage(prevMessages);
-
-        // Only refresh if there are no pending messages and no recent WebSocket activity
-        console.log(
-          "[GroupChat] Auto-refresh: no pending messages or recent WS activity, refreshing"
-        );
-        setTimeout(() => forceRefreshMessages(1, 20), 100);
-
-        // Don't actually change the messages here
-        return prevMessages;
-      });
-    }, 45000); // Increased refresh interval from 30s to 45s to reduce conflicts
-
+      console.log('[GroupChat] Auto-refresh: checking for new messages');
+      forceRefreshMessages(1, 20);
+    }, 30000); // Refresh every 30 seconds
+    
     return () => {
       clearInterval(intervalId);
     };
@@ -924,30 +854,139 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
   // Fetch messages when group ID changes or initially
   useEffect(() => {
-    console.log(`[GroupChat] Component mounted or groupId changed: ${groupId}`);
-
-    // Check if we have stored messages first
-    const storedMessages = loadMessagesFromSessionStorage();
-
-    if (storedMessages && storedMessages.length > 0) {
-      // If we have stored messages, use them immediately for a fast load experience
+    // Clear any existing cache for this group when loading fresh data
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
       console.log(
-        `[GroupChat] Using ${storedMessages.length} messages from session storage`
+        `[GroupChat] Cleared cache for group ${groupId} on component mount`
       );
-      setMessages(storedMessages);
-
-      // Then fetch the latest messages in the background
-      setTimeout(() => {
-        fetchGroupMessages(1, 20);
-      }, 500);
-    } else {
-      // No stored messages, fetch from backend directly
-      console.log(
-        `[GroupChat] No stored messages found, fetching from backend`
-      );
-      fetchGroupMessages(1, 20);
     }
-  }, [groupId, fetchGroupMessages, loadMessagesFromSessionStorage]);
+    fetchGroupMessages(1, 20);
+  }, [groupId, fetchGroupMessages]);
+
+  // Enhanced message sending with optimistic update and forced refresh
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
+        console.log(`[GroupChat] Cleared cache before force refresh`);
+      }
+
+      try {
+        setLoadingMessages(true);
+        const messagesData = await getGroupMessages(groupId, page, limit);
+        console.log(
+          `[GroupChat] Force refresh got ${
+            messagesData.messages?.length || 0
+          } messages from backend`
+        );
+
+        const paginationData = {
+          current_page: messagesData.current_page || page,
+          total_pages: Math.ceil((messagesData.total || 0) / limit) || 1,
+          total_items: messagesData.total || messagesData.messages?.length || 0,
+          items_per_page: limit,
+          has_more_pages:
+            (messagesData.current_page || 1) <
+            (Math.ceil((messagesData.total || 0) / limit) || 1),
+        };
+
+        setCanLoadMoreMessages(!!paginationData?.has_more_pages);
+
+        // Simple message transformation
+        const formattedMessages = messagesData.messages.map(
+          (apiMsg: ApiGroupMessage) => {
+            const messageId = apiMsg.id || `msg-${Date.now()}-${Math.random()}`;
+            const isCurrentUser = isMessageFromCurrentUser(apiMsg.sender_id);
+            const senderInfo = resolveSenderName(
+              apiMsg.sender_id,
+              isCurrentUser
+            );
+
+            let attachment = undefined;
+            if (apiMsg.attachment_url) {
+              const fileType = getFileTypeFromUrl(apiMsg.attachment_url);
+              const fileName = getFileNameFromUrl(apiMsg.attachment_url);
+
+              attachment = {
+                type: fileType,
+                url: apiMsg.attachment_url,
+                name: fileName,
+                size: "Unknown size",
+              };
+            }
+
+            const message: GroupMessage = {
+              id: messageId,
+              content: apiMsg.content || "",
+              sender: {
+                id: apiMsg.sender_id,
+                name: senderInfo.name,
+                avatar_url: senderInfo.avatar,
+              },
+              timestamp:
+                apiMsg.sent_at || apiMsg.created_at || new Date().toISOString(),
+              isCurrentUser: isCurrentUser,
+              attachment: attachment,
+              pending: false,
+              failed: false,
+              delivered: true,
+              // Preserve edit/delete state from API if available
+              isEdited: Boolean(
+                (apiMsg as any).isEdited || (apiMsg as any).is_edited
+              ),
+              isDeleted: Boolean(
+                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted
+              ),
+            };
+
+            return message;
+          }
+        );
+
+        const sortedMessages = formattedMessages.sort(
+          (a: GroupMessage, b: GroupMessage) =>
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+
+        console.log(
+          `[GroupChat] Force refresh setting ${sortedMessages.length} messages to state (preserving local edits)`
+        );
+
+        // Preserve locally edited/deleted messages even during force refresh
+        setMessages((prevMessages) => {
+          const editedOrDeletedMessages = prevMessages.filter(
+            (msg) => msg.isEdited || msg.isDeleted
+          );
+
+          console.log(
+            `[GroupChat] Preserving ${editedOrDeletedMessages.length} locally modified messages`
+          );
+
+          // Merge fresh data with locally modified messages
+          const freshMessages = sortedMessages.filter(
+            (freshMsg) =>
+              !editedOrDeletedMessages.some(
+                (localMsg) => localMsg.id === freshMsg.id
+              )
+          );
+
+          const mergedMessages = [...freshMessages, ...editedOrDeletedMessages];
+          return mergedMessages.sort(
+            (a, b) =>
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+        });
+
+        return messagesData;
+      } catch (error: any) {
+        console.error("Force refresh failed:", error);
+        toast.error("Failed to refresh messages");
+        throw error;
+      } finally {
+        setLoadingMessages(false);
+      }
+    },
+    [groupId, getGroupMessages, isMessageFromCurrentUser, resolveSenderName]
+  );
 
   // Enhanced message sending with optimistic update and forced refresh
   const handleSendMessage = useCallback(async () => {
@@ -984,23 +1023,17 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       console.log("[GroupChat] Message sent response:", response);
 
       // Update the optimistic message to show as sent
-      setMessages((prevMessages) => {
-        const updatedMessages = prevMessages.map((msg) =>
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
           msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
-        );
-
-        // Save to session storage immediately to persist across refreshes
-        saveMessagesToSessionStorage(updatedMessages);
-
-        return updatedMessages;
-      });
-
-      // Don't force refresh immediately after sending
-      // We'll rely on WebSocket to deliver the new message
-      // This prevents race conditions that were causing new messages to disappear
-      console.log(
-        "[GroupChat] Message sent successfully, waiting for WebSocket update"
+        )
       );
+      
+      // Force refresh messages to ensure server state is synchronized
+      setTimeout(() => {
+        forceRefreshMessages(1, 20);
+        console.log("[GroupChat] Forcing message refresh after sending");
+      }, 500);
     } catch (error) {
       console.error("Failed to send message:", error);
       toast.error("Failed to send message");
@@ -1102,13 +1135,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               }
             : msg
         );
-
-        // Save edited messages to session storage
-        saveMessagesToSessionStorage(updatedMessages);
-
         return updatedMessages;
       });
-
+      
       // Force refresh messages to ensure server state is synchronized
       setTimeout(() => {
         forceRefreshMessages(1, 20);
@@ -1162,14 +1191,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     } finally {
       setIsSending(false);
     }
-  }, [
-    editingMessageId,
-    inputMessage,
-    messages,
-    editGroupMessage,
-    groupId,
-    forceRefreshMessages,
-  ]);
+  }, [editingMessageId, inputMessage, messages, editGroupMessage, groupId, forceRefreshMessages]);
 
   // Enhanced form submission handler for both new messages and edits (like chat-area)
   const handleFormSubmit = useCallback(
@@ -1275,13 +1297,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           const updatedMessages = prevMessages.map((msg) =>
             msg.id === messageId ? { ...msg, pending: false } : msg
           );
-
-          // Save to session storage to persist deletion
-          saveMessagesToSessionStorage(updatedMessages);
-
           return updatedMessages;
         });
-
+        
         // Force refresh messages to ensure server state is synchronized
         setTimeout(() => {
           forceRefreshMessages(1, 20);
@@ -1360,7 +1378,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               : msg
           )
         );
-
+        
         // Force refresh messages to ensure server state is synchronized
         setTimeout(() => {
           forceRefreshMessages(1, 20);
@@ -1388,18 +1406,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   // Enhanced WebSocket message handling with edit/delete state preservation
   useEffect(() => {
     if (!wsMessages || wsMessages.length === 0 || !groupId) return;
-
+    
     console.log(`[GroupChat] Received WebSocket messages:`, wsMessages);
-
+    
     const newGroupMessages = wsMessages.filter(
       (msg: NewMessageData) => msg.group_id === groupId
     );
 
-    console.log(
-      `[GroupChat] Filtered messages for group ${groupId}:`,
-      newGroupMessages.length
-    );
-
+    console.log(`[GroupChat] Filtered messages for group ${groupId}:`, newGroupMessages.length);
+    
     if (newGroupMessages.length === 0) return;
 
     const processedMessages = newGroupMessages.map((msg: NewMessageData) => {
@@ -1428,18 +1443,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       return processedMessage;
     });
 
-    // Enhanced message deduplication and handling with better message preservation
+    // Enhanced message deduplication and handling with edit/delete preservation
     setMessages((prevMessages) => {
-      // Track existing message IDs
       const existingIds = new Set(prevMessages.map((m) => m.id));
-
-      // Find messages that don't already exist in our state
       const uniqueNewMessages = processedMessages.filter(
         (m) => !existingIds.has(m.id)
-      );
-
-      console.log(
-        `[GroupChat] WebSocket processing: ${uniqueNewMessages.length} new messages out of ${processedMessages.length} total`
       );
 
       if (uniqueNewMessages.length === 0) return prevMessages;
@@ -1457,34 +1465,15 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         // Keep the message if it's not optimistic/pending OR if there's no matching real message
         if (!msg.pending && !msg.id.startsWith("temp-")) return true;
 
-        // Enhanced matching for optimistic messages
+        // Check if there's a real message with similar content and timestamp
         const hasMatchingRealMessage = uniqueNewMessages.some((newMsg) => {
-          // Check for content match (exact or with slight variations)
-          const contentMatch =
-            // Exact content match
-            newMsg.content === msg.content ||
-            // Or content is very similar (to handle slight variations)
-            newMsg.content.includes(msg.content) ||
-            msg.content.includes(newMsg.content);
-
-          // Same sender
+          const contentMatch = newMsg.content === msg.content;
           const userMatch = newMsg.isCurrentUser === msg.isCurrentUser;
-
-          // Reasonable time window (30 seconds)
           const timeDiff = Math.abs(
             new Date(newMsg.timestamp).getTime() -
               new Date(msg.timestamp).getTime()
           );
-
-          const isMatch = contentMatch && userMatch && timeDiff < 30000; // 30 second window
-
-          if (isMatch && msg.pending) {
-            console.log(
-              `[GroupChat] Found matching real message for pending message: ${msg.id} -> ${newMsg.id}`
-            );
-          }
-
-          return isMatch;
+          return contentMatch && userMatch && timeDiff < 10000; // 10 second window
         });
 
         return !hasMatchingRealMessage;
@@ -1512,30 +1501,21 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         (a, b) =>
           new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
-
-      console.log(
-        `[GroupChat] Updated messages list after WebSocket update:`,
-        sortedMessages.length,
+      
+      console.log(`[GroupChat] Updated messages list after WebSocket update:`, 
+        sortedMessages.length, 
         `(Added ${safeNewMessages.length} new messages)`
       );
-
-      // Store a timestamp when we receive messages via WebSocket
-      // This will help us avoid refreshing too soon after receiving messages
-      if (safeNewMessages.length > 0) {
-        // We can use window as a global store for this timestamp
-        if (typeof window !== "undefined") {
-          (window as any).lastWebSocketMessageTime = Date.now();
-          console.log("[GroupChat] Updated last WebSocket message timestamp");
-
-          // IMPORTANT: Save new messages to session storage so they persist across refreshes
-          saveMessagesToSessionStorage(sortedMessages);
-        }
+      
+      // Force refresh messages if we receive a lot of new messages
+      // This ensures we're fully in sync with the server
+      if (safeNewMessages.length >= 5) {
+        console.log('[GroupChat] Received many new messages, scheduling refresh');
+        setTimeout(() => {
+          forceRefreshMessages(1, 20);
+        }, 500);
       }
-
-      // Don't refresh at all after receiving WebSocket messages
-      // WebSocket should be our primary way to receive real-time updates
-      // Forced refreshes tend to cause race conditions with message disappearance
-
+      
       return sortedMessages;
     });
   }, [
@@ -1662,41 +1642,19 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
   // Refresh messages when user returns to the tab from background
   useEffect(() => {
-    if (!groupId || typeof document === "undefined") return;
-
+    if (!groupId || typeof document === 'undefined') return;
+    
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        console.log(
-          "[GroupChat] User returned to tab, checking for stored messages"
-        );
-
-        // First check session storage
-        const storedMessages = loadMessagesFromSessionStorage();
-
-        if (storedMessages && storedMessages.length > 0) {
-          console.log(
-            `[GroupChat] Found ${storedMessages.length} messages in session storage`
-          );
-          setMessages(storedMessages);
-
-          // Then refresh in background
-          setTimeout(() => {
-            forceRefreshMessages(1, 20);
-          }, 1000);
-        } else {
-          // No stored messages, refresh directly
-          console.log(
-            "[GroupChat] No stored messages found, refreshing directly"
-          );
-          forceRefreshMessages(1, 20);
-        }
+      if (document.visibilityState === 'visible') {
+        console.log('[GroupChat] User returned to tab, refreshing messages');
+        forceRefreshMessages(1, 20);
       }
     };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
     return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [groupId, forceRefreshMessages]);
 

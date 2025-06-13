@@ -64,7 +64,7 @@ export interface ShareRequest {
 }
 
 // Use proper path format for the proxy
-const FILE_SERVICE_PATH = "/files-service";
+const FILE_SERVICE_PATH = "/api/proxy";
 
 export const useFiles = () => {
   // State

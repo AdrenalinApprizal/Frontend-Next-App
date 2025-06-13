@@ -1,63 +1,89 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useRef, useEffect, useMemo, useState } from "react";
 import {
   FaUser,
   FaClock,
   FaCheck,
   FaExclamationTriangle,
   FaFile,
+  FaEllipsisV,
   FaPencilAlt,
   FaTrash,
-  FaEllipsisV,
 } from "react-icons/fa";
 import { formatMessageTimestamp } from "@/utils/timestampHelper";
-import { toast } from "react-hot-toast";
+import { OptimizedAvatar } from "../optimized-avatar";
 
-// Interface untuk MessageItem props
-interface MessageItemProps {
+// Interface untuk ChatAreaItem props
+interface ChatAreaItemProps {
   message: {
     id: string;
+    message_id?: string;
+    sender_id?: string;
+    recipient_id?: string;
+    receiver_id?: string;
+    chat_room_id?: string;
+    conversation_id?: string;
+    room_id?: string;
     content: string;
-    sender: {
-      id: string;
-      name: string;
-      avatar_url?: string | null;
-    };
-    timestamp: string;
+    timestamp?: string;
+    raw_timestamp?: string;
+    sent_at?: string;
+    created_at: string;
+    updated_at?: string;
+    type?: string;
     isCurrentUser: boolean;
+    read?: boolean;
+    is_read?: boolean;
     isEdited?: boolean;
     isDeleted?: boolean;
+    is_deleted?: boolean;
+    pending?: boolean;
+    failed?: boolean;
+    retrying?: boolean;
+    delivered?: boolean;
     attachment?: {
       type: "image" | "file";
       url: string;
       name: string;
       size?: string;
     };
-    pending?: boolean;
-    failed?: boolean;
-    retrying?: boolean;
-    delivered?: boolean;
-    _isOptimisticMessage?: boolean;
+    sender?: {
+      id: string;
+      name: string;
+      avatar_url?: string | null;
+    };
+    errorMessage?: string;
+    retryCount?: number;
+    fromWebSocket?: boolean;
+    receivedViaWebSocket?: boolean;
+    sourceApi?: boolean;
+    recipient?: any;
+    sent?: boolean;
+    message_type?: string;
   };
-  onRetryClick?: (messageId: string) => void;
-  onEditClick?: (messageId: string) => void; // Changed: no longer passes newContent
+  recipient: {
+    id: string;
+    name: string;
+    avatar?: string;
+    profile_picture_url?: string;
+  };
+  onRetryClick?: (message: any) => void;
+  onEditClick?: (messageId: string) => void;
   onDeleteClick?: (messageId: string) => void;
+  // Note: Edit functionality is handled via text bar, but buttons are in bubble for UX
 }
 
-// Component untuk menampilkan pesan chat
-const GroupMessageItem: React.FC<MessageItemProps> = ({
+const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
   message,
+  recipient,
   onRetryClick,
   onEditClick,
   onDeleteClick,
 }) => {
-  // State for showing/hiding message actions menu
+  // Local state for dropdown
   const [showActions, setShowActions] = useState(false);
-  // Removed edit-related state since we no longer edit in the bubble
-
-  // Ref for dropdown to handle outside clicks
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Handle clicking outside to close dropdown
+  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -74,151 +100,148 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
     };
   }, []);
 
-  // CRITICAL FIX: Enhanced logic to determine if message is from current user
-  const isDefinitelyCurrentUser =
-    message.isCurrentUser === true ||
-    message.sender.name === "You" ||
-    message._isOptimisticMessage === true ||
-    // Additional check for optimistic messages
-    message.id?.startsWith("temp-");
-
-  // Debug info untuk setiap pesan yang di-render
-  console.log(
-    `🟢 DETAILED: Rendering message in GroupMessageItem ID ${message.id}:`,
-    {
-      content: message.content,
-      isCurrentUser: message.isCurrentUser,
-      forcedIsCurrentUser: isDefinitelyCurrentUser,
-      senderName: message.sender.name,
-      senderId: message.sender.id,
-      messageId: message.id,
-      isOptimistic: message._isOptimisticMessage,
-      isTemp: message.id?.startsWith("temp-"),
-      allMessageProps: Object.keys(message),
-      showActions,
-    }
-  );
-
-  // Handler for edit button click
+  // Handlers - only for triggering actions, editing is done via text bar
   const handleEditClick = () => {
-    if (onEditClick) {
-      onEditClick(message.id); // Just pass the message ID
-    }
     setShowActions(false);
+    if (onEditClick) {
+      onEditClick(message.id);
+    }
   };
 
-  // Remove edit-related handlers since we're no longer editing in the bubble
-  // const handleSaveEdit = () => { ... } - REMOVED
-  // const handleCancelEdit = () => { ... } - REMOVED
-
-  // Handler for delete button click
-  const handleDeleteClick = async () => {
-    // Show confirmation using react-hot-toast
-    const shouldDelete = await new Promise<boolean>((resolve) => {
-      toast(
-        (t) => (
-          <div className="flex flex-col">
-            <p className="font-medium">Delete Message</p>
-            <p className="text-sm text-gray-600 mb-3">
-              Are you sure you want to delete this message? This action cannot
-              be undone.
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  resolve(true);
-                }}
-                className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm"
-              >
-                Delete
-              </button>
-              <button
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  resolve(false);
-                }}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-700 px-3 py-1 rounded text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ),
-        {
-          duration: Infinity,
-          style: { minWidth: "300px" },
-        }
-      );
-    });
-
-    if (!shouldDelete) return;
-
+  const handleDeleteClick = () => {
+    setShowActions(false);
     if (onDeleteClick) {
       onDeleteClick(message.id);
     }
-    setShowActions(false);
   };
 
-  // Close menu when clicking outside
-  const handleClickOutside = () => {
-    // This function is now handled by useEffect
+  const handleRetryClick = () => {
+    if (onRetryClick) {
+      onRetryClick(message);
+    }
   };
 
-  // Toggle actions menu
   const toggleActions = (e: React.MouseEvent) => {
     e.stopPropagation();
     setShowActions(!showActions);
   };
 
+  // Debug logging for message positioning
+  console.log("[ChatAreaItem] Rendering message:", {
+    messageId: message.id,
+    content: message.content?.substring(0, 20),
+    isCurrentUser: message.isCurrentUser,
+    sender_id: message.sender_id,
+    positioning: message.isCurrentUser ? "right" : "left",
+  });
+
+  // Get sender info
+  const senderName = message.isCurrentUser
+    ? "You"
+    : message.sender?.name || recipient.name || "Unknown";
+
+  const senderAvatar = message.isCurrentUser
+    ? null
+    : message.sender?.avatar_url ||
+      recipient.profile_picture_url ||
+      recipient.avatar;
+
+  // Validate and potentially fix avatar URL
+  const validatedAvatar = useMemo(() => {
+    if (!senderAvatar) return null;
+
+    // Check if it's a data URL
+    if (senderAvatar.startsWith("data:")) {
+      // Check size limit (most browsers support up to 2MB for data URLs)
+      const maxSize = 2 * 1024 * 1024; // 2MB
+      if (senderAvatar.length > maxSize) {
+        console.warn(
+          "[ChatAreaItem] Avatar too large:",
+          senderAvatar.length,
+          "bytes, max:",
+          maxSize
+        );
+        return null; // Fallback to default icon
+      }
+
+      // Validate data URL format
+      const dataUrlRegex =
+        /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
+      if (!dataUrlRegex.test(senderAvatar)) {
+        console.warn(
+          "[ChatAreaItem] Invalid data URL format:",
+          senderAvatar.substring(0, 100)
+        );
+        return null;
+      }
+    }
+
+    return senderAvatar;
+  }, [senderAvatar]);
+
+  // Debug logging for avatar
+  if (!message.isCurrentUser) {
+    console.log("[ChatAreaItem] Avatar debug for message:", {
+      messageId: message.id,
+      senderName,
+      senderAvatar: validatedAvatar
+        ? validatedAvatar.substring(0, 50) + "..."
+        : null,
+      avatarLength: validatedAvatar?.length || 0,
+      isDataUrl: validatedAvatar?.startsWith("data:") || false,
+      isBase64: validatedAvatar?.includes("base64") || false,
+      messageData: {
+        sender: message.sender,
+        senderAvatarUrl: message.sender?.avatar_url,
+      },
+      recipientData: {
+        profile_picture_url: recipient.profile_picture_url
+          ? recipient.profile_picture_url.substring(0, 50) + "..."
+          : null,
+        avatar: recipient.avatar
+          ? recipient.avatar.substring(0, 50) + "..."
+          : null,
+      },
+    });
+  }
+
   return (
     <div
-      key={message.id}
       className={`flex ${
-        isDefinitelyCurrentUser ? "justify-end" : "justify-start"
+        message.isCurrentUser ? "justify-end" : "justify-start"
       } mb-4`}
       data-message-id={message.id}
-      data-is-current={isDefinitelyCurrentUser ? "true" : "false"}
+      data-sender-id={message.sender_id}
+      data-recipient-id={message.recipient_id || message.receiver_id}
+      data-is-current-user={message.isCurrentUser}
+      data-positioning={message.isCurrentUser ? "right" : "left"}
     >
-      {/* Avatar untuk pengguna lain */}
-      {!isDefinitelyCurrentUser && (
+      {/* Avatar for other users */}
+      {!message.isCurrentUser && (
         <div className="mr-2">
-          <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
-            {message.sender.avatar_url ? (
-              <img
-                src={message.sender.avatar_url}
-                alt={message.sender.name}
-                className="h-full w-full object-cover"
-                onError={(e) => {
-                  // Fallback ke icon jika gambar gagal dimuat
-                  e.currentTarget.style.display = "none";
-                  e.currentTarget.nextElementSibling?.classList.remove(
-                    "hidden"
-                  );
-                }}
-              />
-            ) : (
-              <FaUser className="h-5 w-5 text-gray-500" />
-            )}
-            <FaUser className="h-5 w-5 text-gray-500 hidden" />
-          </div>
+          <OptimizedAvatar
+            src={validatedAvatar}
+            alt={senderName}
+            size="md"
+            className="flex-shrink-0"
+          />
         </div>
       )}
 
       <div className="flex flex-col max-w-[70%]">
-        {/* Nama pengirim dengan styling yang ditingkatkan */}
+        {/* Sender name */}
         <div
           className={`text-xs text-gray-600 mb-1 ${
-            isDefinitelyCurrentUser ? "self-end" : "ml-1"
+            message.isCurrentUser ? "self-end" : "ml-1"
           }`}
         >
-          {isDefinitelyCurrentUser ? "You" : message.sender.name}
+          {senderName}
         </div>
 
-        {/* Message bubble dengan interaksi yang ditingkatkan */}
+        {/* Message bubble */}
         <div
           className={`rounded-lg px-4 py-2 relative group ${
-            isDefinitelyCurrentUser
+            message.isCurrentUser
               ? message.isDeleted
                 ? "bg-gray-200 text-gray-500 italic"
                 : message.failed
@@ -226,17 +249,13 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 : "bg-blue-500 text-white"
               : "bg-white border border-gray-200 text-gray-800"
           }`}
-          onClick={
-            message.failed && onRetryClick
-              ? () => onRetryClick(message.id)
-              : undefined
-          }
+          onClick={message.failed ? handleRetryClick : undefined}
           title={
             message.failed ? "Click to retry sending this message" : undefined
           }
         >
           {/* Message actions dropdown for current user's messages */}
-          {isDefinitelyCurrentUser &&
+          {message.isCurrentUser &&
             !message.isDeleted &&
             !message.pending &&
             !message.failed &&
@@ -249,7 +268,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
               >
                 <button
                   onClick={toggleActions}
-                  className="text-white hover:text-blue-200 p-1 rounded-full focus:outline-none opacity-0 group-hover:opacity-70 hover:opacity-100 transition-opacity bg-black bg-opacity-20 hover:bg-opacity-40"
+                  className="text-white hover:text-blue-200 p-1 rounded-full focus:outline-none opacity-70 hover:opacity-100 transition-opacity"
                 >
                   <FaEllipsisV className="h-3 w-3" />
                 </button>
@@ -268,7 +287,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                         onClick={handleDeleteClick}
                         className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-100 flex items-center"
                       >
-                        <FaTrash className="mr-2" /> Unsend
+                        <FaTrash className="mr-2" /> Delete
                       </button>
                     </div>
                   </div>
@@ -276,7 +295,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
               </div>
             )}
 
-          {/* Indikator status yang ditingkatkan */}
+          {/* Status indicators */}
           {message.pending && (
             <div className="absolute top-0 right-0 -mt-1 -mr-1">
               <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
@@ -289,7 +308,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
             </div>
           )}
 
-          {/* Tampilan attachment dengan penanganan yang ditingkatkan */}
+          {/* Attachment display */}
           {message.attachment && (
             <div className="mb-2">
               {message.attachment.type === "image" ? (
@@ -326,10 +345,19 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
             </div>
           )}
 
-          {/* Regular message content - no more edit mode in bubble */}
-          <p className="text-sm break-words whitespace-pre-wrap">
-            {message.isDeleted ? "This message was deleted" : message.content}
-          </p>
+          {/* Message content - simplified since editing is only via text bar */}
+          <div>
+            <p className="text-sm break-words whitespace-pre-wrap">
+              {message.isDeleted ? "This message was deleted" : message.content}
+            </p>
+
+            {/* Error message for failed messages */}
+            {message.failed && message.errorMessage && (
+              <p className="text-xs text-red-300 mt-1 italic">
+                {message.errorMessage}
+              </p>
+            )}
+          </div>
 
           {/* Timestamp and status indicators */}
           <div className="flex items-center justify-end space-x-1 mt-1">
@@ -338,18 +366,26 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
             )}
 
             {message.failed && (
-              <span className="text-xs text-red-600 font-medium">Failed</span>
+              <span className="text-xs text-red-600 font-medium">
+                Failed{" "}
+                {message.retryCount && message.retryCount > 0
+                  ? `(${message.retryCount})`
+                  : ""}
+              </span>
             )}
 
             <span className="text-xs opacity-75">
               {formatMessageTimestamp({
                 timestamp: message.timestamp,
+                raw_timestamp: message.raw_timestamp,
+                created_at: message.created_at,
+                sent_at: message.sent_at,
                 format: "time",
-              })}
+              }) || "No Time"}
             </span>
 
-            {/* Ikon status yang ditingkatkan untuk pesan dari pengguna saat ini */}
-            {isDefinitelyCurrentUser && (
+            {/* Status icons for current user messages */}
+            {message.isCurrentUser && (
               <div className="ml-1">
                 {message.pending && <FaClock className="h-3 w-3 opacity-75" />}
                 {message.retrying && (
@@ -364,6 +400,12 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                   message.delivered && (
                     <FaCheck className="h-3 w-3 opacity-75" />
                   )}
+                {!message.pending &&
+                  !message.failed &&
+                  !message.retrying &&
+                  message.read && (
+                    <FaCheck className="h-3 w-3 opacity-75 text-blue-300" />
+                  )}
               </div>
             )}
           </div>
@@ -373,4 +415,4 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
   );
 };
 
-export default GroupMessageItem;
+export default ChatAreaItem;

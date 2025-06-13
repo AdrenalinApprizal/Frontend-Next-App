@@ -177,9 +177,10 @@ export interface ApiResponse {
 }
 
 export interface BlockedUser {
-  id: string;
   user_id: string;
-  name?: string;
+  blocked_at: string;
+  id?: string; // For backward compatibility
+  name?: string; // For backward compatibility
 }
 
 export const useGroup = () => {
@@ -1103,7 +1104,24 @@ export const useGroup = () => {
       try {
         const response = await apiCall(`groups/${groupId}/blocks?page=${page}`);
 
-        setBlockedUsers(response.data || []);
+        console.log(`[Groups Store] Raw getGroupBlocks response:`, response);
+
+        // Handle different response structures
+        // API can return: response.blocked_users or response.data.blocked_users or response.data
+        let blockedUsersList = [];
+        if (response.blocked_users) {
+          blockedUsersList = response.blocked_users;
+        } else if (response.data?.blocked_users) {
+          blockedUsersList = response.data.blocked_users;
+        } else if (Array.isArray(response.data)) {
+          blockedUsersList = response.data;
+        } else if (Array.isArray(response)) {
+          blockedUsersList = response;
+        }
+
+        console.log(`[Groups Store] Processed blocked users list:`, blockedUsersList);
+
+        setBlockedUsers(blockedUsersList);
         setLoading(false);
         return response;
       } catch (err: any) {
@@ -1274,10 +1292,81 @@ export const useGroup = () => {
           throw new Error("Group ID, message ID, and new content are required");
         }
 
-        const response = await apiCall(`messages/${messageId}`, {
-          method: "PUT",
-          body: JSON.stringify({ content: newContent, group_id: groupId }),
-        });
+        // Try multiple endpoint patterns for group message editing
+        let response;
+        let lastError;
+
+        // Option 1: Try group-specific endpoint (REST pattern)
+        try {
+          console.log(
+            `[Groups Store] Trying group-specific edit endpoint: groups/${groupId}/messages/${messageId}`
+          );
+          response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              content: newContent,
+              type: "text",
+            }),
+          });
+          console.log(
+            `[Groups Store] Group-specific edit successful:`,
+            response
+          );
+        } catch (groupError) {
+          console.log(
+            `[Groups Store] Group-specific edit endpoint failed:`,
+            groupError
+          );
+          lastError = groupError;
+
+          // Option 2: Try generic messages endpoint with group_id
+          try {
+            console.log(
+              `[Groups Store] Trying generic edit endpoint: messages/${messageId}`
+            );
+            response = await apiCall(`messages/${messageId}`, {
+              method: "PUT",
+              body: JSON.stringify({
+                content: newContent,
+                group_id: groupId,
+                type: "text",
+              }),
+            });
+            console.log(`[Groups Store] Generic edit successful:`, response);
+          } catch (genericError) {
+            console.log(
+              `[Groups Store] Generic edit endpoint failed:`,
+              genericError
+            );
+            lastError = genericError;
+
+            // Option 3: Try PATCH method (some APIs prefer PATCH for updates)
+            try {
+              console.log(
+                `[Groups Store] Trying PATCH method: messages/${messageId}`
+              );
+              response = await apiCall(`messages/${messageId}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                  content: newContent,
+                  group_id: groupId,
+                  type: "text",
+                }),
+              });
+              console.log(`[Groups Store] PATCH edit successful:`, response);
+            } catch (patchError) {
+              console.error(
+                `[Groups Store] All edit endpoints failed. Last errors:`,
+                {
+                  groupError,
+                  genericError,
+                  patchError,
+                }
+              );
+              throw patchError;
+            }
+          }
+        }
 
         console.log(`[Groups Store] Edit message response:`, response);
 
@@ -1294,6 +1383,18 @@ export const useGroup = () => {
               : msg
           )
         );
+
+        // Verify the edit was successful by checking the response status
+        if (response && response.success !== false) {
+          console.log(
+            `[Groups Store] Edit confirmed successful for message ${messageId}`
+          );
+        } else {
+          console.warn(
+            `[Groups Store] Edit may not have been successful - response:`,
+            response
+          );
+        }
 
         const endTime = performance.now();
         console.log(
@@ -1342,10 +1443,77 @@ export const useGroup = () => {
           throw new Error("Group ID and message ID are required");
         }
 
-        const response = await apiCall(`messages/${messageId}`, {
-          method: "DELETE",
-          body: JSON.stringify({ group_id: groupId }),
-        });
+        // Try multiple endpoint patterns for group message deletion
+        let response;
+        let lastError;
+
+        // Option 1: Try group-specific endpoint (REST pattern)
+        try {
+          console.log(
+            `[Groups Store] Trying group-specific delete endpoint: groups/${groupId}/messages/${messageId}`
+          );
+          response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
+            method: "DELETE",
+          });
+          console.log(
+            `[Groups Store] Group-specific delete successful:`,
+            response
+          );
+        } catch (groupError) {
+          console.log(
+            `[Groups Store] Group-specific delete endpoint failed:`,
+            groupError
+          );
+          lastError = groupError;
+
+          // Option 2: Try generic messages endpoint with group_id in body
+          try {
+            console.log(
+              `[Groups Store] Trying generic delete endpoint with body: messages/${messageId}`
+            );
+            response = await apiCall(`messages/${messageId}`, {
+              method: "DELETE",
+              body: JSON.stringify({ group_id: groupId }),
+            });
+            console.log(
+              `[Groups Store] Generic delete with body successful:`,
+              response
+            );
+          } catch (genericError) {
+            console.log(
+              `[Groups Store] Generic delete with body failed:`,
+              genericError
+            );
+            lastError = genericError;
+
+            // Option 3: Try generic messages endpoint with query parameter
+            try {
+              console.log(
+                `[Groups Store] Trying generic delete endpoint with query: messages/${messageId}?group_id=${groupId}`
+              );
+              response = await apiCall(
+                `messages/${messageId}?group_id=${groupId}`,
+                {
+                  method: "DELETE",
+                }
+              );
+              console.log(
+                `[Groups Store] Generic delete with query successful:`,
+                response
+              );
+            } catch (queryError) {
+              console.error(
+                `[Groups Store] All delete endpoints failed. Last errors:`,
+                {
+                  groupError,
+                  genericError,
+                  queryError,
+                }
+              );
+              throw queryError;
+            }
+          }
+        }
 
         console.log(`[Groups Store] Delete message response:`, response);
 
@@ -1361,6 +1529,18 @@ export const useGroup = () => {
               : msg
           )
         );
+
+        // Verify the delete was successful by checking the response status
+        if (response && response.success !== false) {
+          console.log(
+            `[Groups Store] Delete confirmed successful for message ${messageId}`
+          );
+        } else {
+          console.warn(
+            `[Groups Store] Delete may not have been successful - response:`,
+            response
+          );
+        }
 
         const endTime = performance.now();
         console.log(

@@ -23,6 +23,7 @@ import {
   formatMessageTimestamp,
   formatTimeString,
 } from "@/utils/timestampHelper";
+import { OptimizedAvatar } from "../optimized-avatar";
 
 type MessageType = "friend" | "group";
 
@@ -137,6 +138,8 @@ export function MessagesList() {
   useEffect(() => {
     if (hookFriends && Array.isArray(hookFriends)) {
       console.log("[MessagesList] Transforming friends data:", hookFriends);
+
+      // Process friends data for display
 
       const transformAndSetFriends = async () => {
         const friendsWithMessages = await transformFriendsToMessages(
@@ -835,41 +838,19 @@ export function MessagesList() {
                     >
                       {/* Avatar with online status */}
                       <div className="relative">
-                        <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 mr-3 flex-shrink-0 flex items-center justify-center">
-                          {message.sender.profile_picture_url ? (
-                            <img
-                              src={message.sender.profile_picture_url}
-                              alt={message.sender.name}
-                              className="h-full w-full object-cover"
-                              onError={(e) => {
-                                console.log(
-                                  "[MessagesList] Avatar failed to load:",
-                                  message.sender.profile_picture_url,
-                                  "Type:",
-                                  message.type,
-                                  "Full message:",
-                                  message
-                                );
-                                // If image fails to load, fall back to icon
-                                (e.target as HTMLImageElement).style.display =
-                                  "none";
-                                (
-                                  e.currentTarget.parentElement as HTMLElement
-                                ).classList.add("avatar-error");
-                                (
-                                  e.currentTarget.parentElement as HTMLElement
-                                ).innerHTML +=
-                                  message.type === "friend"
-                                    ? '<svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg>'
-                                    : '<svg class="h-5 w-5 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"></path></svg>';
-                              }}
-                            />
-                          ) : message.type === "friend" ? (
-                            <FaUser className="h-5 w-5 text-gray-500" />
-                          ) : (
-                            <FaUsers className="h-5 w-5 text-gray-500" />
-                          )}
-                        </div>
+                        <OptimizedAvatar
+                          src={message.sender.profile_picture_url}
+                          alt={message.sender.name}
+                          size="md"
+                          className="mr-3 flex-shrink-0"
+                          fallbackIcon={
+                            message.type === "friend" ? (
+                              <FaUser className="h-5 w-5 text-gray-500" />
+                            ) : (
+                              <FaUsers className="h-5 w-5 text-gray-500" />
+                            )
+                          }
+                        />
                         {/* Status indicator (only for friends) */}
                         {message.type === "friend" && (
                           <div
@@ -1081,33 +1062,15 @@ export function MessagesList() {
                       }`}
                       onClick={() => toggleFriendSelection(friend.id)}
                     >
-                      <div className="h-8 w-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex-shrink-0 flex items-center justify-center">
-                        {friend.profile_picture_url ? (
-                          <img
-                            src={friend.profile_picture_url}
-                            alt={friend.name}
-                            className="h-full w-full object-cover"
-                            onError={(e) => {
-                              console.log(
-                                "[MessagesList] Friend avatar failed to load:",
-                                friend
-                              );
-                              // If image fails to load, fall back to icon
-                              (e.target as HTMLImageElement).style.display =
-                                "none";
-                              (
-                                e.currentTarget.parentElement as HTMLElement
-                              ).classList.add("avatar-error");
-                              (
-                                e.currentTarget.parentElement as HTMLElement
-                              ).innerHTML +=
-                                '<svg class="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path></svg>';
-                            }}
-                          />
-                        ) : (
+                      <OptimizedAvatar
+                        src={friend.profile_picture_url}
+                        alt={friend.name}
+                        size="sm"
+                        className="mr-2 flex-shrink-0"
+                        fallbackIcon={
                           <FaUser className="h-4 w-4 text-gray-500" />
-                        )}
-                      </div>
+                        }
+                      />
                       <div className="flex-1">
                         <p className="font-medium text-sm">{friend.name}</p>
                         <p className="text-xs text-gray-500">
