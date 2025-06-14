@@ -53,17 +53,6 @@ interface GroupDetailProps {
   isOwner?: boolean;
 }
 
-// Interface for group details in the component
-interface GroupDetails {
-  id: string;
-  name: string;
-  description: string;
-  createdAt: string;
-  memberCount: number;
-  members: GroupMember[];
-  avatar_url?: string;
-}
-
 // Interface for GroupMember in the component
 interface GroupMember {
   id: string;
@@ -138,133 +127,71 @@ interface WebSocketMessage {
   };
 }
 
-// Session storage utility for message caching
-const CACHE_KEY_PREFIX = "group_messages_";
-const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
-
-interface MessageCache {
-  messages: GroupMessage[];
-  timestamp: number;
-  pagination: Pagination;
+// Group details interface
+interface GroupDetails {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  memberCount: number;
+  members: GroupMember[];
+  avatar_url?: string;
 }
 
-const saveMessagesToCache = (
-  groupId: string,
-  messages: GroupMessage[],
-  pagination: Pagination
-) => {
-  try {
-    const cacheData: MessageCache = {
-      messages,
-      timestamp: Date.now(),
-      pagination,
-    };
-    sessionStorage.setItem(
-      `${CACHE_KEY_PREFIX}${groupId}`,
-      JSON.stringify(cacheData)
-    );
-  } catch (error) {
-    console.warn("Failed to save messages to cache:", error);
-  }
-};
-
-const loadMessagesFromCache = (groupId: string): MessageCache | null => {
-  try {
-    const cached = sessionStorage.getItem(`${CACHE_KEY_PREFIX}${groupId}`);
-    if (!cached) return null;
-
-    const cacheData: MessageCache = JSON.parse(cached);
-
-    // Check if cache is expired
-    if (Date.now() - cacheData.timestamp > CACHE_EXPIRY) {
-      sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
-      return null;
-    }
-
-    return cacheData;
-  } catch (error) {
-    console.warn("Failed to load messages from cache:", error);
-    return null;
-  }
-};
-
-// Main GroupDetail component with all handlers and state management
 const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
-  // State management for the component
-  const [messages, setMessages] = useState<GroupMessage[]>([]);
-  const [inputMessage, setInputMessage] = useState("");
+  // Refs for managing scrolling
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Get user info and WebSocket context
+  const { user } = useAuth();
+  const { userInfo } = useUserInfoContext();
+  const {
+    getGroupDetails,
+    getGroupMembers,
+    getGroupMessages,
+    sendGroupMessage,
+    sendGroupMessageWithAttachment,
+    editGroupMessage,
+    deleteGroupMessage,
+    getGroupBlocks,
+    blockedUsers,
+  } = useGroup();
+  const {
+    messages: wsMessages,
+    isConnected,
+    error: wsError,
+  } = useWebSocketContext();
+
+  // Enhanced user ID detection - Use userInfo from UserInfoContext
+  const currentUserId = useMemo(() => {
+    // Try to get user ID from multiple sources
+    const userId = userInfo?.user_id || user?.id;
+    return userId;
+  }, [user, userInfo]);
+
+  // Component state
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<GroupMessage[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [filteredMessages, setFilteredMessages] = useState<GroupMessage[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<
+    "connected" | "disconnected"
+  >("disconnected");
 
-  // Add session storage constants
-  const GROUP_CHAT_STORAGE_PREFIX = "group_chat_";
+  // Loading state for initial data
+  const [groupDetailsLoaded, setGroupDetailsLoaded] = useState(false);
+  const [initialMessagesLoaded, setInitialMessagesLoaded] = useState(false);
 
-  // Utility to save messages to session storage
-  const saveMessagesToSessionStorage = useCallback(
-    (messagesList: GroupMessage[]) => {
-      if (!messagesList || messagesList.length === 0 || !groupId) return;
-
-      try {
-        const chatKey = `${GROUP_CHAT_STORAGE_PREFIX}${groupId}`;
-
-        // Sort messages by timestamp first to ensure newest messages are kept
-        const sortedMessages = [...messagesList].sort((a, b) => {
-          const timeA = new Date(a.timestamp).getTime();
-          const timeB = new Date(b.timestamp).getTime();
-          return timeB - timeA; // Sort in descending order (newest first)
-        });
-
-        // Optimize storage by saving only essential fields and limited number
-        const optimizedMessages = sortedMessages
-          .filter((msg) => !msg.id.startsWith("temp-")) // Exclude temp messages
-          .slice(0, 150) // Keep only last 150 messages to prevent storage quota issues
-          .map((msg) => ({
-            id: msg.id,
-            content: msg.content,
-            sender: msg.sender,
-            timestamp: msg.timestamp,
-            isCurrentUser: msg.isCurrentUser,
-            isEdited: msg.isEdited,
-            isDeleted: msg.isDeleted,
-            attachment: msg.attachment,
-            delivered: true,
-            pending: false,
-            failed: false,
-          }));
-
-        sessionStorage.setItem(chatKey, JSON.stringify(optimizedMessages));
-        console.log(
-          `[GroupChat] Saved ${optimizedMessages.length} messages to session storage for group ${groupId}`
-        );
-      } catch (error) {
-        console.warn("[GroupChat] Failed to save to session storage:", error);
-      }
-    },
-    [groupId]
-  );
-
-  // Utility to load messages from session storage
-  const loadMessagesFromSessionStorage = useCallback(():
-    | GroupMessage[]
-    | null => {
-    if (!groupId) return null;
-
-    try {
-      const chatKey = `${GROUP_CHAT_STORAGE_PREFIX}${groupId}`;
-      const storedData = sessionStorage.getItem(chatKey);
-
-      if (!storedData) return null;
-
-      const parsedMessages = JSON.parse(storedData) as GroupMessage[];
-      console.log(
-        `[GroupChat] Loaded ${parsedMessages.length} messages from session storage for group ${groupId}`
-      );
-      return parsedMessages;
-    } catch (error) {
-      console.warn("[GroupChat] Failed to load from session storage:", error);
-      return null;
-    }
-  }, [groupId]);
+  // Track if we have any pending operations to avoid overwriting local state
+  const [hasPendingOperations, setHasPendingOperations] = useState(false);
 
   // Group details state
   const [groupDetails, setGroupDetails] = useState<GroupDetails>({
@@ -286,56 +213,30 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const [canLoadMoreMessages, setCanLoadMoreMessages] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [isSending, setIsSending] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{
-    [key: string]: number;
-  }>({});
-  const [showProfile, setShowProfile] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<
-    "connected" | "disconnected"
-  >("disconnected");
 
-  // Search related states
-  const [showSearch, setShowSearch] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
-  const [filteredMessages, setFilteredMessages] = useState<GroupMessage[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  // Update main loading state based on both conditions
+  useEffect(() => {
+    setIsLoading(!groupDetailsLoaded || !initialMessagesLoaded);
+  }, [groupDetailsLoaded, initialMessagesLoaded]);
 
-  // Edit and delete message states
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  // Track pending operations to avoid state conflicts
+  useEffect(() => {
+    const pendingMessages = messages.some((msg) => msg.pending || msg.retrying);
+    setHasPendingOperations(pendingMessages);
+  }, [messages]);
 
-  // Refs for managing scrolling and typing timeouts
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Get user info and WebSocket context
-  const { user } = useAuth();
-  const { userInfo } = useUserInfoContext();
-  const {
-    getGroupDetails,
-    getGroupMembers,
-    getGroupMessages,
-    sendGroupMessage,
-    sendGroupMessageWithAttachment,
-    editGroupMessage,
-    deleteGroupMessage,
-    blockedUsers,
-  } = useGroup();
-  const {
-    messages: wsMessages,
-    isConnected,
-    error: wsError,
-  } = useWebSocketContext();
-
-  // Enhanced user ID detection - Use userInfo from UserInfoContext
-  const currentUserId = useMemo(() => {
-    // Try to get user ID from multiple sources
-    const userId = userInfo?.user_id || user?.id;
-    return userId;
-  }, [user, userInfo]);
+  // Debug logging for blocked users
+  useEffect(() => {
+    if (blockedUsers && blockedUsers.length > 0) {
+      console.log(
+        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users:`,
+        blockedUsers.map((u) => ({
+          user_id: u.user_id || u.id,
+          blocked_at: u.blocked_at,
+        }))
+      );
+    }
+  }, [blockedUsers, groupId]);
 
   // Enhanced message ownership detection function
   const isMessageFromCurrentUser = useCallback(
@@ -504,193 +405,48 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         setError("Failed to load group details");
         toast.error("Failed to load group details");
       } finally {
-        setIsLoading(false);
+        setGroupDetailsLoaded(true);
       }
     };
 
     fetchGroupDetails();
   }, [groupId]);
 
-  // Force refresh messages from backend without cache
-  const forceRefreshMessages = useCallback(
-    async (page = 1, limit = 20) => {
-      console.log(
-        `[GroupChat] Force refreshing messages for group ${groupId} (bypassing cache)`
-      );
-
-      // Don't clear session storage!
-      // We need to keep our session storage intact to prevent losing messages
-      console.log(
-        `[GroupChat] Starting force refresh while preserving session storage`
-      );
-
-      // Instead of clearing, we'll preserve messages through our merge strategy
-
+  // Fetch blocked users when component mounts or groupId changes
+  useEffect(() => {
+    const fetchBlockedUsers = async () => {
       try {
-        setLoadingMessages(true);
-        const messagesData = await getGroupMessages(groupId, page, limit);
+        console.log(`[GroupChat] Fetching blocked users for group ${groupId}`);
+        await getGroupBlocks(groupId);
         console.log(
-          `[GroupChat] Force refresh got ${
-            messagesData.messages?.length || 0
-          } messages from backend`
+          `[GroupChat] Successfully fetched blocked users for group ${groupId}`
         );
-
-        const paginationData = {
-          current_page: messagesData.current_page || page,
-          total_pages: Math.ceil((messagesData.total || 0) / limit) || 1,
-          total_items: messagesData.total || messagesData.messages?.length || 0,
-          items_per_page: limit,
-          has_more_pages:
-            (messagesData.current_page || 1) <
-            (Math.ceil((messagesData.total || 0) / limit) || 1),
-        };
-
-        setCanLoadMoreMessages(!!paginationData?.has_more_pages);
-
-        // Simple message transformation
-        const formattedMessages = messagesData.messages.map(
-          (apiMsg: ApiGroupMessage) => {
-            const messageId = apiMsg.id || `msg-${Date.now()}-${Math.random()}`;
-            const isCurrentUser = isMessageFromCurrentUser(apiMsg.sender_id);
-            const senderInfo = resolveSenderName(
-              apiMsg.sender_id,
-              isCurrentUser
-            );
-
-            let attachment = undefined;
-            if (apiMsg.attachment_url) {
-              const fileType = getFileTypeFromUrl(apiMsg.attachment_url);
-              const fileName = getFileNameFromUrl(apiMsg.attachment_url);
-
-              attachment = {
-                type: fileType,
-                url: apiMsg.attachment_url,
-                name: fileName,
-                size: "Unknown size",
-              };
-            }
-
-            const message: GroupMessage = {
-              id: messageId,
-              content: apiMsg.content || "",
-              sender: {
-                id: apiMsg.sender_id,
-                name: senderInfo.name,
-                avatar_url: senderInfo.avatar,
-              },
-              timestamp:
-                apiMsg.sent_at || apiMsg.created_at || new Date().toISOString(),
-              isCurrentUser: isCurrentUser,
-              attachment: attachment,
-              pending: false,
-              failed: false,
-              delivered: true,
-              // Preserve edit/delete state from API if available
-              isEdited: Boolean(
-                (apiMsg as any).isEdited || (apiMsg as any).is_edited
-              ),
-              isDeleted: Boolean(
-                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted
-              ),
-            };
-
-            return message;
-          }
-        );
-
-        const sortedMessages = formattedMessages.sort(
-          (a: GroupMessage, b: GroupMessage) =>
-            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-
-        console.log(
-          `[GroupChat] Force refresh setting ${sortedMessages.length} messages to state (preserving local edits)`
-        );
-
-        // Enhanced preservation of messages during force refresh
-        setMessages((prevMessages) => {
-          // First, preserve all edited/deleted messages
-          const editedOrDeletedMessages = prevMessages.filter(
-            (msg) => msg.isEdited || msg.isDeleted
-          );
-
-          // Second, preserve all recently added messages (less than 30 seconds old)
-          // and messages that are still pending (not yet confirmed by server)
-          const recentTimestamp = new Date().getTime() - 30000; // Increased from 5s to 30s
-          const recentAndPendingMessages = prevMessages.filter(
-            (msg) =>
-              // Don't double-count edited/deleted messages
-              !(msg.isEdited || msg.isDeleted) &&
-              // Keep any new messages from the last 30 seconds
-              (new Date(msg.timestamp).getTime() > recentTimestamp ||
-                // Or any pending/failed/recently delivered messages
-                msg.pending === true ||
-                msg.failed === true ||
-                // Messages that the user just sent or that came in via WebSocket recently
-                (msg.delivered === true &&
-                  new Date(msg.timestamp).getTime() > recentTimestamp - 30000))
-          );
-
-          const localMessagesToPreserve = [
-            ...editedOrDeletedMessages,
-            ...recentAndPendingMessages,
-          ];
-
-          console.log(
-            `[GroupChat] Preserving ${editedOrDeletedMessages.length} edited/deleted and ${recentAndPendingMessages.length} recent/pending messages`
-          );
-
-          // Merge fresh data with locally modified/recent messages
-          const freshMessages = sortedMessages.filter(
-            (freshMsg) =>
-              !localMessagesToPreserve.some(
-                (localMsg) => localMsg.id === freshMsg.id
-              )
-          );
-
-          const mergedMessages = [...freshMessages, ...localMessagesToPreserve];
-
-          // Sort by timestamp
-          return mergedMessages.sort(
-            (a, b) =>
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-          );
-        });
-
-        return messagesData;
       } catch (error: any) {
-        console.error("Force refresh failed:", error);
-        toast.error("Failed to refresh messages");
-        throw error;
-      } finally {
-        setLoadingMessages(false);
+        console.error(
+          `[GroupChat] Failed to fetch blocked users for group ${groupId}:`,
+          error
+        );
+        // Don't show error toast for blocked users fetch failure as it's not critical
       }
-    },
-    [groupId, getGroupMessages, isMessageFromCurrentUser, resolveSenderName]
-  );
+    };
 
-  // Function to fetch group messages with pagination support
+    if (groupId) {
+      fetchBlockedUsers();
+    }
+  }, [groupId, getGroupBlocks]);
+
+  // Fetch group messages
   const fetchGroupMessages = useCallback(
     async (page = 1, limit = 20) => {
       try {
         setLoadingMessages(true);
 
-        // Try to load from cache first if it's page 1 request
-        if (page === 1) {
-          const cachedData = loadMessagesFromCache(groupId);
-          if (cachedData) {
-            console.log(
-              `[GroupChat] Using cached messages for group ${groupId}`
-            );
-            setMessages(cachedData.messages);
-            setPagination(cachedData.pagination);
-            setCanLoadMoreMessages(!!cachedData.pagination.has_more_pages);
-            setLoadingMessages(false);
-            return cachedData;
-          }
-        }
-
         const messagesData = await getGroupMessages(groupId, page, limit);
+        console.log(
+          `[GroupChat] Fetched ${
+            messagesData.messages?.length || 0
+          } messages for group ${groupId}`
+        );
 
         const paginationData = {
           current_page: messagesData.current_page || page,
@@ -698,57 +454,93 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           total_items: messagesData.total || messagesData.messages?.length || 0,
           items_per_page: limit,
           has_more_pages:
-            (messagesData.current_page || 1) <
+            (messagesData.current_page || page) <
             (Math.ceil((messagesData.total || 0) / limit) || 1),
         };
 
-        setCanLoadMoreMessages(!!paginationData?.has_more_pages);
+        setPagination(paginationData);
+        setCanLoadMoreMessages(paginationData.has_more_pages);
 
-        // Simple message transformation
         const formattedMessages = messagesData.messages.map(
-          (apiMsg: ApiGroupMessage) => {
-            const messageId = apiMsg.id || `msg-${Date.now()}-${Math.random()}`;
+          (apiMsg: ApiGroupMessage): GroupMessage => {
+            const messageId =
+              apiMsg.id || apiMsg.message_id || String(Date.now());
             const isCurrentUser = isMessageFromCurrentUser(apiMsg.sender_id);
             const senderInfo = resolveSenderName(
               apiMsg.sender_id,
               isCurrentUser
             );
 
+            // Debug logging for API message data
+            console.log(`[GroupChat] Processing message ${messageId}:`, {
+              content: apiMsg.content,
+              isEdited: (apiMsg as any).isEdited || (apiMsg as any).is_edited,
+              isDeleted:
+                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted,
+              editedAt: (apiMsg as any).editedAt || (apiMsg as any).edited_at,
+              deletedAt:
+                (apiMsg as any).deletedAt || (apiMsg as any).deleted_at,
+              originalContent:
+                (apiMsg as any).originalContent ||
+                (apiMsg as any).original_content,
+            });
+
             let attachment = undefined;
             if (apiMsg.attachment_url) {
               const fileType = getFileTypeFromUrl(apiMsg.attachment_url);
-              const fileName = getFileNameFromUrl(apiMsg.attachment_url);
-
               attachment = {
                 type: fileType,
                 url: apiMsg.attachment_url,
-                name: fileName,
-                size: "Unknown size",
+                name: getFileNameFromUrl(apiMsg.attachment_url),
               };
+            }
+
+            // Check for edit/delete state from various possible API field names
+            const isEdited = Boolean(
+              (apiMsg as any).isEdited ||
+                (apiMsg as any).is_edited ||
+                (apiMsg as any).edited ||
+                (apiMsg as any).editedAt ||
+                (apiMsg as any).edited_at
+            );
+
+            const isDeleted = Boolean(
+              (apiMsg as any).isDeleted ||
+                (apiMsg as any).is_deleted ||
+                (apiMsg as any).deleted ||
+                (apiMsg as any).deletedAt ||
+                (apiMsg as any).deleted_at ||
+                apiMsg.content === "This message was deleted" ||
+                apiMsg.content === "[Deleted]" ||
+                (apiMsg.content === "" && (apiMsg as any).deleted)
+            );
+
+            // For deleted messages, show appropriate content
+            let messageContent = apiMsg.content;
+            if (
+              isDeleted &&
+              apiMsg.content &&
+              apiMsg.content !== "This message was deleted"
+            ) {
+              messageContent = "This message was deleted";
             }
 
             const message: GroupMessage = {
               id: messageId,
-              content: apiMsg.content || "",
+              content: messageContent,
               sender: {
-                id: apiMsg.sender_id,
+                id: String(apiMsg.sender_id),
                 name: senderInfo.name,
                 avatar_url: senderInfo.avatar,
               },
-              timestamp:
-                apiMsg.sent_at || apiMsg.created_at || new Date().toISOString(),
-              isCurrentUser: isCurrentUser,
-              attachment: attachment,
+              timestamp: apiMsg.created_at || new Date().toISOString(),
+              isCurrentUser,
+              attachment,
               pending: false,
               failed: false,
               delivered: true,
-              // Preserve edit/delete state from API if available
-              isEdited: Boolean(
-                (apiMsg as any).isEdited || (apiMsg as any).is_edited
-              ),
-              isDeleted: Boolean(
-                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted
-              ),
+              isEdited,
+              isDeleted,
             };
 
             return message;
@@ -760,87 +552,10 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         );
 
-        console.log(
-          `[GroupChat] fetchGroupMessages loaded ${sortedMessages.length} messages from backend`
-        );
-
-        // Log first few messages for debugging
-        if (sortedMessages.length > 0) {
-          console.log(
-            `[GroupChat] Sample messages:`,
-            sortedMessages.slice(0, 3).map((msg) => ({
-              id: msg.id,
-              content:
-                msg.content.substring(0, 50) +
-                (msg.content.length > 50 ? "..." : ""),
-              isEdited: msg.isEdited,
-              isDeleted: msg.isDeleted,
-              timestamp: msg.timestamp,
-            }))
-          );
-        }
-
         if (page === 1) {
-          // Check for session storage first
-          const storedMessages = loadMessagesFromSessionStorage();
-
-          // For fresh data load with session storage available
-          setMessages((prevMessages) => {
-            // First try to use session storage for persistence
-            const baseMessages = storedMessages || prevMessages;
-
-            // Identify any edited/deleted messages
-            const editedOrDeletedMessages = baseMessages.filter(
-              (msg) => msg.isEdited || msg.isDeleted
-            );
-
-            console.log(
-              `[GroupChat] Using ${
-                storedMessages ? "session storage" : "state"
-              } with ${editedOrDeletedMessages.length} edited/deleted messages`
-            );
-
-            // Merge fresh data with locally modified messages
-            const freshMessages = sortedMessages.filter(
-              (freshMsg) =>
-                !editedOrDeletedMessages.some(
-                  (localMsg) => localMsg.id === freshMsg.id
-                )
-            );
-
-            const mergedMessages = [
-              ...freshMessages,
-              ...editedOrDeletedMessages,
-            ];
-
-            const finalSortedMessages = mergedMessages.sort(
-              (a, b) =>
-                new Date(a.timestamp).getTime() -
-                new Date(b.timestamp).getTime()
-            );
-
-            // Save the result to session storage
-            saveMessagesToSessionStorage(finalSortedMessages);
-
-            return finalSortedMessages;
-          });
+          setMessages(sortedMessages);
         } else {
-          // For pagination, append new messages
-          setMessages((prevMessages) => {
-            const combinedMessages = [...sortedMessages, ...prevMessages];
-
-            // Sort by timestamp
-            const sortedCombinedMessages = combinedMessages.sort(
-              (a, b) =>
-                new Date(a.timestamp).getTime() -
-                new Date(b.timestamp).getTime()
-            );
-
-            // Save to session storage
-            saveMessagesToSessionStorage(sortedCombinedMessages);
-
-            return sortedCombinedMessages;
-          });
+          setMessages((prevMessages) => [...sortedMessages, ...prevMessages]);
         }
 
         return messagesData;
@@ -848,108 +563,111 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         console.error("Error fetching group messages:", error);
         setError("Failed to load messages");
         toast.error("Failed to load messages");
-        throw error;
       } finally {
         setLoadingMessages(false);
+        if (page === 1) {
+          setInitialMessagesLoaded(true);
+        }
       }
     },
-    [
-      groupId,
-      getGroupMessages,
-      isMessageFromCurrentUser,
-      resolveSenderName,
-      isLoadingMore,
-    ]
+    [groupId, getGroupMessages, isMessageFromCurrentUser, resolveSenderName]
   );
 
-  // The duplicate forceRefreshMessages function declaration has been removed
-
-  // Auto-refresh messages periodically to catch any updates from other clients
+  // Load messages on mount
   useEffect(() => {
-    if (!groupId) return;
-
-    const intervalId = setInterval(() => {
-      console.log("[GroupChat] Auto-refresh: checking for new messages");
-
-      // Check if we have any pending messages before triggering refresh
-      let hasPendingMessages = false;
-
-      setMessages((prevMessages) => {
-        // Check if there are any pending messages
-        hasPendingMessages = prevMessages.some(
-          (msg: GroupMessage) => msg.pending === true
-        );
-
-        // Don't refresh if there are pending messages
-        if (hasPendingMessages) {
-          console.log(
-            "[GroupChat] Auto-refresh skipped: pending messages found"
-          );
-          return prevMessages;
-        }
-
-        // Check if we've received WebSocket messages recently (within the last 10 seconds)
-        const lastWsTime =
-          typeof window !== "undefined"
-            ? (window as any).lastWebSocketMessageTime || 0
-            : 0;
-        const timeSinceLastWsMessage = Date.now() - lastWsTime;
-
-        if (timeSinceLastWsMessage < 10000) {
-          // 10 seconds
-          console.log(
-            "[GroupChat] Auto-refresh skipped: recent WebSocket messages"
-          );
-          return prevMessages;
-        }
-
-        // Before refreshing, make sure current messages are saved to session storage
-        saveMessagesToSessionStorage(prevMessages);
-
-        // Only refresh if there are no pending messages and no recent WebSocket activity
-        console.log(
-          "[GroupChat] Auto-refresh: no pending messages or recent WS activity, refreshing"
-        );
-        setTimeout(() => forceRefreshMessages(1, 20), 100);
-
-        // Don't actually change the messages here
-        return prevMessages;
-      });
-    }, 45000); // Increased refresh interval from 30s to 45s to reduce conflicts
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [groupId, forceRefreshMessages]);
-
-  // Fetch messages when group ID changes or initially
-  useEffect(() => {
-    console.log(`[GroupChat] Component mounted or groupId changed: ${groupId}`);
-
-    // Check if we have stored messages first
-    const storedMessages = loadMessagesFromSessionStorage();
-
-    if (storedMessages && storedMessages.length > 0) {
-      // If we have stored messages, use them immediately for a fast load experience
-      console.log(
-        `[GroupChat] Using ${storedMessages.length} messages from session storage`
-      );
-      setMessages(storedMessages);
-
-      // Then fetch the latest messages in the background
-      setTimeout(() => {
-        fetchGroupMessages(1, 20);
-      }, 500);
-    } else {
-      // No stored messages, fetch from backend directly
-      console.log(
-        `[GroupChat] No stored messages found, fetching from backend`
-      );
+    if (groupId) {
       fetchGroupMessages(1, 20);
     }
-  }, [groupId, fetchGroupMessages, loadMessagesFromSessionStorage]);
+  }, [groupId, fetchGroupMessages]);
 
-  // Enhanced message sending with optimistic update and forced refresh
+  // Enhanced filter out messages from blocked users with client-side validation
+  const filterBlockedMessages = useCallback(
+    (messagesToFilter: GroupMessage[]): GroupMessage[] => {
+      // Messages from blocked users are primarily filtered by the backend
+      // This function provides client-side validation as backup
+
+      console.log(
+        `[GroupChat] filterBlockedMessages called with ${messagesToFilter.length} messages`
+      );
+
+      if (!blockedUsers || blockedUsers.length === 0) {
+        console.log(
+          `[GroupChat] No blocked users found, returning all ${messagesToFilter.length} messages`
+        );
+        return messagesToFilter;
+      }
+
+      console.log(
+        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users - applying client-side validation`
+      );
+      console.log(`[GroupChat] Blocked users:`, blockedUsers);
+
+      // Create a Set of blocked user IDs for efficient lookup
+      const blockedUserIds = new Set(
+        blockedUsers.map((user) => user.user_id || user.id).filter(Boolean)
+      );
+
+      console.log(
+        `[GroupChat] Blocked user IDs set:`,
+        Array.from(blockedUserIds)
+      );
+
+      // Filter messages with client-side validation
+      const filtered = messagesToFilter.filter((message) => {
+        // Always show current user's messages
+        if (message.isCurrentUser) {
+          return true;
+        }
+
+        // Check if sender is in blocked users list
+        const senderId = message.sender.id;
+        const isBlocked = blockedUserIds.has(senderId);
+
+        console.log(
+          `[GroupChat] Checking message from sender ${senderId}: isBlocked=${isBlocked}`
+        );
+
+        if (isBlocked) {
+          console.log(
+            `[GroupChat] Client-side filter: Blocked message from user ${senderId}`
+          );
+          return false;
+        }
+
+        return true;
+      });
+
+      if (filtered.length !== messagesToFilter.length) {
+        console.log(
+          `[GroupChat] Client-side filtered ${
+            messagesToFilter.length - filtered.length
+          } messages from blocked users`
+        );
+      }
+
+      return filtered;
+    },
+    [blockedUsers, groupId]
+  );
+
+  // Get visible messages with enhanced filtering
+  const visibleMessages = useMemo(() => {
+    // First apply client-side blocked user filtering as backup
+    const clientFiltered = filterBlockedMessages(messages);
+
+    // Then apply search filter if searching
+    const finalMessages = isSearching ? filteredMessages : clientFiltered;
+
+    console.log(
+      `[GroupChat] Visible messages: ${finalMessages.length}/${
+        messages.length
+      } total, ${isSearching ? "search filtered" : "blocked user filtered"}`
+    );
+
+    return finalMessages;
+  }, [messages, filteredMessages, isSearching, filterBlockedMessages]);
+
+  // Send message handler
   const handleSendMessage = useCallback(async () => {
     if (!inputMessage.trim() || isSending) return;
 
@@ -960,7 +678,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       setIsSending(true);
       setInputMessage("");
 
-      // Optimistic update - add message immediately
+      // Create optimistic message
       const optimisticMessage: GroupMessage = {
         id: tempId,
         content: messageContent,
@@ -973,62 +691,50 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         timestamp: new Date().toISOString(),
         isCurrentUser: true,
         pending: true,
-        failed: false,
         delivered: false,
       };
 
       setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
 
-      // Send message via API
       const response = await sendGroupMessage(groupId, messageContent);
-      console.log("[GroupChat] Message sent response:", response);
+      console.log("[GroupChat] Message sent successfully:", response);
 
-      // Update the optimistic message to show as sent
-      setMessages((prevMessages) => {
-        const updatedMessages = prevMessages.map((msg) =>
+      // Update optimistic message to delivered
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
           msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
-        );
-
-        // Save to session storage immediately to persist across refreshes
-        saveMessagesToSessionStorage(updatedMessages);
-
-        return updatedMessages;
-      });
-
-      // Don't force refresh immediately after sending
-      // We'll rely on WebSocket to deliver the new message
-      // This prevents race conditions that were causing new messages to disappear
-      console.log(
-        "[GroupChat] Message sent successfully, waiting for WebSocket update"
+        )
       );
-    } catch (error) {
-      console.error("Failed to send message:", error);
-      toast.error("Failed to send message");
 
-      // Mark the optimistic message as failed
+      toast.success("Message sent successfully", { id: `send-${tempId}` });
+    } catch (error: any) {
+      console.error("Failed to send message:", error);
+
+      // Mark optimistic message as failed
       setMessages((prevMessages) =>
         prevMessages.map((msg) =>
           msg.id === tempId ? { ...msg, pending: false, failed: true } : msg
         )
       );
 
-      // Restore input on error
+      // Restore input content
       setInputMessage(messageContent);
+      toast.error("Failed to send message");
     } finally {
       setIsSending(false);
     }
   }, [
     inputMessage,
     isSending,
-    groupId,
     sendGroupMessage,
     currentUserId,
     userInfo,
     user,
-    forceRefreshMessages,
+    fetchGroupMessages,
+    groupId,
   ]);
 
-  // Enhanced edit message functionality (like chat-area)
+  // Handle edit message
   const handleEditMessage = useCallback(
     (messageId: string) => {
       const message = messages.find((msg) => msg.id === messageId);
@@ -1041,14 +747,14 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     [messages]
   );
 
-  // Handle cancel edit with cleanup (like chat-area)
+  // Handle cancel edit
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setInputMessage("");
     console.log("[GroupChat] Edit cancelled");
   }, []);
 
-  // Handle submit edit (like chat-area)
+  // Handle submit edit
   const handleSubmitEdit = useCallback(async () => {
     if (!editingMessageId || !inputMessage.trim()) return;
 
@@ -1090,9 +796,14 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       );
       console.log("🔧 EDIT: API response:", response);
 
+      // Simple validation - if we get a response, consider it successful
+      if (!response) {
+        throw new Error("No response received from edit API");
+      }
+
       // Update with successful edit
-      setMessages((prevMessages) => {
-        const updatedMessages = prevMessages.map((msg) =>
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
           msg.id === editingMessageId
             ? {
                 ...msg,
@@ -1101,36 +812,25 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                 pending: false,
               }
             : msg
-        );
-
-        // Save edited messages to session storage
-        saveMessagesToSessionStorage(updatedMessages);
-
-        return updatedMessages;
-      });
-
-      // Force refresh messages to ensure server state is synchronized
-      setTimeout(() => {
-        forceRefreshMessages(1, 20);
-        console.log("[GroupChat] Forcing message refresh after edit");
-      }, 500);
+        )
+      );
 
       // Clear edit state
       setEditingMessageId(null);
       setInputMessage("");
 
-      // Invalidate cache to ensure fresh data on next load
-      if (typeof window !== "undefined") {
-        sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
-        console.log(
-          `[GroupChat] Cleared cache after edit for group ${groupId}`
-        );
-      }
-
       toast.success("Message updated successfully");
       console.log(
         `[GroupChat] Message edited successfully: ${editingMessageId}`
       );
+
+      // Schedule a background refresh to ensure consistency with backend
+      setTimeout(() => {
+        if (!hasPendingOperations) {
+          console.log("[GroupChat] Background refresh after edit operation");
+          fetchGroupMessages(1, 20);
+        }
+      }, 2000);
     } catch (error: any) {
       console.error("🔧 EDIT ERROR: Failed to edit message:", error);
 
@@ -1168,45 +868,17 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     messages,
     editGroupMessage,
     groupId,
-    forceRefreshMessages,
+    fetchGroupMessages,
+    hasPendingOperations,
   ]);
 
-  // Enhanced form submission handler for both new messages and edits (like chat-area)
-  const handleFormSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-
-      // Handle edit submission
-      if (editingMessageId) {
-        await handleSubmitEdit();
-        return;
-      }
-
-      // Handle new message submission
-      await handleSendMessage();
-    },
-    [editingMessageId, handleSubmitEdit, handleSendMessage]
-  );
-
-  // Handle Enter key for sending messages or submitting edits
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (editingMessageId) {
-        handleSubmitEdit();
-      } else {
-        handleSendMessage();
-      }
-    }
-  };
-
-  // Enhanced delete message handler with confirmation (like chat-area)
+  // Handle delete message
   const handleDeleteMessage = useCallback(
     async (messageId: string) => {
       const message = messages.find((msg) => msg.id === messageId);
       if (!message) return;
 
-      // Show confirmation using react-hot-toast instead of window.confirm
+      // Show confirmation using react-hot-toast
       const shouldDelete = await new Promise<boolean>((resolve) => {
         toast(
           (t) => (
@@ -1248,7 +920,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       if (!shouldDelete) return;
 
       console.log("🗑️ DELETE: Starting delete for message:", messageId);
-      console.log("🗑️ DELETE: Group ID:", groupId);
 
       try {
         // Optimistically mark message as deleted
@@ -1270,34 +941,30 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         const response = await deleteGroupMessage(groupId, messageId);
         console.log("🗑️ DELETE: API response:", response);
 
-        // Confirm deletion
-        setMessages((prevMessages) => {
-          const updatedMessages = prevMessages.map((msg) =>
-            msg.id === messageId ? { ...msg, pending: false } : msg
-          );
-
-          // Save to session storage to persist deletion
-          saveMessagesToSessionStorage(updatedMessages);
-
-          return updatedMessages;
-        });
-
-        // Force refresh messages to ensure server state is synchronized
-        setTimeout(() => {
-          forceRefreshMessages(1, 20);
-          console.log("[GroupChat] Forcing message refresh after deletion");
-        }, 500);
-
-        // Invalidate cache to ensure fresh data on next load
-        if (typeof window !== "undefined") {
-          sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${groupId}`);
-          console.log(
-            `[GroupChat] Cleared cache after delete for group ${groupId}`
-          );
+        // Simple validation - if we get a response, consider it successful
+        if (!response) {
+          throw new Error("No response received from delete API");
         }
+
+        // Confirm deletion
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === messageId ? { ...msg, pending: false } : msg
+          )
+        );
 
         toast.success("Message deleted successfully");
         console.log(`[GroupChat] Message deleted: ${messageId}`);
+
+        // Schedule a background refresh to ensure consistency with backend
+        setTimeout(() => {
+          if (!hasPendingOperations) {
+            console.log(
+              "[GroupChat] Background refresh after delete operation"
+            );
+            fetchGroupMessages(1, 20);
+          }
+        }, 2000);
       } catch (error: any) {
         console.error("🗑️ DELETE ERROR: Failed to delete message:", error);
 
@@ -1330,10 +997,16 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
       }
     },
-    [messages, deleteGroupMessage, groupId, forceRefreshMessages]
+    [
+      messages,
+      deleteGroupMessage,
+      groupId,
+      fetchGroupMessages,
+      hasPendingOperations,
+    ]
   );
 
-  // Retry failed message handler
+  // Handle retry failed message
   const handleRetryMessage = useCallback(
     async (messageId: string) => {
       const message = messages.find((msg) => msg.id === messageId);
@@ -1361,12 +1034,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           )
         );
 
-        // Force refresh messages to ensure server state is synchronized
-        setTimeout(() => {
-          forceRefreshMessages(1, 20);
-          console.log("[GroupChat] Forcing message refresh after retry");
-        }, 500);
-
         toast.success("Message sent successfully");
       } catch (error) {
         console.error("Failed to retry message:", error);
@@ -1382,188 +1049,41 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
       }
     },
-    [messages, sendGroupMessage, groupId, forceRefreshMessages]
+    [messages, sendGroupMessage, groupId, fetchGroupMessages]
   );
 
-  // Enhanced WebSocket message handling with edit/delete state preservation
-  useEffect(() => {
-    if (!wsMessages || wsMessages.length === 0 || !groupId) return;
+  // Enhanced form submission handler for both new messages and edits
+  const handleFormSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
 
-    console.log(`[GroupChat] Received WebSocket messages:`, wsMessages);
-
-    const newGroupMessages = wsMessages.filter(
-      (msg: NewMessageData) => msg.group_id === groupId
-    );
-
-    console.log(
-      `[GroupChat] Filtered messages for group ${groupId}:`,
-      newGroupMessages.length
-    );
-
-    if (newGroupMessages.length === 0) return;
-
-    const processedMessages = newGroupMessages.map((msg: NewMessageData) => {
-      // Check if message is from current user
-      const isFromCurrentUser = isMessageFromCurrentUser(msg.sender_id);
-
-      // Use sender name resolution function
-      const senderInfo = resolveSenderName(msg.sender_id, isFromCurrentUser);
-
-      // Create message with proper typing
-      const processedMessage: GroupMessage = {
-        id: msg.id || `ws-${Date.now()}-${Math.random()}`,
-        content: msg.content,
-        sender: {
-          id: String(msg.sender_id),
-          name: senderInfo.name,
-          avatar_url: senderInfo.avatar,
-        },
-        timestamp: msg.created_at || new Date().toISOString(),
-        isCurrentUser: isFromCurrentUser,
-        pending: false,
-        failed: false,
-        delivered: true,
-      };
-
-      return processedMessage;
-    });
-
-    // Enhanced message deduplication and handling with better message preservation
-    setMessages((prevMessages) => {
-      // Track existing message IDs
-      const existingIds = new Set(prevMessages.map((m) => m.id));
-
-      // Find messages that don't already exist in our state
-      const uniqueNewMessages = processedMessages.filter(
-        (m) => !existingIds.has(m.id)
-      );
-
-      console.log(
-        `[GroupChat] WebSocket processing: ${uniqueNewMessages.length} new messages out of ${processedMessages.length} total`
-      );
-
-      if (uniqueNewMessages.length === 0) return prevMessages;
-
-      // Remove any temporary/optimistic messages that match the new real messages
-      const messagesWithoutOptimistic = prevMessages.filter((msg) => {
-        // IMPORTANT: Always keep messages that have been edited or deleted locally
-        if (msg.isEdited || msg.isDeleted) {
-          console.log(
-            `[GroupChat] Preserving edited/deleted message: ${msg.id}`
-          );
-          return true;
-        }
-
-        // Keep the message if it's not optimistic/pending OR if there's no matching real message
-        if (!msg.pending && !msg.id.startsWith("temp-")) return true;
-
-        // Enhanced matching for optimistic messages
-        const hasMatchingRealMessage = uniqueNewMessages.some((newMsg) => {
-          // Check for content match (exact or with slight variations)
-          const contentMatch =
-            // Exact content match
-            newMsg.content === msg.content ||
-            // Or content is very similar (to handle slight variations)
-            newMsg.content.includes(msg.content) ||
-            msg.content.includes(newMsg.content);
-
-          // Same sender
-          const userMatch = newMsg.isCurrentUser === msg.isCurrentUser;
-
-          // Reasonable time window (30 seconds)
-          const timeDiff = Math.abs(
-            new Date(newMsg.timestamp).getTime() -
-              new Date(msg.timestamp).getTime()
-          );
-
-          const isMatch = contentMatch && userMatch && timeDiff < 30000; // 30 second window
-
-          if (isMatch && msg.pending) {
-            console.log(
-              `[GroupChat] Found matching real message for pending message: ${msg.id} -> ${newMsg.id}`
-            );
-          }
-
-          return isMatch;
-        });
-
-        return !hasMatchingRealMessage;
-      });
-
-      // Filter out new WebSocket messages that would overwrite existing edited/deleted messages
-      const safeNewMessages = uniqueNewMessages.filter((newMsg) => {
-        const existingMessage = prevMessages.find(
-          (existing) => existing.id === newMsg.id
-        );
-        if (
-          existingMessage &&
-          (existingMessage.isEdited || existingMessage.isDeleted)
-        ) {
-          console.log(
-            `[GroupChat] Skipping WebSocket update for edited/deleted message: ${newMsg.id}`
-          );
-          return false; // Don't add this WebSocket message as it would overwrite local changes
-        }
-        return true;
-      });
-
-      const allMessages = [...messagesWithoutOptimistic, ...safeNewMessages];
-      const sortedMessages = allMessages.sort(
-        (a, b) =>
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-
-      console.log(
-        `[GroupChat] Updated messages list after WebSocket update:`,
-        sortedMessages.length,
-        `(Added ${safeNewMessages.length} new messages)`
-      );
-
-      // Store a timestamp when we receive messages via WebSocket
-      // This will help us avoid refreshing too soon after receiving messages
-      if (safeNewMessages.length > 0) {
-        // We can use window as a global store for this timestamp
-        if (typeof window !== "undefined") {
-          (window as any).lastWebSocketMessageTime = Date.now();
-          console.log("[GroupChat] Updated last WebSocket message timestamp");
-
-          // IMPORTANT: Save new messages to session storage so they persist across refreshes
-          saveMessagesToSessionStorage(sortedMessages);
-        }
+      // Handle edit submission
+      if (editingMessageId) {
+        await handleSubmitEdit();
+        return;
       }
 
-      // Don't refresh at all after receiving WebSocket messages
-      // WebSocket should be our primary way to receive real-time updates
-      // Forced refreshes tend to cause race conditions with message disappearance
+      // Handle new message submission
+      await handleSendMessage();
+    },
+    [editingMessageId, handleSubmitEdit, handleSendMessage]
+  );
 
-      return sortedMessages;
-    });
-  }, [
-    wsMessages,
-    groupId,
-    isMessageFromCurrentUser,
-    resolveSenderName,
-    currentUserId,
-    forceRefreshMessages,
-  ]);
-
-  // Handle search functionality
+  // Handle search
   const handleSearch = (query: string, members: string[]) => {
     setSearchQuery(query);
     setSelectedMembers(members);
     setIsSearching(true);
 
-    // First filter out blocked users' messages, then apply search filters
+    // Filter messages based on search criteria
     const blockedFiltered = filterBlockedMessages(messages);
-
-    // Filter messages by content and/or sender
     const filtered = blockedFiltered.filter((message) => {
-      const contentMatch =
-        !query.trim() ||
-        message.content.toLowerCase().includes(query.toLowerCase());
-
+      const contentMatch = query
+        ? message.content.toLowerCase().includes(query.toLowerCase())
+        : true;
       const memberMatch =
-        members.length === 0 || members.includes(message.sender.id);
+        members.length === 0 ||
+        members.some((memberId) => message.sender.id === memberId);
 
       return contentMatch && memberMatch;
     });
@@ -1571,356 +1091,364 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     setFilteredMessages(filtered);
   };
 
-  // Clear search
-  const clearSearch = () => {
+  const handleClearSearch = () => {
     setSearchQuery("");
     setIsSearching(false);
     setFilteredMessages([]);
     setSelectedMembers([]);
   };
 
-  // Filter out messages from blocked users
-  const filterBlockedMessages = useCallback(
-    (messagesToFilter: GroupMessage[]): GroupMessage[] => {
-      if (!blockedUsers || blockedUsers.length === 0) {
-        return messagesToFilter;
-      }
-
-      const filtered = messagesToFilter.filter((message) => {
-        // Always show current user's messages
-        if (message.isCurrentUser) {
-          return true;
-        }
-
-        // Check if sender is in blocked users list - check multiple possible ID fields
-        const senderId = message.sender.id;
-        const isBlocked = blockedUsers.some((blockedUser) => {
-          // Check both user_id and id fields as they might be stored differently
-          const blockedUserId = blockedUser.user_id || blockedUser.id;
-          const match = blockedUserId === senderId;
-
-          if (match) {
-            console.log(
-              `Found blocked user match: sender=${senderId}, blocked=${blockedUserId}`
-            );
-          }
-
-          return match;
-        });
-
-        if (isBlocked) {
-          console.log(
-            `Filtering out message from blocked user: ${message.sender.name} (ID: ${senderId})`
-          );
-          return false;
-        }
-
-        return true;
-      });
-
-      if (filtered.length !== messagesToFilter.length) {
-        console.log(
-          `Filtered ${
-            messagesToFilter.length - filtered.length
-          } messages from blocked users in group ${groupId}`
-        );
-        console.log(
-          `Blocked users list:`,
-          blockedUsers.map((u) => ({
-            id: u.id,
-            user_id: u.user_id,
-            name: u.name,
-          }))
-        );
-      }
-
-      return filtered;
-    },
-    [blockedUsers, groupId]
-  );
-
-  // Get visible messages (filtered for blocked users, then search if applicable)
-  const visibleMessages = useMemo(() => {
-    // First filter out blocked users' messages
-    const filteredForBlocked = filterBlockedMessages(messages);
-
-    // Then apply search filter if searching
-    return isSearching ? filteredMessages : filteredForBlocked;
-  }, [messages, filteredMessages, isSearching, filterBlockedMessages]);
-
-  // Connection status monitoring
+  // Connection status effect
   useEffect(() => {
     setConnectionStatus(isConnected ? "connected" : "disconnected");
   }, [isConnected]);
 
-  // Show WebSocket errors
+  // Handle WebSocket errors
   useEffect(() => {
     if (wsError) {
       toast.error(`Connection error: ${wsError}`);
     }
   }, [wsError]);
 
-  // Refresh messages when user returns to the tab from background
+  // Handle WebSocket messages
   useEffect(() => {
-    if (!groupId || typeof document === "undefined") return;
+    if (!wsMessages || wsMessages.length === 0 || !groupId) return;
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        console.log(
-          "[GroupChat] User returned to tab, checking for stored messages"
+    console.log(`[GroupChat] Received WebSocket messages:`, wsMessages);
+
+    const newGroupMessages = wsMessages.filter(
+      (msg: any) => msg.group_id === groupId || msg.chatroom_id === groupId
+    );
+
+    if (newGroupMessages.length === 0) return;
+
+    const formattedNewMessages = newGroupMessages.map((wsMsg: any) => {
+      const isCurrentUser = isMessageFromCurrentUser(wsMsg.sender_id);
+      const senderInfo = resolveSenderName(wsMsg.sender_id, isCurrentUser);
+
+      return {
+        id: wsMsg.id,
+        content: wsMsg.content,
+        sender: {
+          id: String(wsMsg.sender_id),
+          name: senderInfo.name,
+          avatar_url: senderInfo.avatar,
+        },
+        timestamp: wsMsg.created_at || new Date().toISOString(),
+        isCurrentUser,
+        pending: false,
+        delivered: true,
+      };
+    });
+
+    setMessages((prevMessages) => {
+      const existingIds = new Set(prevMessages.map((m) => m.id));
+      const uniqueNewMessages = formattedNewMessages.filter(
+        (m) => !existingIds.has(m.id)
+      );
+
+      if (uniqueNewMessages.length === 0) return prevMessages;
+
+      // Remove any temporary/optimistic messages that match the new real messages
+      const messagesWithoutOptimistic = prevMessages.filter((msg) => {
+        if (!msg.pending && !msg.failed) return true;
+
+        const hasMatchingRealMessage = uniqueNewMessages.some((newMsg) => {
+          // Same sender and content
+          return (
+            newMsg.sender.id === msg.sender.id &&
+            newMsg.content === msg.content &&
+            Math.abs(
+              new Date(newMsg.timestamp).getTime() -
+                new Date(msg.timestamp).getTime()
+            ) < 10000
+          );
+        });
+
+        return !hasMatchingRealMessage;
+      });
+
+      const safeNewMessages = uniqueNewMessages.filter((newMsg) => {
+        const hasDuplicate = prevMessages.some(
+          (existing) => existing.id === newMsg.id
         );
+        return !hasDuplicate;
+      });
 
-        // First check session storage
-        const storedMessages = loadMessagesFromSessionStorage();
+      const combined = [...messagesWithoutOptimistic, ...safeNewMessages];
+      return combined.sort(
+        (a, b) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
+    });
 
-        if (storedMessages && storedMessages.length > 0) {
-          console.log(
-            `[GroupChat] Found ${storedMessages.length} messages in session storage`
-          );
-          setMessages(storedMessages);
-
-          // Then refresh in background
-          setTimeout(() => {
-            forceRefreshMessages(1, 20);
-          }, 1000);
-        } else {
-          // No stored messages, refresh directly
-          console.log(
-            "[GroupChat] No stored messages found, refreshing directly"
-          );
-          forceRefreshMessages(1, 20);
-        }
+    // Refresh message history to ensure we have all messages
+    // But only if we don't have pending operations to avoid conflicts
+    setTimeout(() => {
+      if (!hasPendingOperations) {
+        console.log("[GroupChat] Background refresh from WebSocket");
+        fetchGroupMessages(1, 20);
+      } else {
+        console.log(
+          "[GroupChat] Skipping WebSocket refresh due to pending operations"
+        );
       }
-    };
+    }, 1000);
+  }, [
+    wsMessages,
+    groupId,
+    currentUserId,
+    isMessageFromCurrentUser,
+    resolveSenderName,
+    fetchGroupMessages,
+    hasPendingOperations,
+  ]);
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [groupId, forceRefreshMessages]);
-
-  // Loading state
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-2 text-gray-600">Loading group...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading group chat...</p>
         </div>
       </div>
     );
   }
 
-  // Error state
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center text-red-600">
-          <FaExclamationTriangle className="mx-auto h-8 w-8 mb-2" />
-          <p>{error}</p>
+      <div className="flex-1 flex items-center justify-center bg-white">
+        <div className="text-center">
+          <FaExclamationTriangle className="text-red-500 text-4xl mx-auto mb-4" />
+          <p className="text-gray-600">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full bg-white">
-      {/* Main chat area */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
-          <div className="flex items-center space-x-3">
-            <div className="relative">
+    <div className="flex-1 flex flex-col bg-white h-full">
+      {/* Header */}
+      <div className="p-2 sm:p-3 lg:p-4 border-b border-gray-200 bg-white shadow-sm shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 lg:w-11 lg:h-11 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shrink-0">
               {groupDetails.avatar_url ? (
                 <img
                   src={groupDetails.avatar_url}
                   alt={groupDetails.name}
-                  className="w-10 h-10 rounded-full object-cover"
+                  className="w-full h-full object-cover rounded-full"
                 />
               ) : (
-                <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center">
-                  <FaUsers className="text-white text-lg" />
-                </div>
+                <FaUsers className="text-white text-sm sm:text-base lg:text-lg" />
               )}
-              <div
-                className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${
-                  connectionStatus === "connected"
-                    ? "bg-green-500"
-                    : "bg-red-500"
-                }`}
-              />
             </div>
-            <div>
-              <h2 className="font-semibold text-gray-900">
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold text-gray-900 text-sm sm:text-base lg:text-lg truncate leading-tight">
                 {groupDetails.name}
               </h2>
-              <p className="text-sm text-gray-500">
-                {groupDetails.memberCount} members
+              <p className="text-xs sm:text-sm text-gray-500 truncate leading-tight mt-0.5">
+                {groupDetails.memberCount} member
+                {groupDetails.memberCount !== 1 ? "s" : ""}
+                {connectionStatus === "connected" && (
+                  <span className="ml-2 hidden xs:inline">
+                    <span className="inline-block w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-500 rounded-full"></span>{" "}
+                    <span className="hidden sm:inline text-xs">Connected</span>
+                  </span>
+                )}
               </p>
             </div>
           </div>
-
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-0.5 sm:space-x-1 shrink-0">
             <button
-              onClick={() => setShowSearch(true)}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Search in conversation"
+              onClick={() => setShowSearch(!showSearch)}
+              className="p-1.5 sm:p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors touch-manipulation"
+              title="Search messages"
             >
-              <FaSearch className="h-5 w-5 text-gray-600" />
-            </button>
-            <button
-              onClick={() => forceRefreshMessages(1, 20)}
-              className="p-2 hover:bg-gray-100 rounded-full"
-              title="Refresh messages"
-              disabled={loadingMessages}
-            >
-              {loadingMessages ? (
-                <div className="animate-spin h-5 w-5 border-2 border-gray-600 border-t-transparent rounded-full"></div>
-              ) : (
-                <svg
-                  className="h-5 w-5 text-gray-600"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                  />
-                </svg>
-              )}
+              <FaSearch className="text-sm sm:text-base" />
             </button>
             <button
               onClick={() => setShowProfile(!showProfile)}
-              className="p-2 hover:bg-gray-100 rounded-full"
+              className="p-1.5 sm:p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors touch-manipulation"
+              title="Group info"
             >
-              <Info className="h-5 w-5 text-gray-600" />
+              <Info className="text-sm sm:text-base" />
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {loadingMessages && messages.length === 0 && (
-            <div className="flex justify-center">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-            </div>
-          )}
+      {/* Search Filter */}
+      {showSearch && (
+        <SearchFilterPopup
+          isOpen={showSearch}
+          onClose={() => setShowSearch(false)}
+          onSearch={handleSearch}
+          groupMembers={groupDetails.members.map((member) => ({
+            id: member.id,
+            name: member.name,
+            status:
+              member.status === "busy" || member.status === "away"
+                ? "offline"
+                : member.status,
+            role: member.role || "member",
+            avatar: member.avatar_url,
+            avatar_url: member.avatar_url,
+          }))}
+        />
+      )}
 
-          {/* No messages placeholder when searching */}
-          {isSearching && visibleMessages.length === 0 && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center text-gray-500">
-                <p className="mb-1">No matching messages found</p>
+      {/* Main content area */}
+      <div className="flex-1 flex relative overflow-hidden">
+        {/* Messages area */}
+        <div
+          className={`flex-1 flex flex-col transition-all duration-300 ${
+            showProfile ? "lg:mr-80" : ""
+          }`}
+        >
+          {/* Messages list */}
+          <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 space-y-2 sm:space-y-3">
+            {!loadingMessages &&
+              visibleMessages.length === 0 &&
+              !isSearching && (
+                <div className="text-center py-8 sm:py-12 lg:py-16">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 lg:mb-6">
+                    <FaUsers className="text-gray-400 text-lg sm:text-2xl lg:text-3xl" />
+                  </div>
+                  <p className="text-base sm:text-lg lg:text-xl font-medium mb-2 text-gray-800">
+                    No messages yet
+                  </p>
+                  <p className="text-gray-500 text-sm sm:text-base px-4 max-w-md mx-auto">
+                    Start the conversation by sending a message to this group!
+                  </p>
+                </div>
+              )}
+
+            {isSearching && visibleMessages.length === 0 && (
+              <div className="text-center py-8 sm:py-12 lg:py-16">
+                <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 lg:mb-6">
+                  <FaSearch className="text-gray-400 text-lg sm:text-2xl lg:text-3xl" />
+                </div>
+                <p className="text-base sm:text-lg lg:text-xl font-medium mb-2 text-gray-800">
+                  No messages found
+                </p>
+                <p className="text-gray-500 text-sm sm:text-base px-4 max-w-md mx-auto">
+                  Try adjusting your search criteria or clear filters
+                </p>
+              </div>
+            )}
+
+            {/* Messages list */}
+            {visibleMessages.map((message) => (
+              <GroupMessageItem
+                key={message.id}
+                message={message}
+                onRetryClick={handleRetryMessage}
+                onEditClick={handleEditMessage}
+                onDeleteClick={handleDeleteMessage}
+              />
+            ))}
+
+            {loadingMessages && (
+              <div className="text-center py-6 sm:py-8">
+                <div className="animate-spin rounded-full h-6 w-6 sm:h-8 sm:w-8 border-b-2 border-blue-500 mx-auto"></div>
+                <p className="text-sm text-gray-500 mt-2">
+                  Loading messages...
+                </p>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Message input */}
+          <div className="p-2 sm:p-3 lg:p-4 border-t border-gray-200 bg-white shrink-0">
+            {/* Edit mode indicator */}
+            {editingMessageId && (
+              <div className="flex items-center mb-2 bg-blue-50 p-2 rounded-lg">
+                <span className="text-sm text-blue-700 flex-1">
+                  Editing message
+                </span>
                 <button
-                  onClick={clearSearch}
-                  className="text-blue-500 hover:underline"
+                  onClick={handleCancelEdit}
+                  className="text-gray-600 hover:text-gray-800 p-1 rounded transition-colors"
                 >
-                  Clear search
+                  <FaTimes className="h-4 w-4" />
                 </button>
               </div>
-            </div>
-          )}
+            )}
 
-          {visibleMessages.map((message) => (
-            <GroupMessageItem
-              key={message.id}
-              message={message}
-              onRetryClick={handleRetryMessage}
-              onEditClick={handleEditMessage}
-              onDeleteClick={handleDeleteMessage}
-            />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Message Input */}
-        <div className="border-t border-gray-200 p-4">
-          {/* Edit mode indicator */}
-          {editingMessageId && (
-            <div className="flex items-center mb-2 bg-blue-50 p-2 rounded">
-              <span className="text-sm text-blue-700 flex-1">
-                Editing message
-              </span>
-              <button
-                onClick={handleCancelEdit}
-                className="text-gray-600 hover:text-gray-800"
-              >
-                <FaTimes className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          <form onSubmit={handleFormSubmit} className="flex flex-col">
-            <div className="flex items-center space-x-2">
-              <button className="p-2 text-gray-400 hover:text-gray-600">
-                <Paperclip className="h-5 w-5" />
-              </button>
-
-              <div className="flex-1">
+            <form
+              onSubmit={handleFormSubmit}
+              className="flex items-end space-x-2 sm:space-x-3"
+            >
+              <div className="flex-1 relative">
                 <input
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
                   placeholder={
                     editingMessageId
                       ? "Edit your message..."
                       : "Type a message..."
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pr-4 border border-gray-300 rounded-2xl sm:rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base resize-none transition-all"
                   disabled={isSending}
                 />
               </div>
-
               <button
                 type="submit"
                 disabled={!inputMessage.trim() || isSending}
-                className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="p-2.5 sm:p-3 bg-blue-500 text-white rounded-full hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 touch-manipulation shrink-0"
               >
                 {isSending ? (
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-b-2 border-white"></div>
+                ) : editingMessageId ? (
+                  <FaCheck className="text-xs sm:text-sm" />
                 ) : (
-                  <FaPaperPlane className="h-5 w-5" />
+                  <FaPaperPlane className="text-xs sm:text-sm" />
                 )}
               </button>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
+
+        {/* Group profile sidebar */}
+        {showProfile && (
+          <>
+            {/* Mobile overlay */}
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+              onClick={() => setShowProfile(false)}
+            />
+
+            {/* Sidebar */}
+            <div className="fixed lg:absolute right-0 top-0 h-full w-full sm:w-96 lg:w-80 bg-white border-l border-gray-200 z-50 lg:z-auto shadow-xl lg:shadow-none transform transition-transform duration-300">
+              {/* Mobile header */}
+              <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 lg:hidden bg-gray-50">
+                <h3 className="font-semibold text-gray-900 text-base sm:text-lg">
+                  Group Info
+                </h3>
+                <button
+                  onClick={() => setShowProfile(false)}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors touch-manipulation"
+                >
+                  <X className="text-lg" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="h-full overflow-hidden">
+                <GroupProfileInfo
+                  groupName={groupDetails.name}
+                  groupDetails={groupDetails}
+                  onClose={() => setShowProfile(false)}
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
-
-      {/* Search UI Popup */}
-      {showSearch && (
-        <SearchFilterPopup
-          groupMembers={groupDetails.members.map((member) => ({
-            id: member.id,
-            name: member.name,
-            status: member.status === "online" ? "online" : "offline",
-            role: member.role,
-            avatar_url: member.avatar_url,
-          }))}
-          isOpen={showSearch}
-          onClose={() => {
-            setShowSearch(false);
-            if (!searchQuery && selectedMembers.length === 0) {
-              setIsSearching(false);
-            }
-          }}
-          onSearch={handleSearch}
-        />
-      )}
-
-      {/* Group Profile Sidebar */}
-      {showProfile && (
-        <GroupProfileInfo
-          groupName={groupDetails.name}
-          onClose={() => setShowProfile(false)}
-          groupDetails={groupDetails}
-        />
-      )}
     </div>
   );
 };

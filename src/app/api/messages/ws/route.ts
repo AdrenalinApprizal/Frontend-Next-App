@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-const WS_BASE_URL = "http://localhost:8081"; // Adjust if your WebSocket server is on a different port
+const WS_BASE_URL = process.env.WS_BASE_URL || "http://localhost:8081"; // Adjust if your WebSocket server is on a different port
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,8 +13,12 @@ export async function GET(req: NextRequest) {
     }
 
     // Return WebSocket connection info
+    const wsUrl = process.env.NODE_ENV === 'production' 
+      ? `${process.env.WS_BASE_URL || 'wss://your-websocket-server.com'}/ws`
+      : `ws://localhost:8081/ws`;
+      
     return NextResponse.json({
-      ws_url: `ws://localhost:8081/ws`,
+      ws_url: wsUrl,
       access_token: token.access_token,
       user_id: token.user_id || token.sub,
     });

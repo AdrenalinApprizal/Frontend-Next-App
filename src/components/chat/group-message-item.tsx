@@ -176,14 +176,14 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
       key={message.id}
       className={`flex ${
         isDefinitelyCurrentUser ? "justify-end" : "justify-start"
-      } mb-4`}
+      } mb-3 sm:mb-4`}
       data-message-id={message.id}
       data-is-current={isDefinitelyCurrentUser ? "true" : "false"}
     >
       {/* Avatar untuk pengguna lain */}
       {!isDefinitelyCurrentUser && (
-        <div className="mr-2">
-          <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
+        <div className="mr-2 sm:mr-3">
+          <div className="h-8 w-8 sm:h-10 sm:w-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
             {message.sender.avatar_url ? (
               <img
                 src={message.sender.avatar_url}
@@ -198,17 +198,17 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 }}
               />
             ) : (
-              <FaUser className="h-5 w-5 text-gray-500" />
+              <FaUser className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
             )}
-            <FaUser className="h-5 w-5 text-gray-500 hidden" />
+            <FaUser className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500 hidden" />
           </div>
         </div>
       )}
 
-      <div className="flex flex-col max-w-[70%]">
+      <div className="flex flex-col max-w-[85%] sm:max-w-[75%] lg:max-w-[70%]">
         {/* Nama pengirim dengan styling yang ditingkatkan */}
         <div
-          className={`text-xs text-gray-600 mb-1 ${
+          className={`text-xs sm:text-sm text-gray-600 mb-1 ${
             isDefinitelyCurrentUser ? "self-end" : "ml-1"
           }`}
         >
@@ -217,15 +217,15 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
 
         {/* Message bubble dengan interaksi yang ditingkatkan */}
         <div
-          className={`rounded-lg px-4 py-2 relative group ${
+          className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-3 relative group shadow-sm ${
             isDefinitelyCurrentUser
               ? message.isDeleted
                 ? "bg-gray-200 text-gray-500 italic"
                 : message.failed
                 ? "bg-red-100 text-red-800 border border-red-300 cursor-pointer hover:bg-red-200"
                 : "bg-blue-500 text-white"
-              : "bg-white border border-gray-200 text-gray-800"
-          }`}
+              : "bg-white border border-gray-200 text-gray-800 hover:shadow-md"
+          } transition-all duration-200`}
           onClick={
             message.failed && onRetryClick
               ? () => onRetryClick(message.id)
@@ -243,32 +243,29 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
             !message.retrying &&
             onEditClick &&
             onDeleteClick && (
-              <div
-                className="absolute top-0 right-0 -mt-1 -mr-1"
-                ref={dropdownRef}
-              >
+              <div className="absolute top-2 right-2" ref={dropdownRef}>
                 <button
                   onClick={toggleActions}
-                  className="text-white hover:text-blue-200 p-1 rounded-full focus:outline-none opacity-0 group-hover:opacity-70 hover:opacity-100 transition-opacity bg-black bg-opacity-20 hover:bg-opacity-40"
+                  className="text-white hover:text-blue-200 p-1.5 rounded-full focus:outline-none opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-20 hover:bg-opacity-40 touch-manipulation"
                 >
                   <FaEllipsisV className="h-3 w-3" />
                 </button>
 
                 {/* Dropdown menu */}
                 {showActions && (
-                  <div className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-lg z-50">
+                  <div className="absolute right-0 top-8 w-32 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
                     <div className="py-1">
                       <button
                         onClick={handleEditClick}
-                        className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-100 flex items-center"
+                        className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                       >
-                        <FaPencilAlt className="mr-2" /> Edit
+                        <FaPencilAlt className="mr-2 text-xs" /> Edit
                       </button>
                       <button
                         onClick={handleDeleteClick}
-                        className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-100 flex items-center"
+                        className="w-full px-4 py-2 text-sm text-left text-gray-700 hover:bg-gray-100 flex items-center transition-colors"
                       >
-                        <FaTrash className="mr-2" /> Unsend
+                        <FaTrash className="mr-2 text-xs" /> Unsend
                       </button>
                     </div>
                   </div>
@@ -278,14 +275,14 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
 
           {/* Indikator status yang ditingkatkan */}
           {message.pending && (
-            <div className="absolute top-0 right-0 -mt-1 -mr-1">
-              <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
+            <div className="absolute top-1 right-1 sm:top-0 sm:right-0 sm:-mt-1 sm:-mr-1">
+              <div className="animate-spin rounded-full h-3 w-3 sm:h-4 sm:w-4 border-2 border-blue-500 border-t-transparent"></div>
             </div>
           )}
 
           {message.retrying && (
-            <div className="absolute top-0 right-0 -mt-1 -mr-1">
-              <div className="animate-pulse rounded-full h-3 w-3 bg-yellow-500"></div>
+            <div className="absolute top-1 right-1 sm:top-0 sm:right-0 sm:-mt-1 sm:-mr-1">
+              <div className="animate-pulse rounded-full h-3 w-3 sm:h-4 sm:w-4 bg-yellow-500"></div>
             </div>
           )}
 
@@ -296,7 +293,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 <img
                   src={message.attachment.url}
                   alt={message.attachment.name}
-                  className="max-w-full h-auto rounded cursor-pointer hover:opacity-90 transition-opacity"
+                  className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity max-h-64 sm:max-h-80"
                   onClick={(e) => {
                     e.stopPropagation();
                     window.open(message.attachment!.url, "_blank");
@@ -313,11 +310,11 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 <a
                   href={message.attachment.url}
                   download={message.attachment.name}
-                  className="text-blue-500 hover:underline flex items-center space-x-2 transition-colors"
+                  className="text-blue-500 hover:underline flex items-center space-x-2 transition-colors p-2 bg-gray-50 rounded-lg"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <FaFile className="text-gray-600" />
-                  <span className="text-sm ml-1">
+                  <FaFile className="text-gray-600 text-sm" />
+                  <span className="text-xs sm:text-sm truncate">
                     {message.attachment.name}
                     {message.attachment.size && ` (${message.attachment.size})`}
                   </span>
@@ -327,12 +324,12 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
           )}
 
           {/* Regular message content - no more edit mode in bubble */}
-          <p className="text-sm break-words whitespace-pre-wrap">
+          <p className="text-sm sm:text-base break-words whitespace-pre-wrap leading-relaxed">
             {message.isDeleted ? "This message was deleted" : message.content}
           </p>
 
           {/* Timestamp and status indicators */}
-          <div className="flex items-center justify-end space-x-1 mt-1">
+          <div className="flex items-center justify-end space-x-1 mt-1 sm:mt-2">
             {message.isEdited && !message.isDeleted && (
               <span className="text-xs opacity-75">(edited)</span>
             )}

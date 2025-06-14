@@ -1119,7 +1119,10 @@ export const useGroup = () => {
           blockedUsersList = response;
         }
 
-        console.log(`[Groups Store] Processed blocked users list:`, blockedUsersList);
+        console.log(
+          `[Groups Store] Processed blocked users list:`,
+          blockedUsersList
+        );
 
         setBlockedUsers(blockedUsersList);
         setLoading(false);

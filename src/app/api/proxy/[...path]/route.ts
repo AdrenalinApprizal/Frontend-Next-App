@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-// Base URLs for different services
-const API_BASE_URL = "http://localhost:8081/api";
-const GROUP_API_BASE_URL = "http://localhost:8082/api";
-// Point notifications to the main API if that's where they're actually handled
-const NOTIFICATION_API_BASE_URL = "http://localhost:8083/api"; // Changed back to 8083, adjust if needed
-const FILES_API_BASE_URL = "http://localhost:8084/api";
-const PRESENCE_API_BASE_URL = "http://localhost:8085/api";
+// Base URLs for different services - use environment variables in production
+const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:8081/api";
+const GROUP_API_BASE_URL = process.env.GROUP_API_BASE_URL || "http://localhost:8082/api";
+const NOTIFICATION_API_BASE_URL = process.env.NOTIFICATION_API_BASE_URL || "http://localhost:8083/api";
+const FILES_API_BASE_URL = process.env.FILES_API_BASE_URL || "http://localhost:8084/api";
+const PRESENCE_API_BASE_URL = process.env.PRESENCE_API_BASE_URL || "http://localhost:8085/api";
 
 // This API route will act as a proxy for all backend requests
 // It forwards requests to the backend server and returns the response
