@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 
-// Base URLs for different services
-const API_BASE_URL = "http://localhost:8081/api";
-const GROUP_API_BASE_URL = "http://localhost:8082/api";
-// Point notifications to the main API if that's where they're actually handled
-const NOTIFICATION_API_BASE_URL = "http://localhost:8083/api"; // Changed back to 8083, adjust if needed
-const FILES_API_BASE_URL = "http://localhost:8084/api";
-const PRESENCE_API_BASE_URL = "http://localhost:8085/api";
+// Base URLs for different services - use environment variables in production
+const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:8081/api";
+const GROUP_API_BASE_URL = process.env.GROUP_API_BASE_URL || "http://localhost:8082/api";
+const NOTIFICATION_API_BASE_URL = process.env.NOTIFICATION_API_BASE_URL || "http://localhost:8083/api";
+const FILES_API_BASE_URL = process.env.FILES_API_BASE_URL || "http://localhost:8084/api";
+const PRESENCE_API_BASE_URL = process.env.PRESENCE_API_BASE_URL || "http://localhost:8085/api";
 
 // This API route will act as a proxy for all backend requests
 // It forwards requests to the backend server and returns the response
@@ -339,6 +338,25 @@ async function handleRequest(
       path === "notification" ||
       path.startsWith("notification/");
 
+    // Special handling for group messages - redirect to direct messages endpoint
+    let finalPath = path;
+    if (
+      path.includes("groups/") &&
+      path.includes("/messages/") &&
+      (method === "PUT" || method === "DELETE" || method === "PATCH")
+    ) {
+      // Extract message ID from groups/{groupId}/messages/{messageId} pattern
+      const pathParts = path.split("/");
+      const messagesIndex = pathParts.indexOf("messages");
+      if (messagesIndex > 0 && pathParts[messagesIndex + 1]) {
+        const messageId = pathParts[messagesIndex + 1];
+        finalPath = `messages/${messageId}`;
+        console.log(
+          `[Proxy] Redirecting group message ${method} from ${path} to ${finalPath}`
+        );
+      }
+    }
+
     // Special logging for message ID endpoints to debug the 500 error
     if (
       isMessagesEndpoint &&
@@ -354,9 +372,7 @@ async function handleRequest(
       path === "files" ||
       path.startsWith("files/") ||
       path === "media" ||
-      path.startsWith("media/") ||
-      path === "files-service" ||
-      path.startsWith("files-service/");
+      path.startsWith("media/");
     const isPresenceEndpoint =
       path === "presence" || path.startsWith("presence/");
     const isWebSocketEndpoint = path === "messages/ws";
@@ -367,17 +383,23 @@ async function handleRequest(
 
     // Select the appropriate base URL
     let baseUrl;
-    if (isGroupEndpoint || isMessagesEndpoint || isWebSocketEndpoint) {
+    if (
+      isGroupEndpoint ||
+      isMessagesEndpoint ||
+      isWebSocketEndpoint ||
+      finalPath.startsWith("messages/")
+    ) {
       baseUrl = GROUP_API_BASE_URL;
 
       // Add special handling for direct message access with UUID
       if (
-        isMessagesEndpoint &&
-        paths.length > 1 &&
-        /^[0-9a-f-]{36}$/.test(paths[1])
+        (isMessagesEndpoint || finalPath.startsWith("messages/")) &&
+        ((paths.length > 1 && /^[0-9a-f-]{36}$/.test(paths[1])) ||
+          (finalPath.includes("/") &&
+            /^[0-9a-f-]{36}$/.test(finalPath.split("/")[1])))
       ) {
         console.log(
-          `[Proxy] Using message API for specific message: ${paths[1]}`
+          `[Proxy] Using message API for specific message: ${finalPath}`
         );
       }
     } else if (isNotificationEndpoint) {
@@ -391,7 +413,7 @@ async function handleRequest(
     }
 
     // CRITICAL FIX: Include search parameters in all API requests
-    const url = `${baseUrl}/${path}${searchParams}`;
+    const url = `${baseUrl}/${finalPath}${searchParams}`;
 
     // Special handling for WebSocket connection attempts through the proxy
     if (isWebSocketEndpoint) {
@@ -569,8 +591,8 @@ async function handleRequest(
       headers,
     };
 
-    // Add body for POST, PUT methods if there is one
-    if (method === "POST" || method === "PUT") {
+    // Add body for POST, PUT, PATCH methods if there is one
+    if (method === "POST" || method === "PUT" || method === "PATCH") {
       try {
         if (isFormData) {
           console.log("[Proxy] Handling FormData request");
@@ -657,6 +679,25 @@ async function handleRequest(
             });
         } else if (contentType?.includes("application/json")) {
           const jsonBody = await req.json();
+
+          // If we redirected from groups/{groupId}/messages/{messageId} to messages/{messageId},
+          // we need to add the group_id to the request body
+          if (
+            path !== finalPath &&
+            path.includes("groups/") &&
+            path.includes("/messages/")
+          ) {
+            const pathParts = path.split("/");
+            const groupsIndex = pathParts.indexOf("groups");
+            if (groupsIndex >= 0 && pathParts[groupsIndex + 1]) {
+              const groupId = pathParts[groupsIndex + 1];
+              jsonBody.group_id = groupId;
+              console.log(
+                `[Proxy] Added group_id ${groupId} to request body for redirected group message request`
+              );
+            }
+          }
+
           options.body = JSON.stringify(jsonBody);
         } else {
           options.body = await req.text();
@@ -1305,9 +1346,7 @@ async function handleRequest(
       path === "files" ||
       path.startsWith("files/") ||
       path === "media" ||
-      path.startsWith("media/") ||
-      path === "files-service" ||
-      path.startsWith("files-service/")
+      path.startsWith("media/")
     ) {
       try {
         const response = await fetch(url, options);

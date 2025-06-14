@@ -19,15 +19,16 @@ import { useMessages } from "@/hooks/messages/useMessages";
 import { useFriendship } from "@/hooks/auth/useFriends";
 import usePresence from "@/hooks/presence/usePresence";
 import { toast } from "react-hot-toast";
-import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
-import { eventBus } from "@/hooks/websocket/useWebSocket";
 import {
   formatMessageTimestamp,
-  formatTimeString,
   formatDateForSeparator,
 } from "@/utils/timestampHelper";
+import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
+import { eventBus } from "@/hooks/websocket/useEventBus";
+import ChatAreaItem from "./chat-area-item";
 import UserProfileInfo from "./friend-info-panel";
 import SearchOnFriend from "./search-on-friend";
+import { OptimizedAvatar } from "../optimized-avatar";
 
 // Define message interface based on the Vue template
 interface Message {
@@ -99,13 +100,37 @@ interface ChatAreaProps {
 
 // Format timestamp for display using centralized helper - matches Vue.js implementation
 const formatTimestamp = (dateString?: string): string => {
-  if (!dateString) return "";
+  if (!dateString) {
+    console.warn("formatTimestamp called with empty/null dateString");
+    return "No Time";
+  }
 
-  // Use 'time' format for HH:MM display in message bubbles like Vue.js
-  return formatMessageTimestamp({
-    timestamp: dateString,
-    format: "time",
-  });
+  try {
+    // Use 'time' format for HH:MM display in message bubbles like Vue.js
+    const result = formatMessageTimestamp({
+      timestamp: dateString,
+      format: "time",
+    });
+
+    // If result is empty, it means the timestamp was invalid
+    if (!result) {
+      console.warn(
+        "formatMessageTimestamp returned empty result for:",
+        dateString
+      );
+      return "No Time";
+    }
+
+    return result;
+  } catch (error) {
+    console.warn(
+      "Error in formatTimestamp:",
+      error,
+      "for dateString:",
+      dateString
+    );
+    return "No Time";
+  }
 };
 
 export function ChatArea({
@@ -126,7 +151,6 @@ export function ChatArea({
   // State hooks
   const [inputMessage, setInputMessage] = useState("");
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [showDropdown, setShowDropdown] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
@@ -145,7 +169,6 @@ export function ChatArea({
   const messagesContainer = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Prevent dependency array issues by using refs for functions that could change
   const isMountedRef = useRef(true);
@@ -175,6 +198,17 @@ export function ChatArea({
     subscribeToPrivateMessages,
     unsubscribeFromPrivateMessages,
   } = useWebSocketContext();
+
+  // Simplified session logging - reduced for production readiness
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development") {
+      console.log("[ChatArea] Session:", {
+        currentUserId,
+        friendId,
+        messageCount: localMessages.length,
+      });
+    }
+  }, [currentUserId, friendId, localMessages.length]);
 
   // Memoized recipient based on data and presence
   const recipient = useMemo(() => {
@@ -252,12 +286,16 @@ export function ChatArea({
     const nameParts = displayName.split(" ");
     const firstName = nameParts[0] || "";
     const lastName = nameParts.slice(1).join(" ") || "";
+    const avatar_url =
+      recipientData.profile_picture_url || recipientData.avatar;
 
     // Create a recipient object with properly typed fields
     return {
       ...recipientData,
       name: displayName,
-      profile_picture_url: recipientData.profile_picture_url,
+      profile_picture_url:
+        recipientData.profile_picture_url || recipientData.avatar,
+      avatar: recipientData.avatar || recipientData.profile_picture_url,
       status: onlineStatus,
       // Use firstName/lastName from our parsing
       first_name: firstName,
@@ -265,7 +303,66 @@ export function ChatArea({
     };
   }, [friendId, recipientName, recipientData, presence]);
 
-  // Enhanced message ownership detection with conversation-aware logic for corrupted data
+  // Debug recipient data for header
+  useEffect(() => {
+    console.log("[ChatArea] Debug recipient data:", {
+      friendId,
+      recipientName,
+      recipientData: recipientData
+        ? {
+            id: recipientData.id,
+            name: recipientData.name,
+            profile_picture_url: recipientData.profile_picture_url,
+            avatar: recipientData.avatar,
+            avatar_url: (recipientData as any).avatar_url,
+            all_keys: Object.keys(recipientData),
+          }
+        : null,
+      finalRecipient: {
+        name: recipient.name,
+        profile_picture_url: recipient.profile_picture_url,
+        avatar: recipient.avatar,
+        hasProfilePic: !!recipient.profile_picture_url,
+        hasAvatar: !!recipient.avatar,
+      },
+    });
+  }, [friendId, recipientName, recipientData, recipient]);
+
+  // Validate recipient avatar
+  const validatedRecipientAvatar = useMemo(() => {
+    const avatarUrl = recipient.profile_picture_url || recipient.avatar;
+    if (!avatarUrl) return null;
+
+    // Check if it's a data URL
+    if (avatarUrl.startsWith("data:")) {
+      // Check size limit (most browsers support up to 2MB for data URLs)
+      const maxSize = 2 * 1024 * 1024; // 2MB
+      if (avatarUrl.length > maxSize) {
+        console.warn(
+          "[ChatArea] Avatar too large:",
+          avatarUrl.length,
+          "bytes, max:",
+          maxSize
+        );
+        return null; // Fallback to default icon
+      }
+
+      // Validate data URL format
+      const dataUrlRegex =
+        /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
+      if (!dataUrlRegex.test(avatarUrl)) {
+        console.warn(
+          "[ChatArea] Invalid data URL format:",
+          avatarUrl.substring(0, 100)
+        );
+        return null;
+      }
+    }
+
+    return avatarUrl;
+  }, [recipient.profile_picture_url, recipient.avatar]);
+
+  // Simplified message ownership detection - backend now returns reliable sender_id
   const isCurrentUserMessage = useCallback(
     (message: any): boolean => {
       if (!currentUserId || !message) {
@@ -273,73 +370,17 @@ export function ChatArea({
       }
 
       const currentUserIdStr = String(currentUserId);
-      const friendIdStr = String(friendId);
+      const senderId = String(message.sender_id || message.sender?.id || "");
 
       // Temp messages are always from current user
-      if (message.id?.startsWith("temp-")) return true;
-
-      // Primary check: sender_id
-      const senderId = String(message.sender_id || message.sender?.id || "");
-      if (senderId) {
-        const isFromCurrentUser = senderId === currentUserIdStr;
-        return isFromCurrentUser;
+      if (message.id?.startsWith("temp-")) {
+        return true;
       }
 
-      // Fallback: Use recipient_id/receiver_id logic (if available)
-      const recipientId = String(
-        message.recipient_id || message.receiver_id || ""
-      );
-      if (recipientId) {
-        if (recipientId === currentUserIdStr) {
-          // Message TO current user = FROM friend
-          return false;
-        } else if (recipientId === friendIdStr) {
-          // Message TO friend = FROM current user
-          return true;
-        }
-      }
-
-      // Enhanced fallback for corrupted data
-      if (senderId) {
-        // If sender_id matches friend ID, it's from friend
-        if (senderId === friendIdStr) {
-          return false; // Message from friend
-        }
-
-        // If sender_id matches current user, it's from current user
-        if (senderId === currentUserIdStr) {
-          return true; // Message from current user
-        }
-
-        // Data corruption scenario - use heuristic approach
-        const messageIndex = localMessages.findIndex(
-          (msg) => msg.id === message.id
-        );
-        const isEvenIndex = messageIndex % 2 === 0;
-
-        // Check if all messages have the same sender_id
-        const uniqueSenderIds = [
-          ...new Set(localMessages.map((m) => m.sender_id).filter(Boolean)),
-        ];
-        if (uniqueSenderIds.length === 1) {
-          const singleSenderId = uniqueSenderIds[0];
-
-          if (singleSenderId === currentUserIdStr) {
-            return true; // All messages from current user
-          } else if (singleSenderId === friendIdStr) {
-            return false; // All messages from friend
-          } else {
-            return isEvenIndex; // Alternating pattern for unknown sender
-          }
-        }
-
-        return isEvenIndex; // Multiple senders - use alternating pattern
-      }
-
-      // Final default to current user if we can't determine otherwise
-      return true;
+      // Simple check - backend now returns correct sender_id consistently
+      return senderId === currentUserIdStr;
     },
-    [currentUserId, friendId, localMessages]
+    [currentUserId]
   ); // Function to filter out messages from blocked users (for current user only)
   const filterBlockedMessages = useCallback(
     (messages: Message[]): Message[] => {
@@ -463,7 +504,20 @@ export function ChatArea({
 
       // Check if date is invalid and provide fallback
       if (isNaN(messageDate.getTime())) {
-        console.warn("Invalid date for message:", message);
+        console.warn("Invalid date for message:", {
+          messageId: message.id,
+          content: message.content?.substring(0, 20),
+          raw_timestamp: message.raw_timestamp,
+          sent_at: message.sent_at,
+          created_at: message.created_at,
+          timestamp: message.timestamp,
+          allTimestamps: {
+            raw_timestamp: message.raw_timestamp,
+            sent_at: message.sent_at,
+            created_at: message.created_at,
+            timestamp: message.timestamp,
+          },
+        });
         messageDate.setTime(new Date().getTime()); // Set to current time as fallback
       }
 
@@ -477,10 +531,11 @@ export function ChatArea({
           isToday: dateKey === today,
           isYesterday: dateKey === yesterday,
         };
-      } // Ensure message has correct ownership before adding
+      }
+
+      // Backend data is now reliable - no need to recalculate ownership
       const validatedMessage = {
         ...message,
-        isCurrentUser: isCurrentUserMessage(message),
         timestamp: formatTimestamp(
           message.raw_timestamp ||
             message.sent_at ||
@@ -496,7 +551,7 @@ export function ChatArea({
     return Object.values(messagesByDate).sort(
       (a, b) => new Date(a.dateKey).getTime() - new Date(b.dateKey).getTime()
     );
-  }, [localMessages, isCurrentUserMessage, filterBlockedMessages]);
+  }, [localMessages, filterBlockedMessages]);
 
   // Session storage management for message caching
   const saveToSessionStorage = useCallback(
@@ -579,7 +634,7 @@ export function ChatArea({
     [friendId]
   );
 
-  // Comprehensive function to debug and fix recipient_id issues
+  // Comprehensive function to debug and fix recipient_ids issues
   const debugAndFixRecipientIds = useCallback(() => {
     // Analyze current messages for recipient_id issues
     const problematicMessages: any[] = [];
@@ -694,89 +749,7 @@ export function ChatArea({
     delete (window as any).__messageFixData;
   }, [saveToSessionStorage]);
 
-  // Force fix all existing messages
-  const forceFixAllMessages = useCallback(() => {
-    let fixedCount = 0;
-
-    setLocalMessages((prev) => {
-      const fixedMessages = prev.map((msg) => {
-        const correctIsCurrentUser = isCurrentUserMessage(msg);
-        const wasChanged = msg.isCurrentUser !== correctIsCurrentUser;
-
-        if (wasChanged) {
-          fixedCount++;
-        }
-
-        return {
-          ...msg,
-          isCurrentUser: correctIsCurrentUser,
-        };
-      });
-
-      if (fixedCount > 0) {
-        toast.success(
-          `Fixed ${fixedCount} message bubble${fixedCount > 1 ? "s" : ""}`,
-          {
-            duration: 3000,
-            position: "top-center",
-          }
-        );
-      } else {
-        toast.success("All message bubbles are already correctly positioned", {
-          duration: 2000,
-          position: "top-center",
-        });
-      }
-
-      // Save fixed messages to session storage
-      saveToSessionStorage(fixedMessages);
-
-      return fixedMessages;
-    });
-  }, [isCurrentUserMessage, saveToSessionStorage]);
-
-  // Auto-fix existing messages when component loads
-  useEffect(() => {
-    if (currentUserId && friendId && localMessages.length > 0) {
-      // Only run once by checking if we've already run the fix
-      const hasFixRun = localStorage.getItem(`bubble-fix-${friendId}`);
-      if (!hasFixRun) {
-        setTimeout(() => {
-          forceFixAllMessages();
-          localStorage.setItem(`bubble-fix-${friendId}`, "true");
-        }, 1000); // Run fix after 1 second
-      }
-    }
-  }, [currentUserId, friendId, localMessages.length, forceFixAllMessages]);
-
-  // Validate and fix message bubble positioning whenever messages change
-  useEffect(() => {
-    if (localMessages.length > 0 && currentUserId && friendId) {
-      let needsFixing = false;
-
-      // Check if any messages have incorrect positioning
-      const fixedMessages = localMessages.map((msg) => {
-        const correctIsCurrentUser = isCurrentUserMessage(msg);
-        if (msg.isCurrentUser !== correctIsCurrentUser) {
-          needsFixing = true;
-          return { ...msg, isCurrentUser: correctIsCurrentUser };
-        }
-        return msg;
-      });
-
-      // Apply fixes if needed
-      if (needsFixing) {
-        setLocalMessages(fixedMessages);
-        saveToSessionStorage(fixedMessages);
-      }
-    }
-  }, [
-    localMessages.length,
-    currentUserId,
-    friendId,
-    isCurrentUserMessage,
-    saveToSessionStorage,
-  ]);
+  // Remove auto-fix effects - backend is now consistent and reliable
 
   // Load messages from session storage
   const loadFromSessionStorage = useCallback((): Message[] => {
@@ -795,42 +768,42 @@ export function ChatArea({
     return [];
   }, [friendId]);
 
-  // Enhanced message validation and processing with recipient_id extraction
+  // Simplified API response debug (development only)
+  const debugApiResponse = useCallback(
+    (response: any, source: string) => {
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[ChatArea] API ${source}:`, {
+          messageCount: Array.isArray(response)
+            ? response.length
+            : response?.data?.length || 0,
+          hasData: !!(response && (Array.isArray(response) || response.data)),
+          currentUserId,
+          friendId,
+        });
+      }
+    },
+    [currentUserId, friendId]
+  );
+
+  // Enhanced message validation and processing - backend now returns consistent data
   const processApiMessages = useCallback(
     (messagesArray: any[]): Message[] => {
       return messagesArray.map((message: any) => {
         // Enhanced recipient_id extraction from multiple possible sources
         let extractedRecipientId = message.recipient_id || message.receiver_id;
 
-        // If recipient_id is missing, try to extract from other fields
-        if (!extractedRecipientId) {
-          // Check nested objects that might contain recipient info
-          if (message.recipient?.id) {
-            extractedRecipientId = message.recipient.id;
-          } else if (message.receiver?.id) {
-            extractedRecipientId = message.receiver.id;
-          } else if (message.conversation?.recipient_id) {
-            extractedRecipientId = message.conversation.recipient_id;
-          } else if (message.chat_room_id) {
-            extractedRecipientId = message.chat_room_id;
-          } else if (message.conversation_id) {
-            extractedRecipientId = message.conversation_id;
-          }
-        }
-
-        // Infer recipient_id based on conversation context if still missing
+        // Basic fallback for recipient_id
         if (!extractedRecipientId && currentUserId && friendId) {
-          // If sender is current user, recipient should be friend
           if (message.sender_id === String(currentUserId)) {
             extractedRecipientId = friendId;
-          }
-          // If sender is friend, recipient should be current user
-          else if (message.sender_id === String(friendId)) {
+          } else if (message.sender_id === String(friendId)) {
             extractedRecipientId = String(currentUserId);
           }
         }
 
-        // Ensure consistent message structure with proper timestamp handling
+        const rawTimestamp =
+          message.sent_at || message.created_at || message.timestamp;
+
         const processedMessage: Message = {
           ...message,
           id:
@@ -838,15 +811,11 @@ export function ChatArea({
             message.message_id ||
             `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           message_id: message.message_id || message.id,
-          sender_id: message.sender_id,
+          sender_id: message.sender_id, // Backend now returns correct sender_id
           receiver_id: message.receiver_id || extractedRecipientId,
           recipient_id: extractedRecipientId || message.receiver_id,
-          isCurrentUser: false, // Will be determined after processing
-          timestamp: formatTimestamp(
-            message.sent_at || message.created_at || message.timestamp
-          ),
-          raw_timestamp:
-            message.sent_at || message.created_at || message.timestamp,
+          timestamp: formatTimestamp(rawTimestamp),
+          raw_timestamp: rawTimestamp || new Date().toISOString(),
           created_at:
             message.created_at || message.sent_at || new Date().toISOString(),
           sent_at: message.sent_at,
@@ -856,9 +825,10 @@ export function ChatArea({
           isDeleted: Boolean(message.isDeleted || message.is_deleted),
           pending: Boolean(message.pending),
           failed: Boolean(message.failed),
+          isCurrentUser: false, // Will be set below
         };
 
-        // Determine ownership AFTER processing recipient_id
+        // Simple ownership calculation - backend sender_id is now reliable
         processedMessage.isCurrentUser = isCurrentUserMessage(processedMessage);
 
         return processedMessage;
@@ -877,7 +847,6 @@ export function ChatArea({
 
     // Reset state for new conversation
     setFilteredMessages([]);
-    setShowDropdown(null);
     setEditingMessageId(null);
     setInputMessage("");
     setIsSearching(false);
@@ -920,8 +889,18 @@ export function ChatArea({
     // Always load fresh messages from API
     const loadFreshMessages = async () => {
       try {
+        if (process.env.NODE_ENV === "development") {
+          console.log(
+            "[ChatArea] Loading fresh messages for friendId:",
+            friendId
+          );
+        }
+
         // Always get the latest messages when switching rooms
         const response = await getMessages(friendId);
+
+        // Add debug logging here
+        debugApiResponse(response, "getMessages");
 
         if (!isMountedRef.current) return; // Stop if component unmounted
 
@@ -1112,6 +1091,16 @@ export function ChatArea({
         return;
       }
 
+      // Ensure all timestamp fields have valid values
+      const currentTime = new Date().toISOString();
+      const validCreatedAt =
+        messageData.created_at || messageData.timestamp || currentTime;
+      const validRawTimestamp =
+        messageData.created_at ||
+        messageData.timestamp ||
+        messageData.sent_at ||
+        currentTime;
+
       const enhancedMessage: Message = {
         id:
           messageData.id ||
@@ -1124,15 +1113,8 @@ export function ChatArea({
         conversation_id: messageData.conversation_id,
         chat_room_id: messageData.chat_room_id,
         content: messageData.content || messageData.message || "",
-        created_at:
-          messageData.created_at ||
-          messageData.timestamp ||
-          new Date().toISOString(),
-        raw_timestamp:
-          messageData.created_at ||
-          messageData.timestamp ||
-          messageData.sent_at ||
-          new Date().toISOString(), // Store raw timestamp for accurate sorting
+        created_at: validCreatedAt,
+        raw_timestamp: validRawTimestamp, // Store raw timestamp for accurate sorting
         updated_at: messageData.updated_at,
         type: messageData.type || messageData.message_type || "text",
         isCurrentUser: isCurrentUserMessage(messageData),
@@ -1143,9 +1125,7 @@ export function ChatArea({
         receivedViaWebSocket: true,
         sender: messageData.sender,
         attachment: messageData.attachment,
-        timestamp: formatTimestamp(
-          messageData.created_at || messageData.timestamp
-        ),
+        timestamp: formatTimestamp(validRawTimestamp),
       };
 
       // Enhanced deduplication with multiple ID checks
@@ -1230,15 +1210,12 @@ export function ChatArea({
     };
 
     // Handler for message read status updates
-    const handleMessageRead = (data: {
-      messageId: string;
-      conversationId: string;
-      userId: string;
-    }) => {
-      if (data.conversationId === friendId || data.userId === friendId) {
+    const handleMessageRead = (messageIds: string[]) => {
+      if (messageIds && messageIds.length > 0) {
         setLocalMessages((prev) =>
           prev.map((msg) =>
-            msg.id === data.messageId || msg.message_id === data.messageId
+            messageIds.includes(msg.id) ||
+            messageIds.includes(msg.message_id || "")
               ? { ...msg, read: true, is_read: true }
               : msg
           )
@@ -1272,22 +1249,21 @@ export function ChatArea({
 
     // Register enhanced event listeners
     eventBus.on("new_message", handleNewMessage);
-    eventBus.on("message_received", handleNewMessage); // Alternative event name
+    eventBus.on("message-received", handleNewMessage); // Fixed event name
     eventBus.on("typing-status-changed", handleTypingStatus);
     eventBus.on("user_typing", handleTypingStatus); // Alternative event name
-    eventBus.on("message_read", handleMessageRead);
-    eventBus.on("message_updated", handleMessageUpdate);
-    eventBus.on("message_deleted", handleMessageUpdate);
+    eventBus.on("message-read", handleMessageRead); // Fixed event name
+    // Note: message_updated and message_deleted are not defined in EventTypes
+    // These would need to be added to the EventTypes interface or handled differently
 
     // Cleanup
     return () => {
       eventBus.off("new_message", handleNewMessage);
-      eventBus.off("message_received", handleNewMessage);
+      eventBus.off("message-received", handleNewMessage);
       eventBus.off("typing-status-changed", handleTypingStatus);
       eventBus.off("user_typing", handleTypingStatus);
-      eventBus.off("message_read", handleMessageRead);
-      eventBus.off("message_updated", handleMessageUpdate);
-      eventBus.off("message_deleted", handleMessageUpdate);
+      eventBus.off("message-read", handleMessageRead);
+      // Removed message_updated and message_deleted event cleanup
     };
   }, [friendId, currentUserId, isCurrentUserMessage, saveToSessionStorage]);
 
@@ -1332,23 +1308,6 @@ export function ChatArea({
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [localMessages]);
-
-  // Handle click outside dropdown to close it
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setShowDropdown(null);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1410,7 +1369,7 @@ export function ChatArea({
             a.raw_timestamp || a.created_at || a.sent_at || a.timestamp || 0
           ).getTime();
           const timeB = new Date(
-            b.raw_timestamp || b.created_at || b.sent_at || b.timestamp || 0
+            b.raw_timestamp || b.created_at || a.sent_at || b.timestamp || 0
           ).getTime();
           return timeA - timeB;
         });
@@ -1669,11 +1628,6 @@ export function ChatArea({
     }, 3000);
   }, [isConnected, friendId]);
 
-  // Toggle dropdown menu
-  const toggleDropdown = (messageId: string) => {
-    setShowDropdown(showDropdown === messageId ? null : messageId);
-  };
-
   // Enhanced edit message functionality
   const handleEditMessage = useCallback(
     (messageId: string) => {
@@ -1681,7 +1635,6 @@ export function ChatArea({
       if (message && !message.isDeleted && !message.pending) {
         setEditingMessageId(messageId);
         setInputMessage(message.content);
-        setShowDropdown(null);
         console.log(`[ChatArea] Editing message: ${messageId}`);
       }
     },
@@ -1858,7 +1811,6 @@ export function ChatArea({
           return updatedMessages;
         });
 
-        setShowDropdown(null);
         toast.success("Message deleted successfully", {
           duration: 3000,
           position: "top-center",
@@ -1957,17 +1909,12 @@ export function ChatArea({
         <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between">
           <div className="flex items-center">
             <div className="relative mr-3">
-              <div className="h-12 w-12 rounded-full overflow-hidden bg-gray-200 flex-shrink-0 flex items-center justify-center">
-                {recipient.profile_picture_url ? (
-                  <img
-                    src={recipient.profile_picture_url}
-                    alt={recipient.name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <FaUser className="h-6 w-6 text-gray-500" />
-                )}
-              </div>
+              <OptimizedAvatar
+                src={validatedRecipientAvatar}
+                alt={recipient.name}
+                size="lg"
+                className="flex-shrink-0"
+              />
               {recipient.status === "online" && (
                 <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-white"></span>
               )}
@@ -2090,168 +2037,14 @@ export function ChatArea({
 
               {/* Messages for this date */}
               {group.messages.map((message) => (
-                <div key={message.id} className="message">
-                  <div
-                    className={`flex ${
-                      message.isCurrentUser ? "justify-end" : "justify-start"
-                    } mb-4`}
-                    data-message-id={message.id}
-                    data-sender-id={message.sender_id}
-                    data-recipient-id={message.recipient_id}
-                    data-is-current-user={message.isCurrentUser}
-                    data-positioning={message.isCurrentUser ? "right" : "left"}
-                  >
-                    <div className="flex flex-col max-w-[70%]">
-                      <div
-                        className={`rounded-lg px-4 py-2 ${
-                          message.isCurrentUser
-                            ? message.isDeleted
-                              ? "bg-gray-200 text-gray-500 italic"
-                              : message.failed
-                              ? "bg-red-100 border border-red-300 text-gray-800"
-                              : "bg-blue-500 text-white"
-                            : "bg-white border border-gray-200 text-gray-800"
-                        } min-w-[80px] ${
-                          message.failed ? "cursor-pointer" : ""
-                        }`}
-                        onClick={
-                          message.failed
-                            ? () => retryFailedMessage(message)
-                            : undefined
-                        }
-                      >
-                        <p className="break-words whitespace-pre-wrap">
-                          {message.content || "(No message content)"}
-                        </p>
-
-                        {message.failed && (
-                          <p className="text-xs text-red-500 mt-1 flex items-center">
-                            ⚠️{" "}
-                            {message.errorMessage ||
-                              "Failed to send - click to retry"}
-                          </p>
-                        )}
-
-                        {message.attachment && (
-                          <div className="mt-2">
-                            {message.attachment.type === "image" ? (
-                              <img
-                                src={message.attachment.url}
-                                alt={message.attachment.name}
-                                className="max-w-full rounded"
-                              />
-                            ) : (
-                              <a
-                                href={message.attachment.url}
-                                download={message.attachment.name}
-                                className="text-blue-500 hover:underline"
-                              >
-                                {message.attachment.name} (
-                                {message.attachment.size})
-                              </a>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-end space-x-1 mt-1">
-                          <span
-                            className={`text-xs ${
-                              message.isCurrentUser
-                                ? "text-blue-200"
-                                : "text-gray-500"
-                            }`}
-                          >
-                            {formatTimestamp(
-                              message.raw_timestamp ||
-                                message.sent_at ||
-                                message.timestamp ||
-                                message.created_at
-                            )}
-                          </span>
-
-                          {message.isEdited && !message.isDeleted && (
-                            <span
-                              className={`text-xs ${
-                                message.isCurrentUser
-                                  ? "text-blue-200"
-                                  : "text-gray-500"
-                              }`}
-                            >
-                              (edited)
-                            </span>
-                          )}
-
-                          {message.isCurrentUser &&
-                            !message.failed &&
-                            !message.pending && (
-                              <span>
-                                {message.read ? (
-                                  <FaCheckDouble
-                                    className="h-3 w-3 text-blue-200"
-                                    title="Read"
-                                  />
-                                ) : (
-                                  <FaCheck
-                                    className="h-3 w-3 text-blue-200"
-                                    title="Sent"
-                                  />
-                                )}
-                              </span>
-                            )}
-
-                          {message.pending && (
-                            <span className="text-xs text-blue-200">
-                              sending...
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Message dropdown actions */}
-                        {message.isCurrentUser &&
-                          !message.isDeleted &&
-                          !message.pending &&
-                          !message.failed && (
-                            <div className="relative">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleDropdown(message.id);
-                                }}
-                                className="absolute top-0 right-0 -mt-1 -mr-8 p-1 rounded-full hover:bg-gray-200"
-                                aria-label="Message options"
-                              >
-                                <FaEllipsisV className="h-3 w-3 text-gray-500" />
-                              </button>
-
-                              {showDropdown === message.id && (
-                                <div
-                                  ref={dropdownRef}
-                                  className="absolute right-0 mt-1 mr-8 bg-white rounded-md shadow-lg z-10 w-36 py-1"
-                                >
-                                  <button
-                                    onClick={() =>
-                                      handleEditMessage(message.id)
-                                    }
-                                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-                                  >
-                                    <span className="mr-2">✏️</span> Edit
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      handleUnsendMessage(message.id)
-                                    }
-                                    className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 flex items-center"
-                                  >
-                                    <span className="mr-2">🗑️</span> Unsend
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <ChatAreaItem
+                  key={message.id}
+                  message={message}
+                  recipient={recipient}
+                  onRetryClick={retryFailedMessage}
+                  onEditClick={handleEditMessage}
+                  onDeleteClick={handleUnsendMessage}
+                />
               ))}
             </div>
           ))}

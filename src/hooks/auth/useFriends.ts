@@ -242,6 +242,43 @@ export const useFriendship = () => {
         response
       );
 
+      // Add detailed logging to see the actual API response structure
+      console.log("[Friends] API Response Analysis:", {
+        responseType: typeof response,
+        isArray: Array.isArray(response),
+        responseKeys:
+          response && typeof response === "object"
+            ? Object.keys(response)
+            : "not an object",
+        firstItemIfArray:
+          Array.isArray(response) && response.length > 0
+            ? {
+                keys: Object.keys(response[0]),
+                profile_picture_url: response[0].profile_picture_url,
+                avatar_url: response[0].avatar_url,
+                avatar: response[0].avatar,
+                sample_data: response[0],
+              }
+            : "not array or empty",
+        dataFieldIfExists: response?.data
+          ? {
+              isArray: Array.isArray(response.data),
+              length: Array.isArray(response.data)
+                ? response.data.length
+                : "not array",
+              firstItem:
+                Array.isArray(response.data) && response.data.length > 0
+                  ? {
+                      keys: Object.keys(response.data[0]),
+                      profile_picture_url: response.data[0].profile_picture_url,
+                      avatar_url: response.data[0].avatar_url,
+                      avatar: response.data[0].avatar,
+                    }
+                  : "no first item",
+            }
+          : "no data field",
+      });
+
       let friendsList: Array<Partial<User>> = [];
 
       // Handle various response formats
@@ -329,7 +366,9 @@ export const useFriendship = () => {
               friend.name?.toLowerCase().replace(/\s+/g, "_") ||
               "unknown",
             avatar:
-              friend.avatar_url || friend.avatar || friend.profile_picture_url,
+              friend.profile_picture_url || friend.avatar_url || friend.avatar,
+            profile_picture_url:
+              friend.profile_picture_url || friend.avatar_url || friend.avatar,
             status: friend.status || "offline",
             phone: friend.phone || "",
             location: friend.location || "",
@@ -343,6 +382,19 @@ export const useFriendship = () => {
           };
 
           console.log("[Friends] Processed friend:", processedFriend);
+          console.log("[Friends] Avatar mapping for friend:", {
+            friend_id: friend.id,
+            original_profile_picture_url: friend.profile_picture_url,
+            original_avatar_url: friend.avatar_url,
+            original_avatar: friend.avatar,
+            final_avatar: processedFriend.avatar,
+            final_profile_picture_url: processedFriend.profile_picture_url,
+            avatar_is_base64:
+              processedFriend.avatar?.startsWith?.("data:") || false,
+            profile_picture_url_is_base64:
+              processedFriend.profile_picture_url?.startsWith?.("data:") ||
+              false,
+          });
           return processedFriend;
         });
 
@@ -869,9 +921,13 @@ export const useFriendship = () => {
             email: request.user.email || "",
             username: request.user.username || "",
             avatar:
+              request.user.profile_picture_url ||
               request.user.avatar_url ||
-              request.user.avatar ||
-              request.user.profile_picture_url,
+              request.user.avatar,
+            profile_picture_url:
+              request.user.profile_picture_url ||
+              request.user.avatar_url ||
+              request.user.avatar,
             status: request.user.status || "offline",
             phone: request.user.phone || "",
             location: request.user.location || "",
@@ -1246,6 +1302,53 @@ export const useFriendship = () => {
 
         console.log("[FriendsHook] API response for friend by ID:", response);
 
+        // Add comprehensive logging for friend by ID response
+        console.log("[FriendsHook] Friend by ID Response Analysis:", {
+          responseType: typeof response,
+          responseKeys:
+            response && typeof response === "object"
+              ? Object.keys(response)
+              : "not an object",
+          hasDataField: !!response?.data,
+          dataType: response?.data ? typeof response.data : "no data",
+          dataKeys:
+            response?.data && typeof response.data === "object"
+              ? Object.keys(response.data)
+              : "no data keys",
+          rawData: response?.data || response,
+          profilePictureFields: {
+            "response.data.profile_picture_url":
+              response?.data?.profile_picture_url,
+            "response.data.avatar_url": response?.data?.avatar_url,
+            "response.data.avatar": response?.data?.avatar,
+            "response.profile_picture_url": response?.profile_picture_url,
+            "response.avatar_url": response?.avatar_url,
+            "response.avatar": response?.avatar,
+          },
+        });
+
+        console.log(
+          "[FriendsHook] Raw friend data fields:",
+          response?.data ? Object.keys(response.data) : "No data field"
+        );
+        console.log("[FriendsHook] Avatar fields in response:", {
+          avatar: response?.data?.avatar,
+          avatar_url: response?.data?.avatar_url,
+          profile_picture_url: response?.data?.profile_picture_url,
+          profile_picture: response?.data?.profile_picture,
+          image: response?.data?.image,
+          photo: response?.data?.photo,
+        });
+
+        console.log("[FriendsHook] Profile picture data preview:", {
+          profile_picture_url_exists: !!response?.data?.profile_picture_url,
+          profile_picture_url_length:
+            response?.data?.profile_picture_url?.length || 0,
+          profile_picture_url_type: typeof response?.data?.profile_picture_url,
+          profile_picture_url_starts_with_data:
+            response?.data?.profile_picture_url?.startsWith?.("data:") || false,
+        });
+
         // Process the response based on the format
         let friendData = null;
 
@@ -1276,9 +1379,13 @@ export const useFriendship = () => {
             email: friendData.email || "",
             username: friendData.username || "",
             avatar:
+              friendData.profile_picture_url ||
               friendData.avatar_url ||
-              friendData.avatar ||
-              friendData.profile_picture_url,
+              friendData.avatar,
+            profile_picture_url:
+              friendData.profile_picture_url ||
+              friendData.avatar_url ||
+              friendData.avatar,
             status: friendData.status || "offline",
             phone: friendData.phone || "",
             location: friendData.location || "",
@@ -1295,6 +1402,18 @@ export const useFriendship = () => {
           };
 
           console.log("[FriendsHook] Formatted friend data:", formattedFriend);
+          console.log("[FriendsHook] Final avatar mapping check:", {
+            original_profile_picture_url: friendData.profile_picture_url,
+            original_avatar_url: friendData.avatar_url,
+            original_avatar: friendData.avatar,
+            final_avatar: formattedFriend.avatar,
+            final_profile_picture_url: formattedFriend.profile_picture_url,
+            avatar_is_base64:
+              formattedFriend.avatar?.startsWith?.("data:") || false,
+            profile_picture_url_is_base64:
+              formattedFriend.profile_picture_url?.startsWith?.("data:") ||
+              false,
+          });
 
           // Set recipient data
           setRecipientData(formattedFriend);
@@ -1324,6 +1443,8 @@ export const useFriendship = () => {
         name: `User ${friendId.substring(0, 8)}...`,
         email: `user-${friendId}@example.com`,
         username: `user_${friendId.substring(0, 6)}`,
+        avatar: undefined,
+        profile_picture_url: undefined,
         status: "offline",
         phone: "",
         location: "",
@@ -1345,6 +1466,8 @@ export const useFriendship = () => {
         name: `User ${friendId.substring(0, 8)}...`,
         email: `user-${friendId}@example.com`,
         username: `user_${friendId.substring(0, 6)}`,
+        avatar: undefined,
+        profile_picture_url: undefined,
         status: "offline",
         phone: "",
         location: "",

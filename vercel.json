@@ -1,0 +1,29 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "outputDirectory": ".next",
+  "env": {
+    "NEXTAUTH_SECRET": "@nextauth_secret",
+    "NEXTAUTH_URL": "@nextauth_url",
+    "API_BASE_URL": "@api_base_url",
+    "GROUP_API_BASE_URL": "@group_api_base_url",
+    "NOTIFICATION_API_BASE_URL": "@notification_api_base_url",
+    "FILES_API_BASE_URL": "@files_api_base_url",
+    "PRESENCE_API_BASE_URL": "@presence_api_base_url",
+    "NEXT_PUBLIC_WEBSOCKET_PORT": "@websocket_port",
+    "WS_BASE_URL": "@ws_base_url"
+  },
+  "functions": {
+    "app/api/**": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/proxy/(.*)",
+      "destination": "/api/proxy/$1"
+    }
+  ]
+}

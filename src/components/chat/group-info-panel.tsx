@@ -156,19 +156,18 @@ export default function GroupProfileInfo({
   useEffect(() => {
     if (!friendsFetchedRef.current && !friendsLoading) {
       friendsFetchedRef.current = true;
-      
+
       // Fetch both friends and blocked users in parallel
-      Promise.allSettled([
-        getFriends(),
-        getGroupBlocks(groupDetails.id)
-      ]).then((results) => {
-        console.log("[GroupInfoPanel] Initialization completed:");
-        console.log("- Friends fetch:", results[0].status);
-        console.log("- Blocked users fetch:", results[1].status);
-      }).catch(() => {
-        // Reset the flag on error to allow retry
-        friendsFetchedRef.current = false;
-      });
+      Promise.allSettled([getFriends(), getGroupBlocks(groupDetails.id)])
+        .then((results) => {
+          console.log("[GroupInfoPanel] Initialization completed:");
+          console.log("- Friends fetch:", results[0].status);
+          console.log("- Blocked users fetch:", results[1].status);
+        })
+        .catch(() => {
+          // Reset the flag on error to allow retry
+          friendsFetchedRef.current = false;
+        });
     }
   }, [groupDetails.id]); // Include groupDetails.id in dependencies
 
@@ -254,17 +253,24 @@ export default function GroupProfileInfo({
     const lastActive = formatLastActive(userId);
 
     // Check if user is blocked by looking in the blockedUsers list
-    const isBlocked = blockedUsers.some((blockedUser) => {
-      // Handle different ID field structures
-      const blockedUserId = blockedUser.user_id || blockedUser.id;
-      return blockedUserId === userId || blockedUserId === member.id || blockedUserId === member.user_id;
+    // API returns blocked_users with user_id and blocked_at fields
+    const blockedUser = blockedUsers.find((blockedUser) => {
+      return (
+        blockedUser.user_id === userId ||
+        blockedUser.user_id === member.id ||
+        blockedUser.user_id === member.user_id
+      );
     });
+
+    const isBlocked = !!blockedUser;
+    const blockedAt = blockedUser?.blocked_at;
 
     return {
       ...member,
       presenceStatus: status,
       lastActive,
       isBlocked,
+      blockedAt, // Add blocked timestamp for future use
     };
   });
 
@@ -277,23 +283,109 @@ export default function GroupProfileInfo({
   console.log("[GroupInfoPanel] Blocked users data:", {
     blockedUsersCount: blockedUsers.length,
     blockedMembersCount,
-    blockedUsers: blockedUsers.map(u => ({ id: u.id, user_id: u.user_id, name: u.name })),
-    groupId: groupDetails.id
+    blockedUsers: blockedUsers.map((u) => ({
+      user_id: u.user_id,
+      blocked_at: u.blocked_at,
+    })),
+    allMembers: groupDetails.members.map((m) => ({
+      id: m.id,
+      user_id: m.user_id,
+      name: m.name,
+    })),
+    membersWithBlocks: membersWithStatus
+      .filter((m) => m.isBlocked)
+      .map((m) => ({
+        id: m.id,
+        user_id: m.user_id,
+        name: m.name,
+        isBlocked: m.isBlocked,
+        blockedAt: m.blockedAt,
+      })),
+    groupId: groupDetails.id,
   });
 
-  // Function to handle blocking a member with real API
+  // Additional debug: check each member against blocked users
+  membersWithStatus.forEach((member) => {
+    const userId = member.id || member.user_id || "";
+    const blockedUser = blockedUsers.find(
+      (bu) =>
+        bu.user_id === userId ||
+        bu.user_id === member.id ||
+        bu.user_id === member.user_id
+    );
+    console.log(
+      `[GroupInfoPanel] Member ${
+        member.name
+      } (${userId}): blocked=${!!blockedUser}`,
+      {
+        member: { id: member.id, user_id: member.user_id },
+        blockedUser: blockedUser
+          ? { user_id: blockedUser.user_id, blocked_at: blockedUser.blocked_at }
+          : null,
+      }
+    );
+  }); // Function to handle blocking a member with real API and confirmation dialog
   const handleBlockMember = async (memberId: string) => {
+    // Find the member to show in confirmation dialog
+    const memberToBlock = membersWithStatus.find((m) => m.id === memberId);
+    if (!memberToBlock) return;
+
+    // Show confirmation dialog using toast
+    const confirmBlock = await new Promise<boolean>((resolve) => {
+      toast(
+        (t) => (
+          <div className="flex flex-col">
+            <p className="font-medium">Block User</p>
+            <p className="text-sm text-gray-600 mb-2">
+              Are you sure you want to block{" "}
+              <span className="font-semibold">{memberToBlock.name}</span>? Their
+              messages will be hidden in this group chat.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  resolve(true);
+                }}
+                className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm"
+              >
+                Block
+              </button>
+              <button
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  resolve(false);
+                }}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-700 px-3 py-1 rounded text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ),
+        {
+          duration: Infinity,
+          style: { minWidth: "300px" },
+        }
+      );
+    });
+
+    if (!confirmBlock) return;
+
     try {
       // Call the API to block the user
       await blockGroupUser(groupDetails.id, memberId);
 
       // Show success notification
-      toast.success("User blocked successfully");
+      toast.success(`User ${memberToBlock.name} blocked successfully`);
 
       // Close the dropdown
       setActiveDropdown(null);
-      
-      console.log("[GroupInfoPanel] User blocked, blocked users updated automatically");
+
+      // Refresh blocked users list to ensure UI is up to date
+      await getGroupBlocks(groupDetails.id);
+
+      console.log("[GroupInfoPanel] User blocked, blocked users updated");
     } catch (error: any) {
       console.error("Error blocking user:", error);
       toast.error(error.message || "Failed to block user");
@@ -311,8 +403,11 @@ export default function GroupProfileInfo({
 
       // Close the dropdown
       setActiveDropdown(null);
-      
-      console.log("[GroupInfoPanel] User unblocked, blocked users updated automatically");
+
+      // Refresh blocked users list to ensure UI is up to date
+      await getGroupBlocks(groupDetails.id);
+
+      console.log("[GroupInfoPanel] User unblocked, blocked users updated");
     } catch (error: any) {
       console.error("Error unblocking user:", error);
       toast.error(error.message || "Failed to unblock user");
@@ -535,10 +630,18 @@ export default function GroupProfileInfo({
         {expandedSection === "members" && (
           <div className="px-4 pb-4">
             {blockedMembersCount > 0 && (
-              <p className="text-xs text-red-500 mb-3">
-                {blockedMembersCount} person{blockedMembersCount > 1 ? "s" : ""}{" "}
-                blocked
-              </p>
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-center text-red-700">
+                  <FaBan className="h-4 w-4 mr-2" />
+                  <span className="text-sm font-medium">
+                    {blockedMembersCount} member
+                    {blockedMembersCount > 1 ? "s" : ""} blocked
+                  </span>
+                </div>
+                <p className="text-xs text-red-600 mt-1">
+                  Blocked members cannot send or receive messages in this group
+                </p>
+              </div>
             )}
 
             <button
@@ -555,11 +658,19 @@ export default function GroupProfileInfo({
               {membersWithStatus.map((member) => (
                 <div
                   key={member.id}
-                  className="flex items-center justify-between"
+                  className={`flex items-center justify-between p-2 rounded-lg transition-all duration-200 ${
+                    member.isBlocked
+                      ? "bg-red-50 border border-red-200"
+                      : "hover:bg-gray-50"
+                  }`}
                 >
                   <div className="flex items-center">
-                    <div className="relative mr-2">
-                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
+                    <div className="relative mr-3">
+                      <div
+                        className={`w-8 h-8 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center ${
+                          member.isBlocked ? "opacity-60 grayscale" : ""
+                        }`}
+                      >
                         {member.avatar_url ? (
                           <img
                             src={member.avatar_url}
@@ -570,45 +681,75 @@ export default function GroupProfileInfo({
                           <FaUser className="h-4 w-4 text-gray-500" />
                         )}
                       </div>
-                      {/* Status indicator */}
-                      <div
-                        className={`absolute bottom-0 right-0 h-2 w-2 rounded-full border border-white ${
-                          member.presenceStatus === "online"
-                            ? "bg-green-500"
-                            : member.presenceStatus === "busy"
-                            ? "bg-red-500"
-                            : member.presenceStatus === "away"
-                            ? "bg-yellow-500"
-                            : "bg-gray-400"
-                        }`}
-                      ></div>
+
+                      {/* Blocked indicator overlay */}
+                      {member.isBlocked && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-red-500 bg-opacity-20 rounded-full">
+                          <FaBan className="h-3 w-3 text-red-600" />
+                        </div>
+                      )}
+
+                      {/* Status indicator - only show if not blocked */}
+                      {!member.isBlocked && (
+                        <div
+                          className={`absolute bottom-0 right-0 h-2 w-2 rounded-full border border-white ${
+                            member.presenceStatus === "online"
+                              ? "bg-green-500"
+                              : member.presenceStatus === "busy"
+                              ? "bg-red-500"
+                              : member.presenceStatus === "away"
+                              ? "bg-yellow-500"
+                              : "bg-gray-400"
+                          }`}
+                        ></div>
+                      )}
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-sm text-black">{member.name}</span>
-                      <span
-                        className="text-xs text-gray-500"
-                        style={{
-                          display:
-                            member.presenceStatus !== "online"
-                              ? "block"
-                              : "offline",
-                        }}
-                      >
-                        {member.lastActive}
-                      </span>
-                      {member.presenceStatus === "online" && (
-                        <span className="text-xs text-green-500"> Online </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-sm font-medium ${
+                            member.isBlocked
+                              ? "text-gray-500 line-through"
+                              : "text-black"
+                          }`}
+                        >
+                          {member.name}
+                        </span>
+                        {member.isBlocked && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium">
+                            Blocked
+                          </span>
+                        )}
+                      </div>
+
+                      {!member.isBlocked && (
+                        <>
+                          {member.presenceStatus === "online" ? (
+                            <span className="text-xs text-green-500 font-medium">
+                              Online
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500">
+                              {member.lastActive}
+                            </span>
+                          )}
+                        </>
                       )}
+
                       {member.isBlocked && (
-                        <div className="ml-2 text-red-500" title="Blocked user">
-                          <FaBan className="h-3 w-3" />
-                        </div>
+                        <span className="text-xs text-red-500">
+                          User blocked • Cannot receive messages
+                        </span>
                       )}
                     </div>
                   </div>
                   <div className="relative">
                     <button
-                      className="text-gray-400 hover:text-gray-600"
+                      className={`p-1 rounded-full transition-colors ${
+                        member.isBlocked
+                          ? "text-red-400 hover:text-red-600 hover:bg-red-100"
+                          : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                      }`}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleMemberDropdown(member.id);
@@ -616,34 +757,55 @@ export default function GroupProfileInfo({
                     >
                       <FaEllipsisV className="h-3 w-3" />
                     </button>
+
                     {activeDropdown === member.id && (
                       <div
                         ref={dropdownRef}
-                        className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded shadow-lg z-10"
+                        className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden"
                       >
                         <button
-                          className="flex w-full text-left px-4 py-2 text-sm hover:bg-gray-100 items-center"
+                          className={`flex w-full text-left px-4 py-3 text-sm items-center transition-colors ${
+                            member.isBlocked
+                              ? "hover:bg-green-50 text-green-700"
+                              : "hover:bg-red-50 text-red-700"
+                          }`}
                           onClick={() =>
                             member.isBlocked
                               ? handleUnblockMember(member.id)
                               : handleBlockMember(member.id)
                           }
+                          disabled={loading}
                         >
                           {member.isBlocked ? (
                             <>
-                              <UserMinus
-                                className="inline-block mr-2"
-                                size={16}
-                              />
-                              <span className="text-green-600">
-                                Unblock User
-                              </span>
+                              <FaCheck className="mr-3 h-4 w-4 text-green-600" />
+                              <div className="flex flex-col">
+                                <span className="font-medium text-green-700">
+                                  Unblock User
+                                </span>
+                                <span className="text-xs text-green-600">
+                                  Allow messages again
+                                </span>
+                              </div>
                             </>
                           ) : (
                             <>
-                              <FaBan className="text-red-600 inline-block mr-2" />
-                              <span className="text-red-600">Block User</span>
+                              <FaBan className="mr-3 h-4 w-4 text-red-600" />
+                              <div className="flex flex-col">
+                                <span className="font-medium text-red-700">
+                                  Block User
+                                </span>
+                                <span className="text-xs text-red-600">
+                                  Stop receiving messages
+                                </span>
+                              </div>
                             </>
+                          )}
+
+                          {loading && (
+                            <div className="ml-auto">
+                              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin opacity-50"></div>
+                            </div>
                           )}
                         </button>
                       </div>
@@ -657,7 +819,93 @@ export default function GroupProfileInfo({
       </div>
 
       {/* Media Section */}
-      <div className="p-4 border-b border-gray-200">
+      <div className="border-t border-gray-200 pt-6">
+        {/* Enhanced Blocked Users Section with better UX - Show only if there are blocked users */}
+        {membersWithStatus.some((member) => member.isBlocked) && (
+          <div className="mb-6 bg-red-50 p-4 rounded-lg border border-red-200">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-red-700 flex items-center">
+                  <FaBan className="mr-2" />
+                  Blocked Users
+                  <span className="ml-2 bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full">
+                    {membersWithStatus.filter((m) => m.isBlocked).length}
+                  </span>
+                </h3>
+                <p className="text-xs text-red-600 mt-1">
+                  Messages from these users are hidden in the chat
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+              {membersWithStatus
+                .filter((member) => member.isBlocked)
+                .map((member) => (
+                  <div
+                    key={`blocked-${member.id}`}
+                    className="flex items-center justify-between p-3 rounded-lg bg-white border border-red-100 shadow-sm"
+                  >
+                    <div className="flex items-center">
+                      {/* User avatar with blocked indicator */}
+                      <div className="relative">
+                        {member.avatar_url ? (
+                          <img
+                            src={member.avatar_url}
+                            alt={member.name}
+                            className="w-10 h-10 rounded-full object-cover opacity-60 grayscale"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center opacity-60">
+                            <FaUser className="text-gray-500" />
+                          </div>
+                        )}
+                        <div className="absolute -bottom-1 -right-1 bg-red-500 rounded-full w-5 h-5 flex items-center justify-center shadow-sm">
+                          <FaBan className="text-white text-xs" />
+                        </div>
+                      </div>
+
+                      <div className="ml-3">
+                        <p className="font-medium text-gray-800 line-through">
+                          {member.name}
+                        </p>
+                        <p className="text-xs text-red-500">
+                          Blocked on{" "}
+                          {member.blockedAt
+                            ? new Date(member.blockedAt).toLocaleDateString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                }
+                              )
+                            : "unknown date"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      className="text-green-600 hover:text-green-800 bg-green-100 hover:bg-green-200 px-3 py-1.5 rounded text-xs font-medium flex items-center transition duration-150"
+                      onClick={() => handleUnblockMember(member.id)}
+                      disabled={loading}
+                    >
+                      <FaCheck className="mr-1.5" />
+                      Unblock
+                      {loading && (
+                        <div className="ml-1.5">
+                          <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        <h3 className="text-lg font-semibold mb-4">Media</h3>
+
         <div className="flex justify-between items-center mb-3">
           <h3 className="font-medium text-black">
             Media
