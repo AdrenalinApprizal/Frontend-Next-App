@@ -63,8 +63,8 @@ export interface ShareRequest {
   target_type: string; // "user" or "group"
 }
 
-// Use proper path format for the proxy
-const FILE_SERVICE_PATH = "/api/proxy";
+// Use proper path format for the proxy - no /api/proxy prefix needed since callApi adds it
+const FILE_SERVICE_PATH = "";
 
 export const useFiles = () => {
   // State
@@ -121,7 +121,7 @@ export const useFiles = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await callApi(`${FILE_SERVICE_PATH}/api/health`, "GET");
+      const response = await callApi(`${FILE_SERVICE_PATH}/health`, "GET");
       setIsLoading(false);
       return response;
     } catch (err: any) {
@@ -146,7 +146,7 @@ export const useFiles = () => {
 
     try {
       // Construct the endpoint URL with query parameters
-      const endpoint = `${FILE_SERVICE_PATH}/api/media/user/${userId}?type=${type}&page=${page}&limit=${limit}`;
+      const endpoint = `${FILE_SERVICE_PATH}/media/user/${userId}?type=${type}&page=${page}&limit=${limit}`;
 
       const response = await callApi(endpoint, "GET");
 
@@ -194,7 +194,7 @@ export const useFiles = () => {
 
     try {
       // Construct the endpoint URL with query parameters
-      const endpoint = `${FILE_SERVICE_PATH}/api/media/group/${groupId}?type=${type}&page=${page}&limit=${limit}`;
+      const endpoint = `${FILE_SERVICE_PATH}/media/group/${groupId}?type=${type}&page=${page}&limit=${limit}`;
 
       const response = await callApi(endpoint, "GET");
 
@@ -240,7 +240,7 @@ export const useFiles = () => {
 
     try {
       // Construct the endpoint URL with query parameters
-      const endpoint = `${FILE_SERVICE_PATH}/api/files/user/${userId}?page=${page}&limit=${limit}`;
+      const endpoint = `/files/user/${userId}?page=${page}&limit=${limit}`;
 
       const response = await callApi(endpoint, "GET");
 
@@ -275,7 +275,7 @@ export const useFiles = () => {
 
     try {
       // Construct the endpoint URL with query parameters
-      const endpoint = `${FILE_SERVICE_PATH}/api/files/group/${groupId}?page=${page}&limit=${limit}`;
+      const endpoint = `/files/group/${groupId}?page=${page}&limit=${limit}`;
 
       const response = await callApi(endpoint, "GET");
 
@@ -306,7 +306,7 @@ export const useFiles = () => {
 
     try {
       // Construct the endpoint URL with query parameters
-      const endpoint = `${FILE_SERVICE_PATH}/api/files?page=${page}&limit=${limit}`;
+      const endpoint = `/files?page=${page}&limit=${limit}`;
 
       const response = await callApi(endpoint, "GET");
 
@@ -367,7 +367,7 @@ export const useFiles = () => {
         });
       }
 
-      const endpoint = `${FILE_SERVICE_PATH}/api/files/upload`;
+      const endpoint = `/files/upload`;
 
       const response = await fetch(`/api/proxy${endpoint}`, {
         method: "POST",
@@ -470,7 +470,7 @@ export const useFiles = () => {
         throw new Error("No file ID provided");
       }
 
-      const endpoint = `${FILE_SERVICE_PATH}/api/files/${fileId}`;
+      const endpoint = `/files/${fileId}`;
 
       const response = await callApi(endpoint, "DELETE");
 
@@ -507,7 +507,7 @@ export const useFiles = () => {
         throw new Error("No users specified to share with");
       }
 
-      const endpoint = `${FILE_SERVICE_PATH}/api/files/${fileId}/share`;
+      const endpoint = `/files/${fileId}/share`;
 
       // Share with the first user in the array
       let response = await callApi(endpoint, "POST", {
@@ -560,7 +560,7 @@ export const useFiles = () => {
       formData.append("content", messageText);
       formData.append("type", getFileTypeCategory(file.type));
 
-      const endpoint = `${FILE_SERVICE_PATH}/api/chat/messages/media`;
+      const endpoint = `/chat/messages/media`;
 
       const response = await fetch(`/api/proxy${endpoint}`, {
         method: "POST",
@@ -616,7 +616,7 @@ export const useFiles = () => {
       formData.append("content", messageText);
       formData.append("type", getFileTypeCategory(file.type));
 
-      const endpoint = `${FILE_SERVICE_PATH}/api/group/messages/media`;
+      const endpoint = `/groups/${groupId}/messages`;
 
       const response = await fetch(`/api/proxy${endpoint}`, {
         method: "POST",
@@ -677,27 +677,36 @@ export const useFiles = () => {
   /**
    * Get file URL (helper function)
    */
-  const getFileUrl = (fileId: string): string => {
+  const getFileUrl = (fileId: string, groupId?: string): string => {
     if (!fileId) return "";
-    // Use relative URL with proxy path
-    return `/api/proxy/${FILE_SERVICE_PATH}/api/files/${fileId}`;
+    // Construct proper proxy URL without duplicating paths
+    if (groupId) {
+      return `/api/proxy/files/group/${groupId}/${fileId}`;
+    }
+    return `/api/proxy/files/${fileId}`;
   };
 
   /**
    * Get file download URL
    */
-  const getDownloadUrl = (fileId: string): string => {
+  const getDownloadUrl = (fileId: string, groupId?: string): string => {
     if (!fileId) return "";
-    return `/api/proxy/${FILE_SERVICE_PATH}/api/files/${fileId}/download`;
+    if (groupId) {
+      return `/api/proxy/files/group/${groupId}/${fileId}/download`;
+    }
+    return `/api/proxy/files/${fileId}/download`;
   };
 
   /**
    * Get thumbnail URL for image files (helper function)
    */
-  const getThumbnailUrl = (fileId: string): string => {
+  const getThumbnailUrl = (fileId: string, groupId?: string): string => {
     if (!fileId) return "";
     // Add a thumbnail parameter to the URL for the backend to generate a thumbnail
-    return `/api/proxy/${FILE_SERVICE_PATH}/api/files/${fileId}?thumbnail=true`;
+    if (groupId) {
+      return `/api/proxy/files/group/${groupId}/${fileId}?thumbnail=true`;
+    }
+    return `/api/proxy/files/${fileId}?thumbnail=true`;
   };
 
   /**
@@ -716,8 +725,11 @@ export const useFiles = () => {
   /**
    * Get file preview URL
    */
-  const getPreviewUrl = (fileId: string): string => {
-    return `/api/proxy/${FILE_SERVICE_PATH}/api/files/${fileId}/preview`;
+  const getPreviewUrl = (fileId: string, groupId?: string): string => {
+    if (groupId) {
+      return `/api/proxy/files/group/${groupId}/${fileId}/preview`;
+    }
+    return `/api/proxy/files/${fileId}/preview`;
   };
 
   return {
@@ -736,10 +748,10 @@ export const useFiles = () => {
     checkHealth,
     getFiles: getAllFiles,
     getUserFiles,
+    getGroupFiles,
     getGroupMedia,
     getUserMedia,
-    getFileDetails: (fileId: string) =>
-      callApi(`${FILE_SERVICE_PATH}/api/files/${fileId}`, "GET"),
+    getFileDetails: (fileId: string) => callApi(`/files/${fileId}`, "GET"),
     uploadFile,
     deleteFile,
     shareFile,

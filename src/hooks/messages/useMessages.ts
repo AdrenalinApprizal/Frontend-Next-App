@@ -859,7 +859,7 @@ export const useMessages = () => {
 
   /**
    * Send a message to a group
-   * Consistent with Swagger API endpoint: POST /messages/group/{groupId}
+   * Uses the unified /messages endpoint with group_id in payload
    */
   const sendMessageToGroup = async (
     groupId: string,
@@ -870,14 +870,13 @@ export const useMessages = () => {
     setError(null);
 
     try {
-      // Follow Swagger endpoint specification
-      const response = await apiCall(`messages/group/${groupId}`, {
+      // Use unified messages endpoint
+      const response = await apiCall(`messages`, {
         method: "POST",
         body: JSON.stringify({
           content,
           type,
-          // Add group_id to match request schema for consistency
-          group_id: groupId,
+          group_id: groupId, // Include group_id in payload
         }),
       });
 

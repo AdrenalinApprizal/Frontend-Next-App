@@ -15,6 +15,7 @@ import {
   FaTimes,
   FaPaperclip,
 } from "react-icons/fa";
+import { Paperclip } from "lucide-react";
 import { useMessages } from "@/hooks/messages/useMessages";
 import { useFriendship } from "@/hooks/auth/useFriends";
 import usePresence from "@/hooks/presence/usePresence";
@@ -23,6 +24,12 @@ import {
   formatMessageTimestamp,
   formatDateForSeparator,
 } from "@/utils/timestampHelper";
+import {
+  uploadFileAndSendMessage,
+  validateFile,
+  formatFileSize,
+  getMediaType,
+} from "@/utils/fileUploadHelper";
 import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
 import { eventBus } from "@/hooks/websocket/useEventBus";
 import ChatAreaItem from "./chat-area-item";
@@ -154,7 +161,6 @@ export function ChatArea({
   const [showProfile, setShowProfile] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [filteredMessages, setFilteredMessages] = useState<Message[]>([]);
@@ -162,13 +168,14 @@ export function ChatArea({
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Prevent dependency array issues by using refs for functions that could change
   const isMountedRef = useRef(true);
@@ -381,7 +388,65 @@ export function ChatArea({
       return senderId === currentUserIdStr;
     },
     [currentUserId]
-  ); // Function to filter out messages from blocked users (for current user only)
+  );
+
+  // Helper functions for file handling
+  const getFileTypeFromUrl = (url: string): "image" | "file" => {
+    const imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
+    return imageExtensions.some((ext) => url.toLowerCase().includes(ext))
+      ? "image"
+      : "file";
+  };
+
+  const getFileNameFromUrl = (url: string): string => {
+    const urlParts = url.split("/");
+    return urlParts[urlParts.length - 1] || "attachment";
+  };
+
+  // Helper function to transform backend file URLs to frontend proxy URLs
+  const transformFileUrl = (backendUrl: string, groupId?: string): string => {
+    if (!backendUrl) return "";
+
+    // If it's already a full URL with proxy, return as is
+    if (backendUrl.includes("/api/proxy/")) {
+      return backendUrl;
+    }
+
+    // Extract file ID from various backend URL formats
+    let fileId = "";
+
+    if (backendUrl.includes("/files/")) {
+      // Handle URLs like "/files/{fileId}" or "http://backend:8084/api/files/{fileId}"
+      const matches = backendUrl.match(/\/files\/([^/?]+)/);
+      if (matches && matches[1]) {
+        fileId = matches[1];
+      }
+    } else if (backendUrl.match(/^[a-f0-9-]{36}$/)) {
+      // If it's just a UUID, use it directly
+      fileId = backendUrl;
+    } else {
+      // For other formats, try to extract the last part of the path
+      const urlParts = backendUrl.split("/");
+      const lastPart = urlParts[urlParts.length - 1];
+      if (lastPart && lastPart.match(/^[a-f0-9-]{36}$/)) {
+        fileId = lastPart;
+      } else {
+        console.warn(
+          `[ChatArea] Could not extract file ID from URL: ${backendUrl}`
+        );
+        return backendUrl; // Return original if we can't parse it
+      }
+    }
+
+    // Construct the proper proxy URL
+    if (groupId) {
+      return `/api/proxy/files/group/${groupId}/${fileId}`;
+    } else {
+      return `/api/proxy/files/${fileId}`;
+    }
+  };
+
+  // Function to filter out messages from blocked users (for current user only)
   const filterBlockedMessages = useCallback(
     (messages: Message[]): Message[] => {
       if (!blockedUsers || blockedUsers.length === 0) {
@@ -830,6 +895,44 @@ export function ChatArea({
 
         // Simple ownership calculation - backend sender_id is now reliable
         processedMessage.isCurrentUser = isCurrentUserMessage(processedMessage);
+
+        // Handle attachment creation from attachment_url (similar to group-chat-area.tsx)
+        if (message.attachment_url && !processedMessage.attachment) {
+          const fileType = getFileTypeFromUrl(message.attachment_url);
+          // Transform backend URL to proper frontend proxy URL
+          const transformedUrl = transformFileUrl(message.attachment_url);
+          processedMessage.attachment = {
+            type: fileType,
+            url: transformedUrl,
+            name: getFileNameFromUrl(message.attachment_url),
+          };
+          console.log(
+            `[processApiMessages] Created attachment from URL: ${message.attachment_url} -> ${transformedUrl}`
+          );
+        }
+
+        // Handle attachment URL transformation for messages with existing attachments
+        if (processedMessage.attachment && processedMessage.attachment.url) {
+          try {
+            const originalUrl = processedMessage.attachment.url;
+
+            // Transform the URL using the helper function
+            const transformedUrl = transformFileUrl(originalUrl);
+
+            // Update the message with the transformed URL
+            processedMessage.attachment.url = transformedUrl;
+
+            console.log(
+              `[ChatArea] Transformed attachment URL: ${originalUrl} -> ${transformedUrl}`
+            );
+          } catch (error) {
+            console.error(
+              "[ChatArea] Error transforming attachment URL:",
+              error,
+              processedMessage.attachment.url
+            );
+          }
+        }
 
         return processedMessage;
       });
@@ -1653,6 +1756,7 @@ export function ChatArea({
     if (!editingMessageId || !inputMessage.trim()) return;
 
     const messageContent = inputMessage.trim();
+
     const originalMessage = localMessages.find(
       (msg) => msg.id === editingMessageId
     );
@@ -1872,15 +1976,6 @@ export function ChatArea({
   const handleFileUpload = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
-      setIsAttachmentMenuOpen(false);
-    }
-  };
-
-  // Handle image attachment button
-  const handleImageUpload = () => {
-    if (imageInputRef.current) {
-      imageInputRef.current.click();
-      setIsAttachmentMenuOpen(false);
     }
   };
 
@@ -2054,9 +2149,9 @@ export function ChatArea({
         </div>
 
         {/* Message input area */}
-        <div className="p-4 bg-white border-t border-gray-200">
+        <div className="bg-white border-t border-gray-200 p-4">
           {editingMessageId && (
-            <div className="flex items-center mb-2 bg-blue-50 p-2 rounded">
+            <div className="flex items-center mb-2 bg-blue-50 p-3 border-b border-gray-200">
               <span className="text-sm text-blue-700 flex-1">
                 Editing message
               </span>
@@ -2069,152 +2164,151 @@ export function ChatArea({
             </div>
           )}
 
-          <form onSubmit={handleFormSubmit} className="flex flex-col">
-            <div className="flex items-center">
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
-                  className={`p-2 rounded-full text-gray-500 hover:bg-gray-100 hover:text-blue-500 transition-colors duration-200 mr-2 ${
-                    isAttachmentMenuOpen ? "bg-blue-100 text-blue-600" : ""
-                  }`}
-                  title="Attach file"
-                  disabled={isSending}
-                >
-                  <FaPaperclip className="h-5 w-5" />
-                </button>
-
-                {isAttachmentMenuOpen && (
-                  <div
-                    className="absolute bottom-12 left-0 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-10 animate-fadeIn"
-                    style={{ minWidth: "150px" }}
-                  >
-                    <button
-                      type="button"
-                      onClick={handleFileUpload}
-                      className="flex items-center text-gray-700 hover:bg-blue-50 hover:text-blue-600 mb-2 w-full text-left px-4 py-2 rounded transition-all duration-200"
-                      disabled={isSending}
-                    >
-                      <span className="mr-2">📄</span>
-                      <span>File</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleImageUpload}
-                      className="flex items-center text-gray-700 hover:bg-blue-50 hover:text-blue-600 w-full text-left px-4 py-2 rounded transition-all duration-200"
-                      disabled={isSending}
-                    >
-                      <span className="mr-2">🖼️</span>
-                      <span>Image</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                onChange={() => {
-                  // File handling would go here
-                  toast.success(
-                    "File upload feature not implemented in this demo",
-                    {
-                      duration: 4000,
-                      position: "top-center",
+          <form
+            onSubmit={handleFormSubmit}
+            className="flex items-center space-x-3"
+          >
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file && friendId) {
+                  try {
+                    // Validate file first
+                    const validation = validateFile(file);
+                    if (!validation.valid) {
+                      toast.error(validation.error || "Invalid file");
+                      return;
                     }
-                  );
-                }}
-                disabled={isSending}
-              />
 
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={() => {
-                  // Image handling would go here
-                  toast.success(
-                    "Image upload feature not implemented in this demo",
-                    {
-                      duration: 4000,
-                      position: "top-center",
-                    }
-                  );
-                }}
-                disabled={isSending}
-              />
+                    setIsUploadingFile(true);
+                    setUploadProgress(0);
 
-              <input
-                value={inputMessage}
-                onChange={(e) => {
-                  setInputMessage(e.target.value);
-                  handleTyping();
-                }}
-                type="text"
-                placeholder={
-                  editingMessageId
-                    ? "Edit your message..."
-                    : "Type your message..."
+                    // Upload file and send message using fileUploadHelper
+                    const result = await uploadFileAndSendMessage(
+                      file,
+                      friendId,
+                      `📎 ${file.name}`,
+                      false, // isGroup = false for individual chat
+                      (progress) => setUploadProgress(progress),
+                      session?.access_token
+                    );
+
+                    // Add the message to local state
+                    const newMessage: Message = {
+                      id: result.messageId || `file-${Date.now()}`,
+                      content: `📎 ${file.name}`,
+                      sender_id: String(currentUserId),
+                      receiver_id: friendId,
+                      recipient_id: friendId,
+                      isCurrentUser: true,
+                      timestamp: new Date().toISOString(),
+                      sent_at: new Date().toISOString(),
+                      created_at: new Date().toISOString(),
+                      raw_timestamp: new Date().toISOString(),
+                      pending: false,
+                      attachment: {
+                        type: getMediaType(file.type) === "image" ? "image" : "file",
+                        url: result.fileUrl,
+                        name: file.name,
+                        size: formatFileSize(file.size),
+                      },
+                    };
+
+                    setLocalMessages((prev) => {
+                      const updatedMessages = [...prev, newMessage];
+                      saveToSessionStorage(updatedMessages);
+                      return updatedMessages;
+                    });
+
+                    // Scroll to bottom to show new message
+                    setTimeout(() => {
+                      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                    }, 100);
+
+                    toast.success("File uploaded successfully!");
+                  } catch (error) {
+                    console.error("File upload failed:", error);
+                    toast.error(error instanceof Error ? error.message : "File upload failed");
+                  } finally {
+                    setIsUploadingFile(false);
+                    setUploadProgress(0);
+                    // Clear the file input
+                    e.target.value = "";
+                  }
                 }
-                className="flex-1 py-2 px-4 rounded-full border border-gray-300 focus:outline-none focus:border-blue-400 text-gray-700"
-                disabled={isSending}
-              />
+              }}
+              accept="image/*,application/pdf,.doc,.docx,.txt"
+            />
 
-              <button
-                type="submit"
-                className="bg-blue-500 text-white p-3 rounded-full ml-2 hover:bg-blue-600 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={
-                  (!inputMessage.trim() && !editingMessageId) || isSending
+            <button
+              type="button"
+              onClick={handleFileUpload}
+              className="p-1.5 text-gray-400 hover:text-blue-400 transition-colors"
+              title="Attach file"
+            >
+              <Paperclip className="h-4 w-4" />
+            </button>
+
+            <textarea
+              value={inputMessage}
+              onChange={(e) => {
+                setInputMessage(e.target.value);
+                handleTyping();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleFormSubmit(e as any);
                 }
-              >
-                {isSending ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white"></div>
-                ) : (
-                  <FaPaperPlane className="h-4 w-4" />
-                )}
-              </button>
-            </div>
+              }}
+              placeholder={
+                editingMessageId
+                  ? "Edit your message..."
+                  : "Type your message..."
+              }
+              className="flex-1 resize-none border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              rows={1}
+              disabled={isSending}
+              style={{
+                minHeight: "40px",
+                maxHeight: "120px",
+                overflowY: inputMessage.length > 100 ? "auto" : "hidden",
+              }}
+            />
 
-            {/* WebSocket connection indicator */}
-            <div className="mt-1 flex justify-end">
-              {isConnected ? (
-                <span
-                  className="text-xs text-green-500 flex items-center"
-                  title="Connected to real-time messaging"
-                >
-                  <span className="inline-block h-2 w-2 rounded-full bg-green-500 mr-1"></span>
-                  Live
-                </span>
-              ) : isConnecting ? (
-                <span
-                  className="text-xs text-yellow-500 flex items-center"
-                  title="Connecting to real-time messaging"
-                >
-                  <span className="inline-block h-2 w-2 rounded-full bg-yellow-500 mr-1 animate-pulse"></span>
-                  Connecting...
-                </span>
+            <button
+              type="submit"
+              disabled={!inputMessage.trim() || isSending}
+              className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              title="Send message"
+            >
+              {isSending ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
               ) : (
-                <span
-                  className="text-xs text-red-500 flex items-center"
-                  title="Offline - No real-time connection"
-                >
-                  <span className="inline-block h-2 w-2 rounded-full bg-red-500 mr-1"></span>
-                  Offline
-                </span>
+                <FaPaperPlane className="h-5 w-5" />
               )}
-
-              {connectionError && (
-                <span
-                  className="text-xs text-red-500 ml-2"
-                  title={connectionError}
-                >
-                  Connection error
-                </span>
-              )}
-            </div>
+            </button>
           </form>
+
+          {isUploadingFile && (
+            <div className="mt-1 bg-blue-50 border border-blue-200 rounded-md p-2">
+              <div className="flex items-center">
+                <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent mr-2" />
+                <span className="text-xs text-blue-600">
+                  Uploading... {uploadProgress}%
+                </span>
+              </div>
+              <div className="w-full bg-blue-200 rounded-full h-1 mt-1">
+                <div
+                  className="bg-blue-500 h-1 rounded-full transition-all duration-300"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

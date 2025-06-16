@@ -983,11 +983,12 @@ export const useGroup = () => {
           content,
           type: messageType,
           attachment_url: attachmentUrl,
+          group_id: groupId, // Add group_id to the payload for /messages endpoint
         };
 
         console.log(`[Groups Store] Message payload:`, messageData);
 
-        const response = await apiCall(`groups/${groupId}/messages`, {
+        const response = await apiCall(`messages`, {
           method: "POST",
           body: JSON.stringify(messageData),
         });
@@ -1072,9 +1073,10 @@ export const useGroup = () => {
         const formData = new FormData();
         formData.append("content", content);
         formData.append("type", type);
+        formData.append("group_id", groupId); // Add group_id to FormData
         formData.append("attachment", attachment);
 
-        const response = await apiCall(`groups/${groupId}/messages`, {
+        const response = await apiCall(`messages`, {
           method: "POST",
           body: formData,
         });
@@ -1299,49 +1301,49 @@ export const useGroup = () => {
         let response;
         let lastError;
 
-        // Option 1: Try group-specific endpoint (REST pattern)
+        // Option 1: Try generic messages endpoint with group_id (primary method)
         try {
           console.log(
-            `[Groups Store] Trying group-specific edit endpoint: groups/${groupId}/messages/${messageId}`
+            `[Groups Store] Trying messages endpoint: messages/${messageId}`
           );
-          response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
+          response = await apiCall(`messages/${messageId}`, {
             method: "PUT",
             body: JSON.stringify({
               content: newContent,
+              group_id: groupId,
               type: "text",
             }),
           });
+          console.log(`[Groups Store] Messages endpoint edit successful:`, response);
+        } catch (messagesError) {
           console.log(
-            `[Groups Store] Group-specific edit successful:`,
-            response
+            `[Groups Store] Messages endpoint edit failed:`,
+            messagesError
           );
-        } catch (groupError) {
-          console.log(
-            `[Groups Store] Group-specific edit endpoint failed:`,
-            groupError
-          );
-          lastError = groupError;
+          lastError = messagesError;
 
-          // Option 2: Try generic messages endpoint with group_id
+          // Option 2: Try group-specific endpoint as fallback
           try {
             console.log(
-              `[Groups Store] Trying generic edit endpoint: messages/${messageId}`
+              `[Groups Store] Trying group-specific edit endpoint: groups/${groupId}/messages/${messageId}`
             );
-            response = await apiCall(`messages/${messageId}`, {
+            response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
               method: "PUT",
               body: JSON.stringify({
                 content: newContent,
-                group_id: groupId,
                 type: "text",
               }),
             });
-            console.log(`[Groups Store] Generic edit successful:`, response);
-          } catch (genericError) {
             console.log(
-              `[Groups Store] Generic edit endpoint failed:`,
-              genericError
+              `[Groups Store] Group-specific edit successful:`,
+              response
             );
-            lastError = genericError;
+          } catch (groupError) {
+            console.log(
+              `[Groups Store] Group-specific edit endpoint failed:`,
+              groupError
+            );
+            lastError = groupError;
 
             // Option 3: Try PATCH method (some APIs prefer PATCH for updates)
             try {
@@ -1361,8 +1363,8 @@ export const useGroup = () => {
               console.error(
                 `[Groups Store] All edit endpoints failed. Last errors:`,
                 {
+                  messagesError,
                   groupError,
-                  genericError,
                   patchError,
                 }
               );
@@ -1450,44 +1452,44 @@ export const useGroup = () => {
         let response;
         let lastError;
 
-        // Option 1: Try group-specific endpoint (REST pattern)
+        // Option 1: Try generic messages endpoint with group_id in body (primary method)
         try {
           console.log(
-            `[Groups Store] Trying group-specific delete endpoint: groups/${groupId}/messages/${messageId}`
+            `[Groups Store] Trying messages delete endpoint: messages/${messageId}`
           );
-          response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
+          response = await apiCall(`messages/${messageId}`, {
             method: "DELETE",
+            body: JSON.stringify({ group_id: groupId }),
           });
           console.log(
-            `[Groups Store] Group-specific delete successful:`,
+            `[Groups Store] Messages delete successful:`,
             response
           );
-        } catch (groupError) {
+        } catch (messagesError) {
           console.log(
-            `[Groups Store] Group-specific delete endpoint failed:`,
-            groupError
+            `[Groups Store] Messages delete failed:`,
+            messagesError
           );
-          lastError = groupError;
+          lastError = messagesError;
 
-          // Option 2: Try generic messages endpoint with group_id in body
+          // Option 2: Try group-specific endpoint as fallback
           try {
             console.log(
-              `[Groups Store] Trying generic delete endpoint with body: messages/${messageId}`
+              `[Groups Store] Trying group-specific delete endpoint: groups/${groupId}/messages/${messageId}`
             );
-            response = await apiCall(`messages/${messageId}`, {
+            response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
               method: "DELETE",
-              body: JSON.stringify({ group_id: groupId }),
             });
             console.log(
-              `[Groups Store] Generic delete with body successful:`,
+              `[Groups Store] Group-specific delete successful:`,
               response
             );
-          } catch (genericError) {
+          } catch (groupError) {
             console.log(
-              `[Groups Store] Generic delete with body failed:`,
-              genericError
+              `[Groups Store] Group-specific delete endpoint failed:`,
+              groupError
             );
-            lastError = genericError;
+            lastError = groupError;
 
             // Option 3: Try generic messages endpoint with query parameter
             try {
@@ -1508,8 +1510,8 @@ export const useGroup = () => {
               console.error(
                 `[Groups Store] All delete endpoints failed. Last errors:`,
                 {
+                  messagesError,
                   groupError,
-                  genericError,
                   queryError,
                 }
               );

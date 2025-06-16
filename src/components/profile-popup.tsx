@@ -233,18 +233,18 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-[#050C1B] rounded-lg shadow-lg w-full max-w-sm p-4 relative">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-[#050C1B] rounded-lg shadow-lg w-full max-w-xs sm:max-w-sm p-3 sm:p-4 relative max-h-[90vh] overflow-y-auto">
         {activeTab === "profile" && !isEditing && userInfo && (
           <>
-            <div className="text-center mb-3">
-              <h2 className="text-lg font-bold text-white">My Profile</h2>
+            <div className="text-center mb-2">
+              <h2 className="text-base sm:text-lg font-bold text-white">My Profile</h2>
             </div>
 
-            <div className="flex justify-center mb-4">
+            <div className="flex justify-center mb-3">
               <div className="relative">
                 <div
-                  className="h-16 w-16 rounded-full overflow-hidden bg-blue-600/30 relative flex items-center justify-center cursor-pointer"
+                  className="h-12 w-12 sm:h-16 sm:w-16 rounded-full overflow-hidden bg-blue-600/30 relative flex items-center justify-center cursor-pointer"
                   onClick={() => setShowProfilePictureModal(true)}
                 >
                   {userInfo.profile_picture_url ? (
@@ -269,38 +269,38 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                       }}
                     />
                   ) : (
-                    <FaUser className="h-8 w-8 text-blue-400" />
+                    <FaUser className="h-6 w-6 sm:h-8 sm:w-8 text-blue-400" />
                   )}
                   <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20 opacity-0 hover:opacity-100 transition-opacity rounded-full">
-                    <FaCamera className="h-5 w-5 text-white" />
+                    <FaCamera className="h-3 w-3 sm:h-5 sm:w-5 text-white" />
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-3 px-1">
+            <div className="space-y-2 px-1">
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <label className="text-sm text-gray-300 block">
+                  <label className="text-xs sm:text-sm text-gray-300 block">
                     First Name
                   </label>
                   <input
                     type="text"
                     value={userInfo.first_name || ""}
                     readOnly
-                    className="w-full bg-[#0b1529] text-white rounded border border-gray-700 p-2 h-9 text-sm"
+                    className="w-full bg-[#0b1529] text-white rounded border border-gray-700 p-1.5 sm:p-2 h-8 sm:h-9 text-xs sm:text-sm"
                     placeholder="First Name"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-sm text-gray-300 block">
+                  <label className="text-xs sm:text-sm text-gray-300 block">
                     Last Name
                   </label>
                   <input
                     type="text"
                     value={userInfo.last_name || ""}
                     readOnly
-                    className="w-full bg-[#0b1529] text-white rounded border border-gray-700 p-2 h-9 text-sm"
+                    className="w-full bg-[#0b1529] text-white rounded border border-gray-700 p-1.5 sm:p-2 h-8 sm:h-9 text-xs sm:text-sm"
                     placeholder="Last Name"
                   />
                 </div>

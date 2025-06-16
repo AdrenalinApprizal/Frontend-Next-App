@@ -8,9 +8,11 @@ import {
   FaPencilAlt,
   FaTrash,
   FaEllipsisV,
+  FaDownload,
 } from "react-icons/fa";
 import { formatMessageTimestamp } from "@/utils/timestampHelper";
 import { toast } from "react-hot-toast";
+import { useFiles } from "@/hooks/files/useFiles";
 
 // Interface untuk MessageItem props
 interface MessageItemProps {
@@ -52,7 +54,12 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
 }) => {
   // State for showing/hiding message actions menu
   const [showActions, setShowActions] = useState(false);
+  // State for download loading
+  const [isDownloading, setIsDownloading] = useState(false);
   // Removed edit-related state since we no longer edit in the bubble
+
+  // Hooks
+  const { downloadFile } = useFiles();
 
   // Ref for dropdown to handle outside clicks
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -158,6 +165,33 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
       onDeleteClick(message.id);
     }
     setShowActions(false);
+  };
+
+  // Handle file download
+  const handleDownloadFile = async (e: React.MouseEvent, fileUrl: string, fileName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Extract file ID from URL
+    let fileId = "";
+    if (fileUrl.includes("/api/proxy/files/")) {
+      const urlParts = fileUrl.split("/");
+      fileId = urlParts[urlParts.length - 1];
+    } else {
+      toast.error("Invalid file URL");
+      return;
+    }
+
+    try {
+      setIsDownloading(true);
+      await downloadFile(fileId);
+      toast.success(`Downloading ${fileName}...`);
+    } catch (error) {
+      console.error("Download failed:", error);
+      toast.error("Failed to download file");
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   // Close menu when clicking outside
@@ -288,12 +322,12 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
 
           {/* Tampilan attachment dengan penanganan yang ditingkatkan */}
           {message.attachment && (
-            <div className="mb-2">
+            <div className="mb-1">
               {message.attachment.type === "image" ? (
                 <img
                   src={message.attachment.url}
                   alt={message.attachment.name}
-                  className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity max-h-64 sm:max-h-80"
+                  className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity max-h-48 sm:max-h-56"
                   onClick={(e) => {
                     e.stopPropagation();
                     window.open(message.attachment!.url, "_blank");
@@ -307,18 +341,24 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                   }}
                 />
               ) : (
-                <a
-                  href={message.attachment.url}
-                  download={message.attachment.name}
-                  className="text-blue-500 hover:underline flex items-center space-x-2 transition-colors p-2 bg-gray-50 rounded-lg"
-                  onClick={(e) => e.stopPropagation()}
+                <button
+                  onClick={(e) => handleDownloadFile(e, message.attachment!.url, message.attachment!.name)}
+                  disabled={isDownloading}
+                  className="text-blue-500 hover:underline flex items-center space-x-1 transition-colors p-1.5 bg-gray-50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-xs"
+                  title={`Download ${message.attachment!.name}`}
                 >
-                  <FaFile className="text-gray-600 text-sm" />
-                  <span className="text-xs sm:text-sm truncate">
-                    {message.attachment.name}
-                    {message.attachment.size && ` (${message.attachment.size})`}
+                  {isDownloading ? (
+                    <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent" />
+                  ) : (
+                    <FaFile className="text-gray-500 text-xs h-3 w-3" />
+                  )}
+                  <span className="text-xs truncate max-w-28 sm:max-w-32">
+                    {message.attachment!.name}
                   </span>
-                </a>
+                  {!isDownloading && (
+                    <FaDownload className="text-gray-400 text-xs h-2.5 w-2.5" />
+                  )}
+                </button>
               )}
             </div>
           )}

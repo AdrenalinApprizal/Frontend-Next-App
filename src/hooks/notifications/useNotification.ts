@@ -95,7 +95,7 @@ export const useNotification = () => {
         url = `${API_ENDPOINT}/${endpointPath}`.replace(/\/+/g, "/");
       }
 
-      console.log(`[Notification API] Calling: ${url}`);
+      console.log(`[Notification API] Calling SAasasa: ${url}`);
 
       const response = await fetch(url, mergedOptions);
 
@@ -387,7 +387,8 @@ export const useNotification = () => {
 
     try {
       const response = await apiCall(`/${notificationId}/read`, {
-        method: "PATCH",
+        method: "PUT",
+        body: JSON.stringify({}),
       });
 
       // Update the notification in the state

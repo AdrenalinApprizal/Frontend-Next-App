@@ -7,6 +7,7 @@ import React, {
   useMemo,
   useCallback,
 } from "react";
+import { useSession } from "next-auth/react";
 import {
   FaUsers,
   FaPaperPlane,
@@ -23,6 +24,12 @@ import {
 } from "react-icons/fa";
 import { Paperclip, X, Edit2, Trash, Info } from "lucide-react";
 import { toast } from "react-hot-toast";
+import {
+  uploadFileAndSendMessage,
+  validateFile,
+  formatFileSize,
+  getMediaType,
+} from "@/utils/fileUploadHelper";
 import SearchFilterPopup from "./search-on-group";
 import GroupProfileInfo from "./group-info-panel";
 import GroupMessageItem from "./group-message-item";
@@ -143,6 +150,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Get user info and WebSocket context
+  const { data: session } = useSession();
   const { user } = useAuth();
   const { userInfo } = useUserInfoContext();
   const {
@@ -175,6 +183,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const [messages, setMessages] = useState<GroupMessage[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -185,6 +195,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const [connectionStatus, setConnectionStatus] = useState<
     "connected" | "disconnected"
   >("disconnected");
+
+  // Refs
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Loading state for initial data
   const [groupDetailsLoaded, setGroupDetailsLoaded] = useState(false);
@@ -667,73 +680,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     return finalMessages;
   }, [messages, filteredMessages, isSearching, filterBlockedMessages]);
 
-  // Send message handler
-  const handleSendMessage = useCallback(async () => {
-    if (!inputMessage.trim() || isSending) return;
-
-    const messageContent = inputMessage.trim();
-    const tempId = `temp-${Date.now()}-${Math.random()}`;
-
-    try {
-      setIsSending(true);
-      setInputMessage("");
-
-      // Create optimistic message
-      const optimisticMessage: GroupMessage = {
-        id: tempId,
-        content: messageContent,
-        sender: {
-          id: String(currentUserId),
-          name: "You",
-          avatar_url:
-            userInfo?.profile_picture_url || user?.profile_picture_url || null,
-        },
-        timestamp: new Date().toISOString(),
-        isCurrentUser: true,
-        pending: true,
-        delivered: false,
-      };
-
-      setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
-
-      const response = await sendGroupMessage(groupId, messageContent);
-      console.log("[GroupChat] Message sent successfully:", response);
-
-      // Update optimistic message to delivered
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
-        )
-      );
-
-      toast.success("Message sent successfully", { id: `send-${tempId}` });
-    } catch (error: any) {
-      console.error("Failed to send message:", error);
-
-      // Mark optimistic message as failed
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === tempId ? { ...msg, pending: false, failed: true } : msg
-        )
-      );
-
-      // Restore input content
-      setInputMessage(messageContent);
-      toast.error("Failed to send message");
-    } finally {
-      setIsSending(false);
-    }
-  }, [
-    inputMessage,
-    isSending,
-    sendGroupMessage,
-    currentUserId,
-    userInfo,
-    user,
-    fetchGroupMessages,
-    groupId,
-  ]);
-
   // Handle edit message
   const handleEditMessage = useCallback(
     (messageId: string) => {
@@ -754,123 +700,130 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     console.log("[GroupChat] Edit cancelled");
   }, []);
 
-  // Handle submit edit
-  const handleSubmitEdit = useCallback(async () => {
-    if (!editingMessageId || !inputMessage.trim()) return;
+  // Handle submit edit (updated to accept content parameter)
+  const handleSubmitEdit = useCallback(
+    async (editContent?: string) => {
+      if (!editingMessageId) return;
 
-    const messageContent = inputMessage.trim();
-    const originalMessage = messages.find((msg) => msg.id === editingMessageId);
+      const messageContent = editContent;
+      if (!messageContent) return;
 
-    if (!originalMessage) return;
-
-    setIsSending(true);
-
-    try {
-      console.log(
-        "🔧 EDIT: Starting edit for message:",
-        editingMessageId,
-        "New content:",
-        messageContent
+      const originalMessage = messages.find(
+        (msg) => msg.id === editingMessageId
       );
 
-      // Update message optimistically
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === editingMessageId
-            ? {
-                ...msg,
-                content: messageContent,
-                isEdited: true,
-                pending: true,
-              }
-            : msg
-        )
-      );
+      if (!originalMessage) return;
 
-      // Call API to edit message
-      console.log("🔧 EDIT: Calling editGroupMessage API...");
-      const response = await editGroupMessage(
-        groupId,
-        editingMessageId,
-        messageContent
-      );
-      console.log("🔧 EDIT: API response:", response);
+      setIsSending(true);
 
-      // Simple validation - if we get a response, consider it successful
-      if (!response) {
-        throw new Error("No response received from edit API");
-      }
-
-      // Update with successful edit
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === editingMessageId
-            ? {
-                ...msg,
-                content: messageContent,
-                isEdited: true,
-                pending: false,
-              }
-            : msg
-        )
-      );
-
-      // Clear edit state
-      setEditingMessageId(null);
-      setInputMessage("");
-
-      toast.success("Message updated successfully");
-      console.log(
-        `[GroupChat] Message edited successfully: ${editingMessageId}`
-      );
-
-      // Schedule a background refresh to ensure consistency with backend
-      setTimeout(() => {
-        if (!hasPendingOperations) {
-          console.log("[GroupChat] Background refresh after edit operation");
-          fetchGroupMessages(1, 20);
-        }
-      }, 2000);
-    } catch (error: any) {
-      console.error("🔧 EDIT ERROR: Failed to edit message:", error);
-
-      // Show more specific error message
-      const errorMessage =
-        error?.message || error?.error || "Failed to edit message";
-      const statusCode = error?.status || error?.statusCode;
-
-      if (statusCode === 404) {
-        toast.error("Edit failed: Message not found or endpoint not available");
-      } else if (statusCode === 500) {
-        toast.error("Edit failed: Server error - please try again later");
-      } else if (statusCode === 403) {
-        toast.error(
-          "Edit failed: You don't have permission to edit this message"
+      try {
+        console.log(
+          "🔧 EDIT: Starting edit for message:",
+          editingMessageId,
+          "New content:",
+          messageContent
         );
-      } else {
-        toast.error(`Edit failed: ${errorMessage}`);
-      }
 
-      // Revert optimistic update on error
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === editingMessageId
-            ? { ...originalMessage, pending: false }
-            : msg
-        )
-      );
-    } finally {
-      setIsSending(false);
-    }
-  }, [
-    editingMessageId,
-    inputMessage,
-    messages,
-    editGroupMessage,
-    groupId,
-    fetchGroupMessages,
-    hasPendingOperations,
-  ]);
+        // Update message optimistically
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === editingMessageId
+              ? {
+                  ...msg,
+                  content: messageContent,
+                  isEdited: true,
+                  pending: true,
+                }
+              : msg
+          )
+        );
+
+        // Call API to edit message
+        console.log("🔧 EDIT: Calling editGroupMessage API...");
+        const response = await editGroupMessage(
+          groupId,
+          editingMessageId,
+          messageContent
+        );
+        console.log("🔧 EDIT: API response:", response);
+
+        // Simple validation - if we get a response, consider it successful
+        if (!response) {
+          throw new Error("No response received from edit API");
+        }
+
+        // Update with successful edit
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === editingMessageId
+              ? {
+                  ...msg,
+                  content: messageContent,
+                  isEdited: true,
+                  pending: false,
+                }
+              : msg
+          )
+        );
+
+        // Clear edit state
+        setEditingMessageId(null);
+
+        toast.success("Message updated successfully");
+        console.log(
+          `[GroupChat] Message edited successfully: ${editingMessageId}`
+        );
+
+        // Schedule a background refresh to ensure consistency with backend
+        setTimeout(() => {
+          if (!hasPendingOperations) {
+            console.log("[GroupChat] Background refresh after edit operation");
+            fetchGroupMessages(1, 20);
+          }
+        }, 2000);
+      } catch (error: any) {
+        console.error("🔧 EDIT ERROR: Failed to edit message:", error);
+
+        // Show more specific error message
+        const errorMessage =
+          error?.message || error?.error || "Failed to edit message";
+        const statusCode = error?.status || error?.statusCode;
+
+        if (statusCode === 404) {
+          toast.error(
+            "Edit failed: Message not found or endpoint not available"
+          );
+        } else if (statusCode === 500) {
+          toast.error("Edit failed: Server error - please try again later");
+        } else if (statusCode === 403) {
+          toast.error(
+            "Edit failed: You don't have permission to edit this message"
+          );
+        } else {
+          toast.error(`Edit failed: ${errorMessage}`);
+        }
+
+        // Revert optimistic update on error
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === editingMessageId
+              ? { ...originalMessage, pending: false }
+              : msg
+          )
+        );
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [
+      editingMessageId,
+      messages,
+      editGroupMessage,
+      groupId,
+      fetchGroupMessages,
+      hasPendingOperations,
+    ]
+  );
 
   // Handle delete message
   const handleDeleteMessage = useCallback(
@@ -1052,6 +1005,78 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     [messages, sendGroupMessage, groupId, fetchGroupMessages]
   );
 
+  // Handle file upload button
+  const handleFileUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle original message sending (form submission)
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!inputMessage.trim() || !groupId || isSending) return;
+
+    const messageContent = inputMessage.trim();
+    setInputMessage(""); // Clear input early for better UX
+    setIsSending(true);
+
+    const tempId = `temp-${Date.now()}-${Math.random()}`;
+
+    try {
+      // Create optimistic message for immediate UI feedback
+      const optimisticMessage: GroupMessage = {
+        id: tempId,
+        content: messageContent,
+        sender: {
+          id: String(currentUserId),
+          name: "You",
+          avatar_url:
+            userInfo?.profile_picture_url || user?.profile_picture_url || null,
+        },
+        timestamp: new Date().toISOString(),
+        isCurrentUser: true,
+        pending: true,
+        delivered: false,
+      };
+
+      // Add optimistic message to UI immediately
+      setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
+
+      // Auto-scroll to show the new message
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 50);
+
+      const response = await sendGroupMessage(groupId, messageContent);
+
+      console.log("[GroupChat] Message sent successfully:", response);
+
+      // Update optimistic message to delivered
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
+          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
+        )
+      );
+
+      toast.success("Message sent successfully", { id: `send-${tempId}` });
+    } catch (error: any) {
+      console.error("Failed to send message:", error);
+
+      // Mark optimistic message as failed
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
+          msg.id === tempId ? { ...msg, pending: false, failed: true } : msg
+        )
+      );
+
+      toast.error("Failed to send message");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   // Enhanced form submission handler for both new messages and edits
   const handleFormSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -1059,14 +1084,14 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
       // Handle edit submission
       if (editingMessageId) {
-        await handleSubmitEdit();
+        await handleSubmitEdit(inputMessage.trim());
         return;
       }
 
       // Handle new message submission
-      await handleSendMessage();
+      await handleSendMessage(e);
     },
-    [editingMessageId, handleSubmitEdit, handleSendMessage]
+    [editingMessageId, inputMessage, handleSubmitEdit, handleSendMessage]
   );
 
   // Handle search
@@ -1380,36 +1405,152 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
             <form
               onSubmit={handleFormSubmit}
-              className="flex items-end space-x-2 sm:space-x-3"
+              className="flex items-center space-x-3"
             >
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={
-                    editingMessageId
-                      ? "Edit your message..."
-                      : "Type a message..."
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file && groupId) {
+                    try {
+                      // Validate file first
+                      const validation = validateFile(file);
+                      if (!validation.valid) {
+                        toast.error(validation.error || "Invalid file");
+                        return;
+                      }
+
+                      setIsUploadingFile(true);
+                      setUploadProgress(0);
+
+                      // Upload file and send message using fileUploadHelper
+                      const result = await uploadFileAndSendMessage(
+                        file,
+                        groupId,
+                        "", // messageText (empty since we're just sending a file)
+                        true, // isGroup set to true for group chat
+                        (progress: number) => setUploadProgress(progress),
+                        session?.access_token
+                      );
+
+                      // Add optimistic message with file attachment
+                      const tempId = `temp-${Date.now()}`;
+                      const optimisticMessage: GroupMessage = {
+                        id: tempId,
+                        content: `📎 ${file.name}`,
+                        sender: {
+                          id: String(currentUserId),
+                          name: "You",
+                          avatar_url:
+                            userInfo?.profile_picture_url || user?.profile_picture_url || null,
+                        },
+                        timestamp: new Date().toISOString(),
+                        isCurrentUser: true,
+                        pending: true,
+                        delivered: false,
+                        attachment: {
+                          type: getMediaType(file.type) === "image" ? "image" : "file",
+                          url: result.fileUrl,
+                          name: file.name,
+                          size: formatFileSize(file.size),
+                        },
+                      };
+
+                      // Add optimistic message to UI immediately
+                      setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
+
+                      // Update message to delivered state
+                      setMessages((prevMessages) =>
+                        prevMessages.map((msg) =>
+                          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
+                        )
+                      );
+
+                      // Auto-scroll to show the new message
+                      setTimeout(() => {
+                        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                      }, 50);
+
+                      toast.success("File uploaded successfully!");
+                    } catch (error) {
+                      console.error("File upload failed:", error);
+                      toast.error(error instanceof Error ? error.message : "File upload failed");
+                    } finally {
+                      setIsUploadingFile(false);
+                      setUploadProgress(0);
+                      // Clear the file input
+                      e.target.value = "";
+                    }
                   }
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 pr-4 border border-gray-300 rounded-2xl sm:rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base resize-none transition-all"
-                  disabled={isSending}
-                />
-              </div>
+                }}
+                accept="image/*,application/pdf,.doc,.docx,.txt"
+              />
+
+              <button
+                type="button"
+                onClick={handleFileUpload}
+                className="p-1.5 text-gray-400 hover:text-blue-400 transition-colors"
+                title="Attach file"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+
+              <textarea
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleFormSubmit(e as any);
+                  }
+                }}
+                placeholder={
+                  editingMessageId
+                    ? "Edit your message..."
+                    : "Type a message..."
+                }
+                className="flex-1 resize-none border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows={1}
+                disabled={isSending}
+                style={{
+                  minHeight: "40px",
+                  maxHeight: "120px",
+                  overflowY: inputMessage.length > 100 ? "auto" : "hidden",
+                }}
+              />
+
               <button
                 type="submit"
                 disabled={!inputMessage.trim() || isSending}
-                className="p-2.5 sm:p-3 bg-blue-500 text-white rounded-full hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 touch-manipulation shrink-0"
+                className="bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                title="Send message"
               >
                 {isSending ? (
-                  <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-b-2 border-white"></div>
-                ) : editingMessageId ? (
-                  <FaCheck className="text-xs sm:text-sm" />
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
                 ) : (
-                  <FaPaperPlane className="text-xs sm:text-sm" />
+                  <FaPaperPlane className="h-5 w-5" />
                 )}
               </button>
             </form>
+
+            {isUploadingFile && (
+              <div className="mt-1 bg-blue-50 border border-blue-200 rounded-md p-2">
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent mr-2" />
+                  <span className="text-xs text-blue-600">
+                    Uploading... {uploadProgress}%
+                  </span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-1 mt-1">
+                  <div
+                    className="bg-blue-500 h-1 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

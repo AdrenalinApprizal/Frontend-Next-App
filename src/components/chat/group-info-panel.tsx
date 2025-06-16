@@ -60,13 +60,13 @@ interface Friend {
   shareSelected?: boolean;
 }
 
-interface MediaItem {
-  id: string;
+interface AttachmentItem {
+  file_id: string;
+  filename: string;
+  size: number;
+  mime_type: string;
   url: string;
-  name: string;
-  size?: string;
-  type: "image" | "file";
-  date?: string;
+  uploaded_at: string;
 }
 
 interface Pagination {
@@ -116,32 +116,19 @@ export default function GroupProfileInfo({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [selectedFriends, setSelectedFriends] = useState<Friend[]>([]);
 
-  // Media and files state
-  const [groupMedia, setGroupMedia] = useState<MediaItem[]>([]);
-  const [groupFiles, setGroupFiles] = useState<MediaItem[]>([]);
-  const [isLoadingMedia, setIsLoadingMedia] = useState(false);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
-  const [isLoadingMoreMedia, setIsLoadingMoreMedia] = useState(false);
-  const [isLoadingMoreFiles, setIsLoadingMoreFiles] = useState(false);
-  const [showMediaModal, setShowMediaModal] = useState(false);
-  const [showFilesModal, setShowFilesModal] = useState(false);
+  // Attachments state
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [showMediaPreview, setShowMediaPreview] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<MediaItem | null>(null);
-  const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
-  const [currentMediaPage, setCurrentMediaPage] = useState(1);
-  const [currentFilesPage, setCurrentFilesPage] = useState(1);
+  const [showPreview, setShowPreview] = useState(false);
+  const [selectedAttachment, setSelectedAttachment] = useState<AttachmentItem | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [friendsList, setFriendsList] = useState<Friend[]>([]);
 
   // Pagination state
-  const [mediaPagination, setMediaPagination] = useState<Pagination>({
-    current_page: 1,
-    total_pages: 1,
-    total_items: 0,
-    items_per_page: 20,
-    has_more_pages: false,
-  });
-
-  const [filesPagination, setFilesPagination] = useState<Pagination>({
+  const [pagination, setPagination] = useState<Pagination>({
     current_page: 1,
     total_pages: 1,
     total_items: 0,
@@ -270,7 +257,7 @@ export default function GroupProfileInfo({
       presenceStatus: status,
       lastActive,
       isBlocked,
-      blockedAt, // Add blocked timestamp for future use
+      blockedAt: blockedUser?.blocked_at, // Add blocked timestamp for future use
     };
   });
 
@@ -479,102 +466,289 @@ export default function GroupProfileInfo({
     }
   };
 
-  // Current media index for navigation
-  const currentMediaIndex = selectedMedia
-    ? groupMedia.findIndex((item) => item.id === selectedMedia.id)
-    : -1;
+  // Load data when group details change
+  useEffect(() => {
+    loadAttachments();
+  }, [groupDetails.id]);
 
-  const hasPreviousMedia = currentMediaIndex > 0;
-  const hasNextMedia = currentMediaIndex < groupMedia.length - 1;
+  // Load group attachments from message history
+  const loadAttachments = async () => {
+    if (!groupDetails?.id || isLoading) return;
 
-  const navigateMedia = (direction: "prev" | "next") => {
-    if (!selectedMedia) return;
+    try {
+      setIsLoading(true);
+      
+      // Fetch group message history to get attachments
+      const response = await fetch(`/api/proxy/messages/history?type=group&target_id=${groupDetails.id}&limit=100`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("Group message history response:", data);
 
-    if (direction === "prev" && currentMediaIndex > 0) {
-      setSelectedMedia(groupMedia[currentMediaIndex - 1]);
-    } else if (
-      direction === "next" &&
-      currentMediaIndex < groupMedia.length - 1
-    ) {
-      setSelectedMedia(groupMedia[currentMediaIndex + 1]);
+      // Extract messages array from response
+      let messages = [];
+      if (data?.data && Array.isArray(data.data)) {
+        messages = data.data;
+      } else if (data?.messages && Array.isArray(data.messages)) {
+        messages = data.messages;
+      } else if (Array.isArray(data)) {
+        messages = data;
+      }
+
+      // Enhanced detection for file/attachment messages
+      const attachmentMessages = messages.filter((msg: any) => {
+        // Direct API documentation format
+        if (msg.attachment_url && msg.message_type === 'file') {
+          return true;
+        }
+        
+        // Fallback for messages with file type and attachment emoji
+        if (msg.message_type === 'file' && msg.content?.startsWith('📎 ')) {
+          return true;
+        }
+        
+        // Alternative API formats might use different properties
+        if (msg.type === 'file' || msg.type === 'attachment') {
+          return true;
+        }
+        
+        // Look for URL-like properties in file messages
+        if ((msg.file_url || msg.url || msg.media_url) && 
+            (msg.message_type === 'file' || msg.content?.startsWith('📎 '))) {
+          return true;
+        }
+        
+        // Check for attachments array in some API structures
+        if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      console.log("Found attachment messages:", attachmentMessages.length);
+      
+      // Convert messages to attachment format
+      const attachmentData: AttachmentItem[] = attachmentMessages.map((msg: any) => {
+        const filename = msg.content?.replace('📎 ', '') || 'Unknown File';
+        
+        // Try to determine mime type from filename extension
+        let mimeType = 'application/octet-stream';
+        const extension = filename.split('.').pop()?.toLowerCase();
+        if (extension) {
+          const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+          const documentExtensions = ['pdf', 'doc', 'docx', 'txt'];
+          
+          if (imageExtensions.includes(extension)) {
+            mimeType = `image/${extension === 'jpg' ? 'jpeg' : extension}`;
+          } else if (documentExtensions.includes(extension)) {
+            mimeType = extension === 'pdf' ? 'application/pdf' : 
+                      extension === 'doc' ? 'application/msword' :
+                      extension === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
+                      'text/plain';
+          }
+        }
+
+        // First try to get the direct attachment_url from the message
+        let attachmentUrl = msg.attachment_url;
+        
+        // If no attachment_url provided, try alternative approach
+        if (!attachmentUrl) {
+          // Check if this message format includes file_id
+          if (msg.file_id) {
+            attachmentUrl = `/api/proxy/files/${msg.file_id}`;
+          } 
+          // Extract URL from the object if it exists
+          else if (typeof msg === 'object' && msg !== null) {
+            // Sometimes URL might be hidden in nested properties or with different names
+            const possibleUrlProps = ['url', 'file_url', 'media_url', 'download_url'];
+            for (const prop of possibleUrlProps) {
+              if (msg[prop] && typeof msg[prop] === 'string') {
+                attachmentUrl = msg[prop];
+                break;
+              }
+            }
+          }
+        }
+        
+        // Log warning if we still couldn't find a URL
+        if (!attachmentUrl) {
+          console.warn(`Message has file type but no attachment URL: ${JSON.stringify(msg)}`);
+        }
+
+        return {
+          file_id: msg.message_id || msg.id,
+          filename: filename,
+          size: 0, // Size not available from message history
+          mime_type: mimeType,
+          url: attachmentUrl,
+          uploaded_at: msg.sent_at || msg.created_at || new Date().toISOString(),
+        };
+      });
+
+      // Filter out any attachments without URLs
+      const validAttachments = attachmentData.filter(attachment => !!attachment.url);
+      
+      setAttachments(validAttachments);
+      console.log("Loaded group attachments:", validAttachments);
+
+      // Set pagination
+      setPagination({
+        current_page: 1,
+        total_pages: 1,
+        total_items: validAttachments.length,
+        items_per_page: validAttachments.length,
+        has_more_pages: false,
+      });
+      
+      setCurrentPage(1);
+    } catch (error) {
+      console.error("Error loading group attachments:", error);
+      // Silently handle error
+      setAttachments([]); // Set empty array as fallback
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load more attachments - disabled for message history approach
+  const loadMoreAttachments = async () => {
+    // Since we load all attachments from message history in one request,
+    // this function is no longer needed but kept for UI compatibility
+    console.log("Load more attachments disabled for message history approach");
+  };
+
+  // Download file using attachment URL
+  const downloadFile = async (attachment: AttachmentItem) => {
+    try {
+      if (!attachment.url) {
+        throw new Error("No download URL available for this attachment");
+      }
+      
+      // Create a temporary anchor element to trigger download
+      const link = document.createElement('a');
+      link.href = attachment.url;
+      link.download = attachment.filename;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success("File download started");
+    } catch (error) {
+      console.error("Error downloading file:", error);
+      toast.error("Failed to download file");
     }
   };
 
   // Format file size for display
-  const formatFileSize = (sizeStr?: string): string => {
-    if (!sizeStr) return "Unknown size";
-    return sizeStr;
+  const formatFileSize = (size: number): string => {
+    if (!size) return "Unknown size";
+    
+    if (size < 1024) return `${size} bytes`;
+    else if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    else if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    else return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
-  // Function to get thumbnail URL (mock implementation)
-  const getThumbnailUrl = (fileId: string): string => {
-    const media = groupMedia.find((item) => item.id === fileId);
-    return media?.url || "https://via.placeholder.com/150";
-  };
-
-  // Function to get file URL (mock implementation)
-  const getFileUrl = (fileId: string): string => {
-    const media = groupMedia.find((item) => item.id === fileId);
-    return media?.url || "#";
-  };
-
-  // Function to download a file (mock implementation)
-  const downloadFile = (fileId: string) => {
-    toast.success(`File download started: ${fileId}`);
-  };
-
-  // Function to share a file with users
-  const shareFileWithUsers = async ({
-    fileId,
-    userIds,
-  }: {
-    fileId: string;
-    userIds: string[];
-  }) => {
-    toast.success(`File shared with ${userIds.length} users`);
-    return true;
-  };
-
-  // Function to show share dialog
-  const showShareDialog = (file: MediaItem) => {
-    setSelectedFile(file);
+  // Show share dialog
+  const showShareDialog = (attachment: AttachmentItem) => {
+    setSelectedAttachment(attachment);
     setShowShareModal(true);
-    // TODO: Implement share functionality with API friends
-    console.log("Share dialog opened for file:", file);
+
+    // Reset share selections
+    setFriendsList((prev) =>
+      prev.map((friend) => ({
+        ...friend,
+        shareSelected: false,
+      }))
+    );
   };
 
-  // Function to close share dialog
+  // Close share dialog
   const closeShareDialog = () => {
     setShowShareModal(false);
-    setSelectedFile(null);
+    setSelectedAttachment(null);
   };
 
-  // Function to handle file sharing
+  // Handle sharing file
   const handleShareFile = async () => {
-    if (!selectedFile) return;
+    if (!selectedAttachment) return;
 
-    // TODO: Implement file sharing with API friends
+    const selectedFriendIds = friendsList
+      .filter((friend) => friend.shareSelected)
+      .map((friend) => friend.id);
+
+    if (selectedFriendIds.length === 0) {
+      toast.error("Please select at least one friend to share with");
+      return;
+    }
+
     toast.success("File sharing feature coming soon!");
     closeShareDialog();
   };
 
-  // Function to toggle friend share selection
-  const toggleShareSelection = (id: string) => {
-    // TODO: Implement share selection with API friends
-    console.log("Toggle share selection for friend:", id);
+  // Toggle friend selection in share dialog
+  const toggleShareSelection = (friendId: string) => {
+    setFriendsList((prev) =>
+      prev.map((friend) =>
+        friend.id === friendId
+          ? { ...friend, shareSelected: !friend.shareSelected }
+          : friend
+      )
+    );
   };
 
-  // Function to open media preview
-  const openMediaPreview = (media: MediaItem) => {
-    setSelectedMedia(media);
-    setShowMediaPreview(true);
+  // Attachment preview functions
+  const openAttachmentPreview = (attachment: AttachmentItem) => {
+    setSelectedAttachment(attachment);
+    setShowPreview(true);
   };
 
-  // Function to close media preview
-  const closeMediaPreview = () => {
-    setShowMediaPreview(false);
-    setSelectedMedia(null);
+  const closeAttachmentPreview = () => {
+    setShowPreview(false);
+    setSelectedAttachment(null);
   };
+
+  // Helper function to check if attachment is an image
+  const isImage = (mimeType: string) => {
+    return mimeType.startsWith("image/");
+  };
+
+  const currentAttachmentIndex = selectedAttachment
+    ? attachments.findIndex(
+        (item) => item.file_id === selectedAttachment.file_id
+      )
+    : -1;
+
+  const hasPreviousAttachment = currentAttachmentIndex > 0;
+  const hasNextAttachment = currentAttachmentIndex < attachments.length - 1;
+
+  const navigateAttachment = (direction: "prev" | "next") => {
+    const currentIndex = currentAttachmentIndex;
+    if (currentIndex === -1) return;
+
+    if (direction === "prev" && currentIndex > 0) {
+      setSelectedAttachment(attachments[currentIndex - 1]);
+    } else if (direction === "next" && currentIndex < attachments.length - 1) {
+      setSelectedAttachment(attachments[currentIndex + 1]);
+    }
+  };
+
+  // Initialize friends list for sharing
+  useEffect(() => {
+    if (apiFriends && apiFriends.length > 0) {
+      setFriendsList(
+        apiFriends.map((friend) => ({
+          ...friend,
+          shareSelected: false,
+        }))
+      );
+    }
+  }, [apiFriends]);
 
   return (
     <div className="w-80 h-full border-l border-gray-200 bg-white overflow-y-auto shadow-lg">
@@ -818,10 +992,9 @@ export default function GroupProfileInfo({
         )}
       </div>
 
-      {/* Media Section */}
-      <div className="border-t border-gray-200 pt-6">
-        {/* Enhanced Blocked Users Section with better UX - Show only if there are blocked users */}
-        {membersWithStatus.some((member) => member.isBlocked) && (
+      {/* Blocked Users Section - Show only if there are blocked users */}
+      {membersWithStatus.some((member) => member.isBlocked) && (
+        <div className="p-4 border-t border-gray-200">
           <div className="mb-6 bg-red-50 p-4 rounded-lg border border-red-200">
             <div className="flex items-center justify-between mb-4">
               <div>
@@ -902,119 +1075,87 @@ export default function GroupProfileInfo({
                 ))}
             </div>
           </div>
-        )}
-
-        <h3 className="text-lg font-semibold mb-4">Media</h3>
-
-        <div className="flex justify-between items-center mb-3">
-          <h3 className="font-medium text-black">
-            Media
-            <span className="text-gray-500 text-sm">
-              {" "}
-              ({groupMedia.length})
-            </span>
-          </h3>
-          <button
-            onClick={() => setShowMediaModal(true)}
-            className="text-sm text-blue-500 hover:underline"
-          >
-            View All
-          </button>
         </div>
+      )}
 
-        {/* Media Grid */}
-        <div className="relative">
-          {isLoadingMedia ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
-              <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          ) : groupMedia.length === 0 ? (
-            <div className="py-4 text-center text-gray-500">No media files</div>
-          ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {groupMedia.slice(0, 3).map((item) => (
-                <div
-                  key={item.id}
-                  className="aspect-square bg-gray-200 rounded-md overflow-hidden cursor-pointer relative group"
-                  onClick={() => openMediaPreview(item)}
-                >
-                  <img
-                    src={getThumbnailUrl(item.id)}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        downloadFile(item.id);
-                      }}
-                      className="bg-white text-blue-500 p-2 rounded-full"
-                    >
-                      <FaDownload className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Files Section */}
-      <div className="p-4">
+      {/* Attachments Section */}
+      <div className="p-4 border-t border-gray-200">
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-black font-medium">
-            File
+            Attachments
             <span className="text-gray-500 text-sm">
               {" "}
-              ({groupFiles.length})
+              ({attachments.length})
             </span>
           </h3>
           <button
-            onClick={() => setShowFilesModal(true)}
+            onClick={() => setShowAttachmentsModal(true)}
             className="text-sm text-blue-500 hover:underline"
           >
             View All
           </button>
         </div>
 
-        {/* File List */}
+        {/* Attachments List */}
         <div className="relative">
-          {isLoadingFiles ? (
+          {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
               <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-          ) : groupFiles.length === 0 ? (
-            <div className="py-4 text-center text-gray-500">No files</div>
+          )}
+
+          {attachments.length === 0 && !isLoading ? (
+            <div className="py-4 text-center text-gray-500">No attachments</div>
           ) : (
             <div className="space-y-3">
-              {groupFiles.slice(0, 3).map((file) => (
+              {attachments.slice(0, 5).map((attachment) => (
                 <div
-                  key={file.id}
-                  className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100"
+                  key={attachment.file_id}
+                  className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100 cursor-pointer"
+                  onClick={() => openAttachmentPreview(attachment)}
                 >
                   <div className="mr-3">
-                    <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
-                      <FaFile className="h-5 w-5 text-blue-500" />
-                    </div>
+                    {isImage(attachment.mime_type) ? (
+                      <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-200">
+                        <img
+                          src={attachment.url}
+                          alt={attachment.filename}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
+                        <FaFile className="h-5 w-5 text-blue-500" />
+                      </div>
+                    )}
                   </div>
                   <div className="flex-grow min-w-0">
-                    <p className="text-sm font-medium truncate">{file.name}</p>
+                    <p className="text-sm font-medium truncate">
+                      {attachment.filename}
+                    </p>
                     <p className="text-xs text-gray-500">
-                      {formatFileSize(file.size)}
+                      {formatFileSize(attachment.size)}
                     </p>
                   </div>
                   <div className="ml-2 flex">
                     <button
-                      onClick={() => downloadFile(file.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(attachment);
+                      }}
                       className="p-1 text-gray-500 hover:text-blue-500"
                       title="Download"
                     >
                       <FaDownload className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => showShareDialog(file)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        showShareDialog(attachment);
+                      }}
                       className="p-1 text-gray-500 hover:text-blue-500"
                       title="Share"
                     >
@@ -1148,68 +1289,187 @@ export default function GroupProfileInfo({
         </div>
       )}
 
-      {/* Media Preview Modal */}
-      {showMediaPreview && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-70 z-50">
-          <div className="bg-white rounded-lg overflow-hidden shadow-lg max-w-3xl w-full">
-            <div className="relative">
-              <img
-                src={selectedMedia?.url}
-                alt={selectedMedia?.name}
-                className="w-full h-auto max-h-[70vh] object-contain"
-              />
+      {/* Attachments Modal */}
+      {showAttachmentsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h3 className="font-medium text-lg">All Attachments</h3>
               <button
-                onClick={closeMediaPreview}
-                className="absolute top-3 right-3 p-2 rounded-full bg-white bg-opacity-80 hover:bg-opacity-100"
+                onClick={() => setShowAttachmentsModal(false)}
+                className="text-gray-500 hover:text-gray-700"
               >
-                <X className="h-5 w-5 text-gray-800" />
+                <FaTimes className="h-5 w-5" />
               </button>
-
-              {/* Navigation arrows */}
-              {hasPreviousMedia && (
-                <button
-                  onClick={() => navigateMedia("prev")}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black bg-opacity-50 hover:bg-opacity-70 text-white"
-                >
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
-              )}
-
-              {hasNextMedia && (
-                <button
-                  onClick={() => navigateMedia("next")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-black bg-opacity-50 hover:bg-opacity-70 text-white"
-                >
-                  <ChevronRight className="h-6 w-6" />
-                </button>
-              )}
             </div>
 
-            <div className="p-4 bg-white">
-              <h3 className="text-lg font-semibold">{selectedMedia?.name}</h3>
-              <p className="text-sm text-gray-500">{selectedMedia?.size}</p>
+            <div
+              className="overflow-y-auto p-4"
+              style={{ maxHeight: "calc(90vh - 8rem)" }}
+            >
+              {isLoadingMore && (
+                <div className="flex justify-center py-4">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
 
-              <div className="flex space-x-3 mt-3">
+              <div className="space-y-3">
+                {attachments.map((attachment) => (
+                  <div
+                    key={attachment.file_id}
+                    className="flex items-center bg-gray-50 p-3 rounded-md hover:bg-gray-100 cursor-pointer"
+                    onClick={() => openAttachmentPreview(attachment)}
+                  >
+                    <div className="mr-3">
+                      {isImage(attachment.mime_type) ? (
+                        <div className="w-12 h-12 rounded-md overflow-hidden bg-gray-200">
+                          <img
+                            src={attachment.url}
+                            alt={attachment.filename}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-12 h-12 rounded-md bg-blue-100 flex items-center justify-center">
+                          <FaFile className="h-6 w-6 text-blue-500" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-grow min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {attachment.filename}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(attachment.size)}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {new Date(attachment.uploaded_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="ml-2 flex">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadFile(attachment);
+                        }}
+                        className="p-2 text-gray-500 hover:text-blue-500"
+                        title="Download"
+                      >
+                        <FaDownload className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showShareDialog(attachment);
+                        }}
+                        className="p-2 text-gray-500 hover:text-blue-500"
+                        title="Share"
+                      >
+                        <FaShareAlt className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Load more button */}
+              {pagination.has_more_pages && (
+                <div className="flex justify-center mt-4">
+                  <button
+                    onClick={loadMoreAttachments}
+                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300"
+                    disabled={isLoadingMore}
+                  >
+                    {isLoadingMore ? "Loading..." : "Load More"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Media Preview Modal - Removed outdated references, kept only attachment preview */}
+      {showPreview && selectedAttachment && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center">
+          <div className="relative w-full max-w-4xl">
+            <button
+              onClick={closeAttachmentPreview}
+              className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
+            >
+              <FaTimes className="h-6 w-6" />
+            </button>
+
+            <div className="flex flex-col items-center">
+              {isImage(selectedAttachment.mime_type) ? (
+                <img
+                  src={selectedAttachment.url}
+                  alt={selectedAttachment.filename}
+                  className="max-h-[80vh] max-w-full object-contain"
+                  onError={(e) => {
+                    e.currentTarget.src = "https://via.placeholder.com/400?text=Image+Not+Available";
+                  }}
+                />
+              ) : (
+                <div className="bg-white rounded-lg p-8 text-center">
+                  <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
+                    <FaFile className="h-8 w-8 text-blue-500" />
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    {selectedAttachment.filename}
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    {formatFileSize(selectedAttachment.size)}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    This file type cannot be previewed
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 flex justify-center space-x-4">
                 <button
-                  onClick={() =>
-                    selectedMedia && downloadFile(selectedMedia.id)
-                  }
-                  className="px-4 py-2 bg-blue-500 text-white rounded-md flex items-center hover:bg-blue-600"
+                  onClick={() => downloadFile(selectedAttachment)}
+                  className="px-4 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 flex items-center"
                 >
-                  <FaDownload className="mr-2" />
+                  <FaDownload className="h-4 w-4 mr-2" />
                   Download
                 </button>
 
                 <button
-                  onClick={() =>
-                    selectedMedia && showShareDialog(selectedMedia)
-                  }
-                  className="px-4 py-2 bg-green-500 text-white rounded-md flex items-center hover:bg-green-600"
+                  onClick={() => showShareDialog(selectedAttachment)}
+                  className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
                 >
-                  <FaShareAlt className="mr-2" />
+                  <FaShareAlt className="h-4 w-4 mr-2" />
                   Share
                 </button>
               </div>
+
+              {/* Navigation arrows */}
+              {hasPreviousAttachment && (
+                <div className="absolute inset-y-0 left-0 flex items-center">
+                  <button
+                    onClick={() => navigateAttachment("prev")}
+                    className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
+                  >
+                    <ChevronLeft className="h-6 w-6" />
+                  </button>
+                </div>
+              )}
+
+              {hasNextAttachment && (
+                <div className="absolute inset-y-0 right-0 flex items-center">
+                  <button
+                    onClick={() => navigateAttachment("next")}
+                    className="bg-black bg-opacity-50 hover:bg-opacity-70 p-2 rounded-full text-white"
+                  >
+                    <ChevronRight className="h-6 w-6" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1229,17 +1489,32 @@ export default function GroupProfileInfo({
               </button>
             </div>
 
-            {selectedFile && (
+            {selectedAttachment && (
               <div className="mb-4 p-3 bg-gray-50 rounded-md flex items-center">
                 <div className="mr-3">
-                  <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
-                    <FaFile className="h-5 w-5 text-blue-500" />
-                  </div>
+                  {isImage(selectedAttachment.mime_type) ? (
+                    <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-200">
+                      <img
+                        src={selectedAttachment.url}
+                        alt={selectedAttachment.filename}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
+                      <FaFile className="h-5 w-5 text-blue-500" />
+                    </div>
+                  )}
                 </div>
                 <div>
-                  <p className="text-sm font-medium">{selectedFile.name}</p>
+                  <p className="text-sm font-medium">
+                    {selectedAttachment.filename}
+                  </p>
                   <p className="text-xs text-gray-500">
-                    {formatFileSize(selectedFile.size)}
+                    {formatFileSize(selectedAttachment.size)}
                   </p>
                 </div>
               </div>
@@ -1249,185 +1524,47 @@ export default function GroupProfileInfo({
               <label className="block text-sm font-medium mb-2">
                 Share with:
               </label>
-              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-4 text-center text-gray-500">
-                <p>File sharing feature coming soon!</p>
-                <p className="text-sm mt-2">
-                  This feature will be available with the next update.
-                </p>
+              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                {friendsList.map((friend) => (
+                  <div
+                    key={friend.id}
+                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
+                      friend.shareSelected ? "bg-blue-50" : ""
+                    }`}
+                    onClick={() => toggleShareSelection(friend.id)}
+                  >
+                    <div className="flex items-center">
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
+                        {friend.avatar_url || friend.profile_picture_url ? (
+                          <img
+                            src={friend.avatar_url || friend.profile_picture_url}
+                            alt={friend.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <FaUser className="h-4 w-4 text-gray-500" />
+                        )}
+                      </div>
+                      <span className="text-sm">{friend.name}</span>
+                    </div>
+                    {friend.shareSelected && (
+                      <div className="h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
+                        <FaCheck className="h-2 w-2 text-white" />
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
 
             <div className="flex justify-end">
               <button
                 onClick={handleShareFile}
-                className="px-4 py-2 bg-gray-300 text-gray-500 rounded hover:bg-gray-400 cursor-not-allowed"
-                disabled={true}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                disabled={!friendsList.some((friend) => friend.shareSelected)}
               >
-                Share (Coming Soon)
+                Share
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Media Modal */}
-      {showMediaModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="font-medium text-lg">Media Files</h3>
-              <button
-                onClick={() => setShowMediaModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <FaTimes className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div
-              className="overflow-y-auto p-4"
-              style={{ maxHeight: "calc(90vh - 8rem)" }}
-            >
-              {isLoadingMoreMedia && (
-                <div className="flex justify-center py-4">
-                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 md:grid-cols-4 gap-3">
-                {groupMedia.map((item) => (
-                  <div
-                    key={item.id}
-                    className="aspect-square bg-gray-200 rounded-md overflow-hidden cursor-pointer relative group"
-                    onClick={() => openMediaPreview(item)}
-                  >
-                    <img
-                      src={getThumbnailUrl(item.id)}
-                      alt=""
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadFile(item.id);
-                        }}
-                        className="bg-white text-blue-500 p-2 rounded-full"
-                      >
-                        <FaDownload className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Load more button */}
-              {mediaPagination.has_more_pages && (
-                <div className="flex justify-center mt-4">
-                  <button
-                    onClick={() => {
-                      setIsLoadingMoreMedia(true);
-                      // Mock loading more media
-                      setTimeout(() => {
-                        setIsLoadingMoreMedia(false);
-                        toast.success("More media loaded");
-                      }, 1000);
-                    }}
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    disabled={isLoadingMoreMedia}
-                  >
-                    {isLoadingMoreMedia ? "Loading..." : "Load More"}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Files Modal */}
-      {showFilesModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[90vh] overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="font-medium text-lg">Files</h3>
-              <button
-                onClick={() => setShowFilesModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <FaTimes className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div
-              className="overflow-y-auto p-4"
-              style={{ maxHeight: "calc(90vh - 8rem)" }}
-            >
-              {isLoadingMoreFiles && (
-                <div className="flex justify-center py-4">
-                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-              )}
-
-              {/* File list for modal */}
-              <div className="space-y-3">
-                {groupFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    className="flex items-center bg-gray-50 p-3 rounded-md hover:bg-gray-100"
-                  >
-                    <div className="mr-3">
-                      <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
-                        <FaFile className="h-5 w-5 text-blue-500" />
-                      </div>
-                    </div>
-                    <div className="flex-grow min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {file.name}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {formatFileSize(file.size)}
-                      </p>
-                    </div>
-                    <div className="ml-2 flex">
-                      <button
-                        onClick={() => downloadFile(file.id)}
-                        className="p-2 text-gray-500 hover:text-blue-500"
-                        title="Download"
-                      >
-                        <FaDownload className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => showShareDialog(file)}
-                        className="p-2 text-gray-500 hover:text-blue-500"
-                        title="Share"
-                      >
-                        <FaShareAlt className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Load more button */}
-              {filesPagination.has_more_pages && (
-                <div className="flex justify-center mt-4">
-                  <button
-                    onClick={() => {
-                      setIsLoadingMoreFiles(true);
-                      // Mock loading more files
-                      setTimeout(() => {
-                        setIsLoadingMoreFiles(false);
-                        toast.success("More files loaded");
-                      }, 1000);
-                    }}
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    disabled={isLoadingMoreFiles}
-                  >
-                    {isLoadingMoreFiles ? "Loading..." : "Load More"}
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </div>

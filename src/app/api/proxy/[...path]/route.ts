@@ -328,7 +328,7 @@ async function handleRequest(
     }
 
     // Determine which base URL to use based on the endpoint
-    const isGroupEndpoint = path === "groups" || path.startsWith("groups/");
+    const isGroupEndpoint = path === "groups" || path.startsWith("groups/") || path.startsWith("group/");
     const isMessagesEndpoint =
       path === "messages" || path.startsWith("messages/");
     const isAuthEndpoint = path === "auth" || path.startsWith("auth/");
@@ -338,8 +338,22 @@ async function handleRequest(
       path === "notification" ||
       path.startsWith("notification/");
 
-    // Special handling for group messages - redirect to direct messages endpoint
+    // Special handling for group messages - redirect to correct endpoint format
     let finalPath = path;
+    
+    // Handle group/messages pattern (convert to groups/{groupId}/messages)
+    if (path.startsWith("group/") && path.includes("messages")) {
+      const pathParts = path.split("/");
+      if (pathParts.length >= 3 && pathParts[0] === "group" && pathParts[2] === "messages") {
+        const groupId = pathParts[1];
+        finalPath = `groups/${groupId}/messages`;
+        console.log(
+          `[Proxy] Converting group message path from ${path} to ${finalPath}`
+        );
+      }
+    }
+    
+    // Handle groups/{groupId}/messages/{messageId} pattern for PUT/DELETE/PATCH
     if (
       path.includes("groups/") &&
       path.includes("/messages/") &&
