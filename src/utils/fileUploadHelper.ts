@@ -2,7 +2,7 @@
  * File Upload Helper - 2-Step Process (Optimized for Chat)
  * Step 1: Upload file directly to file service via proxy (bypasses useFiles auto-refresh)
  * Step 2: Send message with file attachment to /api/proxy/messages
- * 
+ *
  * This implementation prevents unnecessary API calls by avoiding the useFiles hook
  * which automatically refreshes the file list after uploads.
  */

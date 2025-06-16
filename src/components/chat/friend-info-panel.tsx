@@ -168,14 +168,16 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
     try {
       setIsLoading(true);
-      
+
       // Fetch message history to get attachments
-      const response = await fetch(`/api/proxy/messages/history?type=private&target_id=${friendDetails.id}&limit=100`);
-      
+      const response = await fetch(
+        `/api/proxy/messages/history?type=private&target_id=${friendDetails.id}&limit=100`
+      );
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const data = await response.json();
       console.log("Message history response:", data);
 
@@ -190,40 +192,54 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       }
 
       // Filter messages that have attachments
-      const attachmentMessages = messages.filter((msg: any) => 
-        msg.attachment_url && msg.message_type === 'file'
+      const attachmentMessages = messages.filter(
+        (msg: any) => msg.attachment_url && msg.message_type === "file"
       );
 
       // Convert messages to attachment format
-      const attachmentData: AttachmentItem[] = attachmentMessages.map((msg: any) => {
-        const filename = msg.content?.replace('📎 ', '') || 'Unknown File';
-        
-        // Try to determine mime type from filename extension
-        let mimeType = 'application/octet-stream';
-        const extension = filename.split('.').pop()?.toLowerCase();
-        if (extension) {
-          const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-          const documentExtensions = ['pdf', 'doc', 'docx', 'txt'];
-          
-          if (imageExtensions.includes(extension)) {
-            mimeType = `image/${extension === 'jpg' ? 'jpeg' : extension}`;
-          } else if (documentExtensions.includes(extension)) {
-            mimeType = extension === 'pdf' ? 'application/pdf' : 
-                      extension === 'doc' ? 'application/msword' :
-                      extension === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
-                      'text/plain';
-          }
-        }
+      const attachmentData: AttachmentItem[] = attachmentMessages.map(
+        (msg: any) => {
+          const filename = msg.content?.replace("📎 ", "") || "Unknown File";
 
-        return {
-          file_id: msg.message_id || msg.id,
-          filename: filename,
-          size: 0, // Size not available from message history
-          mime_type: mimeType,
-          url: msg.attachment_url,
-          uploaded_at: msg.sent_at || msg.created_at || new Date().toISOString(),
-        };
-      });
+          // Try to determine mime type from filename extension
+          let mimeType = "application/octet-stream";
+          const extension = filename.split(".").pop()?.toLowerCase();
+          if (extension) {
+            const imageExtensions = [
+              "jpg",
+              "jpeg",
+              "png",
+              "gif",
+              "webp",
+              "svg",
+            ];
+            const documentExtensions = ["pdf", "doc", "docx", "txt"];
+
+            if (imageExtensions.includes(extension)) {
+              mimeType = `image/${extension === "jpg" ? "jpeg" : extension}`;
+            } else if (documentExtensions.includes(extension)) {
+              mimeType =
+                extension === "pdf"
+                  ? "application/pdf"
+                  : extension === "doc"
+                  ? "application/msword"
+                  : extension === "docx"
+                  ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  : "text/plain";
+            }
+          }
+
+          return {
+            file_id: msg.message_id || msg.id,
+            filename: filename,
+            size: 0, // Size not available from message history
+            mime_type: mimeType,
+            url: msg.attachment_url,
+            uploaded_at:
+              msg.sent_at || msg.created_at || new Date().toISOString(),
+          };
+        }
+      );
 
       setAttachments(attachmentData);
       console.log("Loaded attachments from messages:", attachmentData);
@@ -257,14 +273,14 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   const downloadFile = async (attachment: AttachmentItem) => {
     try {
       // Create a temporary anchor element to trigger download
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = attachment.url;
       link.download = attachment.filename;
-      link.target = '_blank';
+      link.target = "_blank";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
+
       toast.success("File download started");
     } catch (error) {
       console.error("Error downloading file:", error);

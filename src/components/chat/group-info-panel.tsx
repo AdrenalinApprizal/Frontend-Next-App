@@ -123,7 +123,8 @@ export default function GroupProfileInfo({
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [selectedAttachment, setSelectedAttachment] = useState<AttachmentItem | null>(null);
+  const [selectedAttachment, setSelectedAttachment] =
+    useState<AttachmentItem | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [friendsList, setFriendsList] = useState<Friend[]>([]);
 
@@ -477,14 +478,16 @@ export default function GroupProfileInfo({
 
     try {
       setIsLoading(true);
-      
+
       // Fetch group message history to get attachments
-      const response = await fetch(`/api/proxy/messages/history?type=group&target_id=${groupDetails.id}&limit=100`);
-      
+      const response = await fetch(
+        `/api/proxy/messages/history?type=group&target_id=${groupDetails.id}&limit=100`
+      );
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const data = await response.json();
       console.log("Group message history response:", data);
 
@@ -501,97 +504,128 @@ export default function GroupProfileInfo({
       // Enhanced detection for file/attachment messages
       const attachmentMessages = messages.filter((msg: any) => {
         // Direct API documentation format
-        if (msg.attachment_url && msg.message_type === 'file') {
+        if (msg.attachment_url && msg.message_type === "file") {
           return true;
-        }
-        
-        // Fallback for messages with file type and attachment emoji
-        if (msg.message_type === 'file' && msg.content?.startsWith('📎 ')) {
-          return true;
-        }
-        
-        // Alternative API formats might use different properties
-        if (msg.type === 'file' || msg.type === 'attachment') {
-          return true;
-        }
-        
-        // Look for URL-like properties in file messages
-        if ((msg.file_url || msg.url || msg.media_url) && 
-            (msg.message_type === 'file' || msg.content?.startsWith('📎 '))) {
-          return true;
-        }
-        
-        // Check for attachments array in some API structures
-        if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
-          return true;
-        }
-        
-        return false;
-      });
-      
-      console.log("Found attachment messages:", attachmentMessages.length);
-      
-      // Convert messages to attachment format
-      const attachmentData: AttachmentItem[] = attachmentMessages.map((msg: any) => {
-        const filename = msg.content?.replace('📎 ', '') || 'Unknown File';
-        
-        // Try to determine mime type from filename extension
-        let mimeType = 'application/octet-stream';
-        const extension = filename.split('.').pop()?.toLowerCase();
-        if (extension) {
-          const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-          const documentExtensions = ['pdf', 'doc', 'docx', 'txt'];
-          
-          if (imageExtensions.includes(extension)) {
-            mimeType = `image/${extension === 'jpg' ? 'jpeg' : extension}`;
-          } else if (documentExtensions.includes(extension)) {
-            mimeType = extension === 'pdf' ? 'application/pdf' : 
-                      extension === 'doc' ? 'application/msword' :
-                      extension === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
-                      'text/plain';
-          }
         }
 
-        // First try to get the direct attachment_url from the message
-        let attachmentUrl = msg.attachment_url;
-        
-        // If no attachment_url provided, try alternative approach
-        if (!attachmentUrl) {
-          // Check if this message format includes file_id
-          if (msg.file_id) {
-            attachmentUrl = `/api/proxy/files/${msg.file_id}`;
-          } 
-          // Extract URL from the object if it exists
-          else if (typeof msg === 'object' && msg !== null) {
-            // Sometimes URL might be hidden in nested properties or with different names
-            const possibleUrlProps = ['url', 'file_url', 'media_url', 'download_url'];
-            for (const prop of possibleUrlProps) {
-              if (msg[prop] && typeof msg[prop] === 'string') {
-                attachmentUrl = msg[prop];
-                break;
+        // Fallback for messages with file type and attachment emoji
+        if (msg.message_type === "file" && msg.content?.startsWith("📎 ")) {
+          return true;
+        }
+
+        // Alternative API formats might use different properties
+        if (msg.type === "file" || msg.type === "attachment") {
+          return true;
+        }
+
+        // Look for URL-like properties in file messages
+        if (
+          (msg.file_url || msg.url || msg.media_url) &&
+          (msg.message_type === "file" || msg.content?.startsWith("📎 "))
+        ) {
+          return true;
+        }
+
+        // Check for attachments array in some API structures
+        if (
+          msg.attachments &&
+          Array.isArray(msg.attachments) &&
+          msg.attachments.length > 0
+        ) {
+          return true;
+        }
+
+        return false;
+      });
+
+      console.log("Found attachment messages:", attachmentMessages.length);
+
+      // Convert messages to attachment format
+      const attachmentData: AttachmentItem[] = attachmentMessages.map(
+        (msg: any) => {
+          const filename = msg.content?.replace("📎 ", "") || "Unknown File";
+
+          // Try to determine mime type from filename extension
+          let mimeType = "application/octet-stream";
+          const extension = filename.split(".").pop()?.toLowerCase();
+          if (extension) {
+            const imageExtensions = [
+              "jpg",
+              "jpeg",
+              "png",
+              "gif",
+              "webp",
+              "svg",
+            ];
+            const documentExtensions = ["pdf", "doc", "docx", "txt"];
+
+            if (imageExtensions.includes(extension)) {
+              mimeType = `image/${extension === "jpg" ? "jpeg" : extension}`;
+            } else if (documentExtensions.includes(extension)) {
+              mimeType =
+                extension === "pdf"
+                  ? "application/pdf"
+                  : extension === "doc"
+                  ? "application/msword"
+                  : extension === "docx"
+                  ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  : "text/plain";
+            }
+          }
+
+          // First try to get the direct attachment_url from the message
+          let attachmentUrl = msg.attachment_url;
+
+          // If no attachment_url provided, try alternative approach
+          if (!attachmentUrl) {
+            // Check if this message format includes file_id
+            if (msg.file_id) {
+              attachmentUrl = `/api/proxy/files/${msg.file_id}`;
+            }
+            // Extract URL from the object if it exists
+            else if (typeof msg === "object" && msg !== null) {
+              // Sometimes URL might be hidden in nested properties or with different names
+              const possibleUrlProps = [
+                "url",
+                "file_url",
+                "media_url",
+                "download_url",
+              ];
+              for (const prop of possibleUrlProps) {
+                if (msg[prop] && typeof msg[prop] === "string") {
+                  attachmentUrl = msg[prop];
+                  break;
+                }
               }
             }
           }
-        }
-        
-        // Log warning if we still couldn't find a URL
-        if (!attachmentUrl) {
-          console.warn(`Message has file type but no attachment URL: ${JSON.stringify(msg)}`);
-        }
 
-        return {
-          file_id: msg.message_id || msg.id,
-          filename: filename,
-          size: 0, // Size not available from message history
-          mime_type: mimeType,
-          url: attachmentUrl,
-          uploaded_at: msg.sent_at || msg.created_at || new Date().toISOString(),
-        };
-      });
+          // Log warning if we still couldn't find a URL
+          if (!attachmentUrl) {
+            console.warn(
+              `Message has file type but no attachment URL: ${JSON.stringify(
+                msg
+              )}`
+            );
+          }
+
+          return {
+            file_id: msg.message_id || msg.id,
+            filename: filename,
+            size: 0, // Size not available from message history
+            mime_type: mimeType,
+            url: attachmentUrl,
+            uploaded_at:
+              msg.sent_at || msg.created_at || new Date().toISOString(),
+          };
+        }
+      );
 
       // Filter out any attachments without URLs
-      const validAttachments = attachmentData.filter(attachment => !!attachment.url);
-      
+      const validAttachments = attachmentData.filter(
+        (attachment) => !!attachment.url
+      );
+
       setAttachments(validAttachments);
       console.log("Loaded group attachments:", validAttachments);
 
@@ -603,7 +637,7 @@ export default function GroupProfileInfo({
         items_per_page: validAttachments.length,
         has_more_pages: false,
       });
-      
+
       setCurrentPage(1);
     } catch (error) {
       console.error("Error loading group attachments:", error);
@@ -627,16 +661,16 @@ export default function GroupProfileInfo({
       if (!attachment.url) {
         throw new Error("No download URL available for this attachment");
       }
-      
+
       // Create a temporary anchor element to trigger download
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = attachment.url;
       link.download = attachment.filename;
-      link.target = '_blank';
+      link.target = "_blank";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
+
       toast.success("File download started");
     } catch (error) {
       console.error("Error downloading file:", error);
@@ -647,10 +681,11 @@ export default function GroupProfileInfo({
   // Format file size for display
   const formatFileSize = (size: number): string => {
     if (!size) return "Unknown size";
-    
+
     if (size < 1024) return `${size} bytes`;
     else if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-    else if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    else if (size < 1024 * 1024 * 1024)
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
     else return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
@@ -1122,7 +1157,8 @@ export default function GroupProfileInfo({
                           alt={attachment.filename}
                           className="w-full h-full object-cover"
                           onError={(e) => {
-                            e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                            e.currentTarget.src =
+                              "https://via.placeholder.com/100?text=Image";
                           }}
                         />
                       </div>
@@ -1328,7 +1364,8 @@ export default function GroupProfileInfo({
                             alt={attachment.filename}
                             className="w-full h-full object-cover"
                             onError={(e) => {
-                              e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                              e.currentTarget.src =
+                                "https://via.placeholder.com/100?text=Image";
                             }}
                           />
                         </div>
@@ -1410,7 +1447,8 @@ export default function GroupProfileInfo({
                   alt={selectedAttachment.filename}
                   className="max-h-[80vh] max-w-full object-contain"
                   onError={(e) => {
-                    e.currentTarget.src = "https://via.placeholder.com/400?text=Image+Not+Available";
+                    e.currentTarget.src =
+                      "https://via.placeholder.com/400?text=Image+Not+Available";
                   }}
                 />
               ) : (
@@ -1499,7 +1537,8 @@ export default function GroupProfileInfo({
                         alt={selectedAttachment.filename}
                         className="w-full h-full object-cover"
                         onError={(e) => {
-                          e.currentTarget.src = "https://via.placeholder.com/100?text=Image";
+                          e.currentTarget.src =
+                            "https://via.placeholder.com/100?text=Image";
                         }}
                       />
                     </div>
@@ -1537,7 +1576,9 @@ export default function GroupProfileInfo({
                       <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
                         {friend.avatar_url || friend.profile_picture_url ? (
                           <img
-                            src={friend.avatar_url || friend.profile_picture_url}
+                            src={
+                              friend.avatar_url || friend.profile_picture_url
+                            }
                             alt={friend.name}
                             className="h-full w-full object-cover"
                           />

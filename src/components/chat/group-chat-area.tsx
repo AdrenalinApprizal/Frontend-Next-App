@@ -1444,14 +1444,19 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                           id: String(currentUserId),
                           name: "You",
                           avatar_url:
-                            userInfo?.profile_picture_url || user?.profile_picture_url || null,
+                            userInfo?.profile_picture_url ||
+                            user?.profile_picture_url ||
+                            null,
                         },
                         timestamp: new Date().toISOString(),
                         isCurrentUser: true,
                         pending: true,
                         delivered: false,
                         attachment: {
-                          type: getMediaType(file.type) === "image" ? "image" : "file",
+                          type:
+                            getMediaType(file.type) === "image"
+                              ? "image"
+                              : "file",
                           url: result.fileUrl,
                           name: file.name,
                           size: formatFileSize(file.size),
@@ -1459,24 +1464,35 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                       };
 
                       // Add optimistic message to UI immediately
-                      setMessages((prevMessages) => [...prevMessages, optimisticMessage]);
+                      setMessages((prevMessages) => [
+                        ...prevMessages,
+                        optimisticMessage,
+                      ]);
 
                       // Update message to delivered state
                       setMessages((prevMessages) =>
                         prevMessages.map((msg) =>
-                          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
+                          msg.id === tempId
+                            ? { ...msg, pending: false, delivered: true }
+                            : msg
                         )
                       );
 
                       // Auto-scroll to show the new message
                       setTimeout(() => {
-                        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                        messagesEndRef.current?.scrollIntoView({
+                          behavior: "smooth",
+                        });
                       }, 50);
 
                       toast.success("File uploaded successfully!");
                     } catch (error) {
                       console.error("File upload failed:", error);
-                      toast.error(error instanceof Error ? error.message : "File upload failed");
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "File upload failed"
+                      );
                     } finally {
                       setIsUploadingFile(false);
                       setUploadProgress(0);

@@ -1314,7 +1314,10 @@ export const useGroup = () => {
               type: "text",
             }),
           });
-          console.log(`[Groups Store] Messages endpoint edit successful:`, response);
+          console.log(
+            `[Groups Store] Messages endpoint edit successful:`,
+            response
+          );
         } catch (messagesError) {
           console.log(
             `[Groups Store] Messages endpoint edit failed:`,
@@ -1327,13 +1330,16 @@ export const useGroup = () => {
             console.log(
               `[Groups Store] Trying group-specific edit endpoint: groups/${groupId}/messages/${messageId}`
             );
-            response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
-              method: "PUT",
-              body: JSON.stringify({
-                content: newContent,
-                type: "text",
-              }),
-            });
+            response = await apiCall(
+              `groups/${groupId}/messages/${messageId}`,
+              {
+                method: "PUT",
+                body: JSON.stringify({
+                  content: newContent,
+                  type: "text",
+                }),
+              }
+            );
             console.log(
               `[Groups Store] Group-specific edit successful:`,
               response
@@ -1461,15 +1467,9 @@ export const useGroup = () => {
             method: "DELETE",
             body: JSON.stringify({ group_id: groupId }),
           });
-          console.log(
-            `[Groups Store] Messages delete successful:`,
-            response
-          );
+          console.log(`[Groups Store] Messages delete successful:`, response);
         } catch (messagesError) {
-          console.log(
-            `[Groups Store] Messages delete failed:`,
-            messagesError
-          );
+          console.log(`[Groups Store] Messages delete failed:`, messagesError);
           lastError = messagesError;
 
           // Option 2: Try group-specific endpoint as fallback
@@ -1477,9 +1477,12 @@ export const useGroup = () => {
             console.log(
               `[Groups Store] Trying group-specific delete endpoint: groups/${groupId}/messages/${messageId}`
             );
-            response = await apiCall(`groups/${groupId}/messages/${messageId}`, {
-              method: "DELETE",
-            });
+            response = await apiCall(
+              `groups/${groupId}/messages/${messageId}`,
+              {
+                method: "DELETE",
+              }
+            );
             console.log(
               `[Groups Store] Group-specific delete successful:`,
               response

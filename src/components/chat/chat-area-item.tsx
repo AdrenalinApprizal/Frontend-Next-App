@@ -129,10 +129,14 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
   };
 
   // Handle file download
-  const handleDownloadFile = async (e: React.MouseEvent, fileUrl: string, fileName: string) => {
+  const handleDownloadFile = async (
+    e: React.MouseEvent,
+    fileUrl: string,
+    fileName: string
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Extract file ID from URL
     let fileId = "";
     if (fileUrl.includes("/api/proxy/files/")) {
@@ -347,7 +351,13 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
               />
             ) : (
               <button
-                onClick={(e) => handleDownloadFile(e, message.attachment!.url, message.attachment!.name)}
+                onClick={(e) =>
+                  handleDownloadFile(
+                    e,
+                    message.attachment!.url,
+                    message.attachment!.name
+                  )
+                }
                 disabled={isDownloading}
                 className="text-blue-500 hover:underline flex items-center space-x-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-xs"
                 title={`Download ${message.attachment!.name}`}
@@ -420,9 +430,7 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
               {!message.pending &&
                 !message.failed &&
                 !message.retrying &&
-                message.delivered && (
-                  <FaCheck className="h-3 w-3 opacity-75" />
-                )}
+                message.delivered && <FaCheck className="h-3 w-3 opacity-75" />}
               {!message.pending &&
                 !message.failed &&
                 !message.retrying &&

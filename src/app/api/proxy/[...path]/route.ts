@@ -3,10 +3,14 @@ import { getToken } from "next-auth/jwt";
 
 // Base URLs for different services - use environment variables in production
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:8081/api";
-const GROUP_API_BASE_URL = process.env.GROUP_API_BASE_URL || "http://localhost:8082/api";
-const NOTIFICATION_API_BASE_URL = process.env.NOTIFICATION_API_BASE_URL || "http://localhost:8083/api";
-const FILES_API_BASE_URL = process.env.FILES_API_BASE_URL || "http://localhost:8084/api";
-const PRESENCE_API_BASE_URL = process.env.PRESENCE_API_BASE_URL || "http://localhost:8085/api";
+const GROUP_API_BASE_URL =
+  process.env.GROUP_API_BASE_URL || "http://localhost:8082/api";
+const NOTIFICATION_API_BASE_URL =
+  process.env.NOTIFICATION_API_BASE_URL || "http://localhost:8083/api";
+const FILES_API_BASE_URL =
+  process.env.FILES_API_BASE_URL || "http://localhost:8084/api";
+const PRESENCE_API_BASE_URL =
+  process.env.PRESENCE_API_BASE_URL || "http://localhost:8085/api";
 
 // This API route will act as a proxy for all backend requests
 // It forwards requests to the backend server and returns the response
@@ -328,7 +332,10 @@ async function handleRequest(
     }
 
     // Determine which base URL to use based on the endpoint
-    const isGroupEndpoint = path === "groups" || path.startsWith("groups/") || path.startsWith("group/");
+    const isGroupEndpoint =
+      path === "groups" ||
+      path.startsWith("groups/") ||
+      path.startsWith("group/");
     const isMessagesEndpoint =
       path === "messages" || path.startsWith("messages/");
     const isAuthEndpoint = path === "auth" || path.startsWith("auth/");
@@ -340,11 +347,15 @@ async function handleRequest(
 
     // Special handling for group messages - redirect to correct endpoint format
     let finalPath = path;
-    
+
     // Handle group/messages pattern (convert to groups/{groupId}/messages)
     if (path.startsWith("group/") && path.includes("messages")) {
       const pathParts = path.split("/");
-      if (pathParts.length >= 3 && pathParts[0] === "group" && pathParts[2] === "messages") {
+      if (
+        pathParts.length >= 3 &&
+        pathParts[0] === "group" &&
+        pathParts[2] === "messages"
+      ) {
         const groupId = pathParts[1];
         finalPath = `groups/${groupId}/messages`;
         console.log(
@@ -352,7 +363,7 @@ async function handleRequest(
         );
       }
     }
-    
+
     // Handle groups/{groupId}/messages/{messageId} pattern for PUT/DELETE/PATCH
     if (
       path.includes("groups/") &&

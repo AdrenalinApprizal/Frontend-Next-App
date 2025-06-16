@@ -168,10 +168,14 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
   };
 
   // Handle file download
-  const handleDownloadFile = async (e: React.MouseEvent, fileUrl: string, fileName: string) => {
+  const handleDownloadFile = async (
+    e: React.MouseEvent,
+    fileUrl: string,
+    fileName: string
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Extract file ID from URL
     let fileId = "";
     if (fileUrl.includes("/api/proxy/files/")) {
@@ -342,7 +346,13 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                 />
               ) : (
                 <button
-                  onClick={(e) => handleDownloadFile(e, message.attachment!.url, message.attachment!.name)}
+                  onClick={(e) =>
+                    handleDownloadFile(
+                      e,
+                      message.attachment!.url,
+                      message.attachment!.name
+                    )
+                  }
                   disabled={isDownloading}
                   className="text-blue-500 hover:underline flex items-center space-x-1 transition-colors p-1.5 bg-gray-50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 text-xs"
                   title={`Download ${message.attachment!.name}`}

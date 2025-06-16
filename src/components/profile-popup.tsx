@@ -238,7 +238,9 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
         {activeTab === "profile" && !isEditing && userInfo && (
           <>
             <div className="text-center mb-2">
-              <h2 className="text-base sm:text-lg font-bold text-white">My Profile</h2>
+              <h2 className="text-base sm:text-lg font-bold text-white">
+                My Profile
+              </h2>
             </div>
 
             <div className="flex justify-center mb-3">

@@ -2210,7 +2210,10 @@ export function ChatArea({
                       raw_timestamp: new Date().toISOString(),
                       pending: false,
                       attachment: {
-                        type: getMediaType(file.type) === "image" ? "image" : "file",
+                        type:
+                          getMediaType(file.type) === "image"
+                            ? "image"
+                            : "file",
                         url: result.fileUrl,
                         name: file.name,
                         size: formatFileSize(file.size),
@@ -2225,13 +2228,19 @@ export function ChatArea({
 
                     // Scroll to bottom to show new message
                     setTimeout(() => {
-                      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+                      messagesEndRef.current?.scrollIntoView({
+                        behavior: "smooth",
+                      });
                     }, 100);
 
                     toast.success("File uploaded successfully!");
                   } catch (error) {
                     console.error("File upload failed:", error);
-                    toast.error(error instanceof Error ? error.message : "File upload failed");
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "File upload failed"
+                    );
                   } finally {
                     setIsUploadingFile(false);
                     setUploadProgress(0);
