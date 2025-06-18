@@ -1,17 +1,15 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
   // Enable experimental features for production
   experimental: {
     // Enable server actions
     serverActions: {
-      allowedOrigins: ["*.vercel.app", "localhost:3000"]
-    }
+      allowedOrigins: ["*.vercel.app", "localhost:3000"],
+    },
   },
-  
+
   // Image optimization settings
   images: {
-    domains: ["localhost", "*.vercel.app"],
     remotePatterns: [
       {
         protocol: "https",
@@ -20,8 +18,14 @@ const nextConfig: NextConfig = {
       {
         protocol: "http",
         hostname: "localhost",
+        port: "",
+      },
+      {
+        protocol: "https",
+        hostname: "*.vercel.app",
       },
     ],
+    unoptimized: false,
   },
 
   // Headers for better security and CORS
@@ -32,10 +36,17 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Access-Control-Allow-Credentials", value: "true" },
           { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
-          { key: "Access-Control-Allow-Headers", value: "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization" },
-        ]
-      }
+          {
+            key: "Access-Control-Allow-Methods",
+            value: "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+          },
+          {
+            key: "Access-Control-Allow-Headers",
+            value:
+              "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization",
+          },
+        ],
+      },
     ];
   },
 
@@ -45,7 +56,7 @@ const nextConfig: NextConfig = {
   },
 
   // Webpack configuration for WebSocket support
-  webpack: (config, { isServer }) => {
+  webpack: (config: any, { isServer }: { isServer: boolean }) => {
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -57,8 +68,14 @@ const nextConfig: NextConfig = {
     return config;
   },
 
-  // Output configuration for Vercel
-  output: 'standalone',
+  // Transpile packages for better compatibility
+  transpilePackages: ["socket.io-client", "socket.io"],
+
+  // Optimize for serverless functions
+  poweredByHeader: false,
+
+  // Enable SWC minification
+  swcMinify: true,
 };
 
 export default nextConfig;
