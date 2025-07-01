@@ -191,6 +191,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       await changePassword({
         current_password: passwordData.current_password,
         new_password: passwordData.new_password,
+        confirm_password: passwordData.confirm_password,
       });
 
       toast.success("Password changed successfully");
