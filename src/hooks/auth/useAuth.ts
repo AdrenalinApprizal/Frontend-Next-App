@@ -177,14 +177,84 @@ export const useAuth = () => {
 
   // Update profile
   async function updateProfile(data: ProfileUpdateData) {
-    // Implementation here
-    return { success: true };
+    try {
+      const session = await getSession();
+      const currentToken =
+        session?.access_token || token || getTokenFromCookie();
+
+      if (!currentToken) {
+        throw new Error("No authentication token available");
+      }
+
+      console.log("wkwkwk", `${API_BASE_URL}/users/profile`);
+
+      const response = await fetch(`${API_BASE_URL}/users/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentToken}`,
+        },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[DEBUG] Profile update failed:", errorText);
+        throw new Error(
+          `Profile update failed: ${response.status} ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log("[DEBUG] Profile update successful:", result);
+
+      return result;
+    } catch (error: any) {
+      console.error("[DEBUG] Profile update error:", error);
+      throw error;
+    }
   }
 
   // Change password
   async function changePassword(data: PasswordChangeData) {
-    // Implementation here
-    return { success: true };
+    try {
+      const session = await getSession();
+      const currentToken =
+        session?.access_token || token || getTokenFromCookie();
+
+      if (!currentToken) {
+        throw new Error("No authentication token available");
+      }
+
+      console.log("[DEBUG] Changing password");
+
+      const response = await fetch(`${API_BASE_URL}/users/change-password`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentToken}`,
+        },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[DEBUG] Password change failed:", errorText);
+        throw new Error(
+          `Password change failed: ${response.status} ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log("[DEBUG] Password change successful:", result);
+
+      return result;
+    } catch (error: any) {
+      console.error("[DEBUG] Password change error:", error);
+      throw error;
+    }
   }
 
   // Handle auth error
@@ -200,8 +270,42 @@ export const useAuth = () => {
 
   // Get user info
   async function getUserInfo() {
-    // Implementation here
-    return { user: null };
+    try {
+      const session = await getSession();
+      const currentToken =
+        session?.access_token || token || getTokenFromCookie();
+
+      if (!currentToken) {
+        throw new Error("No authentication token available");
+      }
+
+      console.log("[DEBUG] Getting user info");
+
+      const response = await fetch(`${API_BASE_URL}/users/me`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentToken}`,
+        },
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[DEBUG] Get user info failed:", errorText);
+        throw new Error(
+          `Get user info failed: ${response.status} ${errorText}`
+        );
+      }
+
+      const result = await response.json();
+      console.log("[DEBUG] Get user info successful:", result);
+
+      return result;
+    } catch (error: any) {
+      console.error("[DEBUG] Get user info error:", error);
+      throw error;
+    }
   }
 
   // Export all the functions

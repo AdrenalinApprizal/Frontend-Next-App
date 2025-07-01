@@ -7,10 +7,20 @@ export interface Notification {
   user_id: string;
   type: string;
   content: string;
+  body?: string; // Backend provides this with sender username
+  title?: string; // Backend provides this too
   related_to?: string;
   read: boolean;
   created_at: string;
-  data?: Record<string, any>;
+  data?: {
+    userId?: string;
+    groupId?: string;
+    senderId?: string;
+    sender_id?: string; // Backend uses snake_case
+    sender_username?: string; // Backend provides sender username
+    message_id?: string;
+    [key: string]: any; // Allow other properties
+  };
 }
 
 export interface NotificationPagination {

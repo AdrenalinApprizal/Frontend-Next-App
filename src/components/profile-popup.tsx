@@ -62,6 +62,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
     setShowProfilePictureModal(false);
     // No need to manually update the UI here as we already refetch user data in the modal
     toast.success("Profile picture updated successfully");
+    router.refresh(); // Refresh the page to reflect changes
   };
 
   // UI state
@@ -148,8 +149,17 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
         throw new Error("No authentication token available");
       }
 
+      console.log("[ProfilePopup] Updating profile with data:", formData);
+      console.log("[ProfilePopup] Data structure:", {
+        about_me: formData.about_me,
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        phone_number: formData.phone_number,
+      });
+
       // Use the updateProfile function from auth hook
-      await updateProfile(formData);
+      const result = await updateProfile(formData);
+      console.log("[ProfilePopup] Update result:", result);
 
       // Refresh user data
       await refetch();
