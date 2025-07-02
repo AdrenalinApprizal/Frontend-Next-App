@@ -127,7 +127,6 @@ export const useFriendship = () => {
     }
 
     const url = `${proxyUrl}${formattedEndpoint}`;
-    console.log(`[Friends API] Calling: ${url}`);
 
     try {
       const response = await fetch(url, mergedOptions);
@@ -140,7 +139,6 @@ export const useFriendship = () => {
 
         // For common endpoints that should never fail the UI, return fallback values
         if (endpoint.includes("friends") && !endpoint.includes("add")) {
-          console.log(`[Friends API] Using fallback for ${endpoint}`);
           return endpoint.includes("requests") ? [] : [];
         }
 
@@ -160,12 +158,10 @@ export const useFriendship = () => {
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const data = await response.json();
-        console.log(`[Friends API] Response for ${endpoint}:`, data);
         return data.data || data;
       }
 
       const text = await response.text();
-      console.log(`[Friends API] Text response for ${endpoint}:`, text);
       return text;
     } catch (err) {
       console.error(`[Friends API] Fetch error for ${endpoint}:`, err);
@@ -173,18 +169,15 @@ export const useFriendship = () => {
       // Handle specific error types
       if (err instanceof Error) {
         if (err.name === "AbortError" || err.name === "TimeoutError") {
-          console.log(`[Friends API] Request timeout for ${endpoint}`);
           throw new Error(`Request timeout: ${endpoint}`);
         }
         if (err.message.includes("Failed to fetch")) {
-          console.log(`[Friends API] Network error for ${endpoint}`);
           throw new Error(`Network error: ${endpoint}`);
         }
       }
 
       // For critical endpoints, return fallback values to avoid UI failures
       if (endpoint.includes("friends") && !endpoint.includes("add")) {
-        console.log(`[Friends API] Using fallback for ${endpoint} after error`);
         return endpoint.includes("requests") ? [] : [];
       }
       throw err;
@@ -194,7 +187,6 @@ export const useFriendship = () => {
   // Get list of friends with enhanced error handling and logging
   const getFriends = useCallback(async () => {
     if (!session?.access_token) {
-      console.log("[Friends Store] No access token, skipping friends fetch");
       setLoading(false);
       return [];
     }
@@ -202,8 +194,6 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Fetching friends list...");
-
       // Try multiple endpoint variations to handle different backend API patterns
       let response;
       const endpoints = ["/friends", "/user/friends", "/users/friends"];
@@ -211,7 +201,6 @@ export const useFriendship = () => {
 
       for (const endpoint of endpoints) {
         try {
-          console.log(`[Friends Store] Trying endpoint: ${endpoint}`);
           response = await apiCall(endpoint, {
             method: "GET",
             headers: {
@@ -219,87 +208,32 @@ export const useFriendship = () => {
             },
           });
           successEndpoint = endpoint;
-          console.log(`[Friends Store] Success with endpoint: ${endpoint}`);
           break;
         } catch (err) {
-          console.log(`[Friends Store] Failed with endpoint ${endpoint}:`, err);
           // Continue to the next endpoint
         }
       }
 
       // If all endpoints failed, use an empty array as fallback
       if (!response) {
-        console.log(
-          "[Friends Store] All endpoints failed, using empty array fallback"
-        );
+        // All endpoints failed, using empty array fallback
         setFriends([]);
         setLoading(false);
         return [];
       }
 
-      console.log(
-        `[Friends] Raw Friends API Response from ${successEndpoint}:`,
-        response
-      );
-
-      // Add detailed logging to see the actual API response structure
-      console.log("[Friends] API Response Analysis:", {
-        responseType: typeof response,
-        isArray: Array.isArray(response),
-        responseKeys:
-          response && typeof response === "object"
-            ? Object.keys(response)
-            : "not an object",
-        firstItemIfArray:
-          Array.isArray(response) && response.length > 0
-            ? {
-                keys: Object.keys(response[0]),
-                profile_picture_url: response[0].profile_picture_url,
-                avatar_url: response[0].avatar_url,
-                avatar: response[0].avatar,
-                sample_data: response[0],
-              }
-            : "not array or empty",
-        dataFieldIfExists: response?.data
-          ? {
-              isArray: Array.isArray(response.data),
-              length: Array.isArray(response.data)
-                ? response.data.length
-                : "not array",
-              firstItem:
-                Array.isArray(response.data) && response.data.length > 0
-                  ? {
-                      keys: Object.keys(response.data[0]),
-                      profile_picture_url: response.data[0].profile_picture_url,
-                      avatar_url: response.data[0].avatar_url,
-                      avatar: response.data[0].avatar,
-                    }
-                  : "no first item",
-            }
-          : "no data field",
-      });
-
       let friendsList: Array<Partial<User>> = [];
 
       // Handle various response formats
       if (Array.isArray(response)) {
-        console.log("[Friends] Setting friends from array response", response);
         friendsList = response;
       } else if (response && Array.isArray(response.data)) {
-        console.log(
-          "[Friends] Setting friends from response.data",
-          response.data
-        );
         friendsList = response.data;
       } else if (
         response &&
         response.friends &&
         Array.isArray(response.friends)
       ) {
-        console.log(
-          "[Friends] Setting friends from response.friends",
-          response.friends
-        );
         friendsList = response.friends;
       } else if (response && typeof response === "object") {
         // Try to extract any array property from the response
@@ -311,15 +245,11 @@ export const useFriendship = () => {
 
         if (arrayProps.length > 0) {
           const [propName, array] = arrayProps[0];
-          console.log(
-            `[Friends] Found array property '${propName}' in response`,
-            array
-          );
+
           friendsList = array as Array<Partial<User>>;
         } else {
           console.error("[Friends] Unexpected response format:", response);
           if (response && typeof response === "object") {
-            console.log("[Friends] Raw response keys:", Object.keys(response));
           }
           friendsList = [];
         }
@@ -328,7 +258,6 @@ export const useFriendship = () => {
         friendsList = [];
       }
 
-      console.log("[Friends] Processing friends list:", friendsList);
       const processedFriends = friendsList
         .filter(
           (friend): friend is Partial<User> =>
@@ -381,27 +310,9 @@ export const useFriendship = () => {
             last_seen: lastSeen,
           };
 
-          console.log("[Friends] Processed friend:", processedFriend);
-          console.log("[Friends] Avatar mapping for friend:", {
-            friend_id: friend.id,
-            original_profile_picture_url: friend.profile_picture_url,
-            original_avatar_url: friend.avatar_url,
-            original_avatar: friend.avatar,
-            final_avatar: processedFriend.avatar,
-            final_profile_picture_url: processedFriend.profile_picture_url,
-            avatar_is_base64:
-              processedFriend.avatar?.startsWith?.("data:") || false,
-            profile_picture_url_is_base64:
-              processedFriend.profile_picture_url?.startsWith?.("data:") ||
-              false,
-          });
           return processedFriend;
         });
 
-      console.log(
-        "[Friends] Setting processed friends list:",
-        processedFriends
-      );
       setFriends(processedFriends);
 
       setLoading(false);
@@ -442,9 +353,6 @@ export const useFriendship = () => {
   const getFriendRequests = useCallback(
     async (page?: number) => {
       if (!session?.access_token) {
-        console.log(
-          "[Friends Store] No access token, skipping friend requests fetch"
-        );
         setLoading(false);
         return [];
       }
@@ -452,39 +360,27 @@ export const useFriendship = () => {
       setLoading(true);
       setError(null);
       try {
-        console.log("[Friends Store] Fetching pending friend requests...");
-
         const endpoint = page
           ? `/friends/requests?page=${page}`
           : "/friends/requests";
         const response = await apiCall(endpoint);
 
         // Detailed logging of the response structure
-        console.log("[Friends Store] Raw friend requests response:", response);
-        console.log("[Friends Store] Response type:", typeof response);
-        console.log("[Friends Store] Is Array:", Array.isArray(response));
 
         // If response is null or undefined, use an empty array as fallback
         if (!response) {
-          console.log(
-            "[Friends Store] Empty response, using empty array fallback"
-          );
           setFriendRequests([]);
           setLoading(false);
           return [];
         }
 
         if (response) {
-          console.log("[Friends Store] Has data property:", "data" in response);
-          console.log("[Friends Store] Response keys:", Object.keys(response));
         }
 
         // Handle both array responses and responses that have the data property
         if (Array.isArray(response)) {
-          console.log("[Friends Store] Processing array response");
           setFriendRequests(response);
         } else if (response && Array.isArray(response.data)) {
-          console.log("[Friends Store] Processing response.data array");
           setFriendRequests(response.data);
         } else if (
           response &&
@@ -492,7 +388,6 @@ export const useFriendship = () => {
           Array.isArray(response.requests)
         ) {
           // Added check for response.requests format
-          console.log("[Friends Store] Processing response.requests array");
           setFriendRequests(response.requests);
         } else if (
           response &&
@@ -500,21 +395,16 @@ export const useFriendship = () => {
           Array.isArray(response.friend_requests)
         ) {
           // Added check for response.friend_requests format
-          console.log(
-            "[Friends Store] Processing response.friend_requests array"
-          );
+
           setFriendRequests(response.friend_requests);
         } else if (typeof response === "object" && response !== null) {
           // Last resort: try to extract any array property from the response
-          console.log(
-            "[Friends Store] Attempting to find any array in response object"
-          );
+
           let foundArrays = false;
 
           // Check each property to find arrays
           for (const key in response) {
             if (Array.isArray(response[key])) {
-              console.log(`[Friends Store] Found array in property: ${key}`);
               setFriendRequests(response[key] as FriendRequest[]);
               foundArrays = true;
               break;
@@ -537,10 +427,6 @@ export const useFriendship = () => {
         }
 
         // Log the final friendRequests state
-        console.log(
-          "[Friends Store] Final friendRequests state count:",
-          friendRequests.length
-        );
 
         // If the API supports pagination and returns meta data
         if (response && response.meta) {
@@ -598,7 +484,6 @@ export const useFriendship = () => {
    */
   const searchUsers = async (query: string, page: number = 1) => {
     if (!session?.access_token) {
-      console.log("[Friends Store] No access token, skipping user search");
       setLoading(false);
       return { users: [], pagination: null };
     }
@@ -683,18 +568,9 @@ export const useFriendship = () => {
           throw new Error("Username is required");
         }
 
-        console.log(
-          `[Friends Store] Sending friend request to username: ${username}`
-        );
-
         // Try to find the user first
         const searchResponse = await apiCall(
           `friends/search?username=${encodeURIComponent(username)}`
-        );
-
-        console.log(
-          `[Friends Store] Search response for username:`,
-          searchResponse
         );
 
         if (
@@ -713,20 +589,9 @@ export const useFriendship = () => {
           body: JSON.stringify({ username: username.toLowerCase() }),
         });
 
-        console.log(
-          `[Friends Store] Successfully sent friend request to ${username}`
-        );
-        console.log(`[Friends Store] Add friend response:`, response);
-
         // Force refresh friend requests immediately to update the UI
-        console.log(
-          `[Friends Store] Refreshing friend requests after sending request to ${username}`
-        );
         try {
           await getFriendRequests();
-          console.log(
-            "[Friends Store] Friend requests refreshed after adding friend"
-          );
         } catch (refreshErr) {
           console.error(
             "[Friends Store] Error refreshing requests:",
@@ -781,12 +646,6 @@ export const useFriendship = () => {
       setLoading(true);
       setError(null);
       try {
-        console.log("[Friends Store] Accepting friend request:", friendshipId);
-        console.log(
-          "[Friends Store] All available friend requests:",
-          friendRequests
-        );
-
         // 1. Find the friend request before accepting it
         const request = friendRequests.find(
           (req) => req.friendship_id === friendshipId || req.id === friendshipId
@@ -811,11 +670,8 @@ export const useFriendship = () => {
           // Don't throw error, continue with API call
         }
 
-        console.log("[Friends Store] Found friend request:", request);
-
         // 2. Accept the friend request - use the provided ID directly
         const actualId = request?.friendship_id || request?.id || friendshipId;
-        console.log("[Friends Store] Using ID for API call:", actualId);
 
         let acceptResponse;
         let lastError: any;
@@ -861,8 +717,6 @@ export const useFriendship = () => {
 
         for (const method of acceptMethods) {
           try {
-            console.log(`[Friends Store] Trying: ${method.description}`);
-
             acceptResponse = await apiCall(method.url, {
               method: method.method,
               body:
@@ -871,19 +725,8 @@ export const useFriendship = () => {
                   : undefined,
             });
 
-            console.log(
-              `[Friends Store] ✅ Success with: ${method.description}`
-            );
-            console.log(
-              "[Friends Store] Friend request accept response:",
-              acceptResponse
-            );
             break; // Success! Exit the loop
           } catch (err: any) {
-            console.log(
-              `[Friends Store] ❌ Failed with: ${method.description}`,
-              err.message
-            );
             lastError = err;
             continue; // Try next method
           }
@@ -904,10 +747,6 @@ export const useFriendship = () => {
           (req) => req.friendship_id !== actualId && req.id !== actualId
         );
         setFriendRequests(updatedRequests);
-        console.log(
-          "[Friends Store] Updated friend requests locally:",
-          updatedRequests
-        );
 
         // 4. Add the new friend to the friends list immediately if they were the sender
         if (request && request.user) {
@@ -942,23 +781,13 @@ export const useFriendship = () => {
           if (!friends.some((f) => f.id === newFriend.id)) {
             const updatedFriends = [...friends, newFriend];
             setFriends(updatedFriends);
-            console.log("[Friends Store] Added new friend locally:", newFriend);
           }
         } else {
-          console.log(
-            "[Friends Store] No user data available, skipping friend addition"
-          );
         }
 
         // 5. Refresh both lists from the server to ensure consistency (like Vue implementation)
         try {
-          console.log(
-            "[Friends Store] Refreshing friends and requests after acceptance"
-          );
           await Promise.all([getFriendRequests(), getFriends()]);
-          console.log(
-            "[Friends Store] Successfully refreshed both lists from server"
-          );
         } catch (refreshError) {
           console.error(
             "[Friends Store] Error refreshing lists after acceptance:",
@@ -987,32 +816,18 @@ export const useFriendship = () => {
       setLoading(true);
       setError(null);
       try {
-        console.log("[Friends Store] Rejecting friend request:", friendshipId);
-
         const response = await apiCall("friends/reject", {
           method: "POST",
           body: JSON.stringify({ friendship_id: friendshipId }),
         });
 
-        console.log("[Friends Store] API response for reject:", response);
-
         // Immediately update local state for better UX
         const updatedRequests = friendRequests.filter(
           (req) => req.friendship_id !== friendshipId
         );
-        setFriendRequests(updatedRequests);
-        console.log(
-          "[Friends Store] Updated friend requests locally, new count:",
-          updatedRequests.length
-        );
-
-        // Fetch from API to ensure data consistency (like Vue implementation)
+        setFriendRequests(updatedRequests); // Fetch from API to ensure data consistency (like Vue implementation)
         try {
           await getFriendRequests();
-          console.log(
-            "[Friends Store] Friend requests refreshed from API after rejection, count:",
-            friendRequests.length
-          );
         } catch (refreshErr) {
           console.error(
             "[Friends Store] Error refreshing requests after rejection:",
@@ -1062,15 +877,12 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Fetching blocked users from API...");
       const response = await apiCall("friends/blocked", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
         },
       });
-
-      console.log("[Friends Store] Raw blocked users API response:", response);
 
       const blockedList = Array.isArray(response)
         ? response
@@ -1079,11 +891,6 @@ export const useFriendship = () => {
         : response?.blocked_users
         ? response.blocked_users
         : [];
-
-      console.log(
-        "[Friends Store] Processed blocked users:",
-        blockedList.length
-      );
       setBlockedUsers(blockedList);
       setLoading(false);
       return blockedList;
@@ -1105,14 +912,10 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Blocking user with ID:", userId);
-
       const response = await apiCall("friends/block", {
         method: "POST",
         body: JSON.stringify({ user_id: userId }),
       });
-
-      console.log("[Friends Store] User blocked successfully:", response);
 
       // Update friends list after blocking to reflect changes
       await getFriends();
@@ -1136,19 +939,10 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Blocking user by username:", username);
-
       const response = await apiCall("friends/block", {
         method: "POST",
         body: JSON.stringify({ username }),
-      });
-
-      console.log(
-        "[Friends Store] User blocked successfully by username:",
-        response
-      );
-
-      // Update friends list after blocking
+      }); // Update friends list after blocking
       await getFriends();
       // Also update blocked users list
       await getBlockedUsers();
@@ -1173,14 +967,10 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Unblocking user with ID:", userId);
-
       const response = await apiCall("friends/unblock", {
         method: "POST",
         body: JSON.stringify({ user_id: userId }),
       });
-
-      console.log("[Friends Store] User unblocked successfully:", response);
 
       // Update blocked users list after unblocking
       await getBlockedUsers();
@@ -1204,19 +994,10 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[Friends Store] Unblocking user by username:", username);
-
       const response = await apiCall("friends/unblock", {
         method: "POST",
         body: JSON.stringify({ username }),
-      });
-
-      console.log(
-        "[Friends Store] User unblocked successfully by username:",
-        response
-      );
-
-      // Update blocked users list
+      }); // Update blocked users list
       await getBlockedUsers();
       // Also refresh friends list to reflect changes
       await getFriends();
@@ -1241,24 +1022,15 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log(
-        `[Friends Store] Searching friends with query: "${query}", limit: ${limit}`
-      );
-
       const endpoint = `friends/search?q=${encodeURIComponent(
         query
       )}&limit=${limit}`;
 
       const response = await apiCall(endpoint);
 
-      console.log(`[Friends Store] Friend search response:`, response);
-
       // Extract appropriate data from response
       const results = response.data || response;
-      console.log(
-        `[Friends Store] Processed search results count:`,
-        Array.isArray(results) ? results.length : "not an array"
-      );
+      Array.isArray(results) ? results.length : "not an array";
 
       // Return results without updating global state (like Vue implementation)
       setLoading(false);
@@ -1283,12 +1055,9 @@ export const useFriendship = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log("[FriendsHook] Fetching friend by ID:", friendId);
-
       // First check if friend already exists in our cached list
       const cachedFriend = friends.find((friend) => friend.id === friendId);
       if (cachedFriend) {
-        console.log("[FriendsHook] Found friend in cache:", cachedFriend);
         setRecipientData(cachedFriend);
         setLoading(false);
         return cachedFriend;
@@ -1300,10 +1069,8 @@ export const useFriendship = () => {
           method: "GET",
         });
 
-        console.log("[FriendsHook] API response for friend by ID:", response);
-
         // Add comprehensive logging for friend by ID response
-        console.log("[FriendsHook] Friend by ID Response Analysis:", {
+        ({
           responseType: typeof response,
           responseKeys:
             response && typeof response === "object"
@@ -1327,20 +1094,8 @@ export const useFriendship = () => {
           },
         });
 
-        console.log(
-          "[FriendsHook] Raw friend data fields:",
-          response?.data ? Object.keys(response.data) : "No data field"
-        );
-        console.log("[FriendsHook] Avatar fields in response:", {
-          avatar: response?.data?.avatar,
-          avatar_url: response?.data?.avatar_url,
-          profile_picture_url: response?.data?.profile_picture_url,
-          profile_picture: response?.data?.profile_picture,
-          image: response?.data?.image,
-          photo: response?.data?.photo,
-        });
-
-        console.log("[FriendsHook] Profile picture data preview:", {
+        response?.data ? Object.keys(response.data) : "No data field";
+        ({
           profile_picture_url_exists: !!response?.data?.profile_picture_url,
           profile_picture_url_length:
             response?.data?.profile_picture_url?.length || 0,
@@ -1401,8 +1156,7 @@ export const useFriendship = () => {
               "Unknown",
           };
 
-          console.log("[FriendsHook] Formatted friend data:", formattedFriend);
-          console.log("[FriendsHook] Final avatar mapping check:", {
+          ({
             original_profile_picture_url: friendData.profile_picture_url,
             original_avatar_url: friendData.avatar_url,
             original_avatar: friendData.avatar,
@@ -1437,7 +1191,6 @@ export const useFriendship = () => {
       }
 
       // If API fails, try to construct a minimal friend object from the ID
-      console.log("[FriendsHook] Constructing minimal friend data from ID");
       const minimalFriend: Friend = {
         id: friendId,
         name: `User ${friendId.substring(0, 8)}...`,

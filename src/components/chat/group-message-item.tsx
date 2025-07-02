@@ -175,7 +175,35 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
       toast.success(`Downloading ${fileName}...`);
     } catch (error) {
       console.error("Download failed:", error);
-      toast.error("Failed to download file");
+
+      // Check if URL might be expired and try to refresh
+      const isExpiredUrl =
+        fileUrl.includes("X-Amz-Expires") || fileUrl.includes("X-Amz-Date");
+
+      if (isExpiredUrl) {
+        try {
+          // Try to get fresh URL from message data
+          const response = await fetch(`/api/proxy/messages/${message.id}`);
+          if (response.ok) {
+            const messageData = await response.json();
+            if (messageData.attachment && messageData.attachment.url) {
+              // Extract new file ID and retry download
+              const newFileUrl = messageData.attachment.url;
+              if (newFileUrl.includes("/api/proxy/files/")) {
+                const newUrlParts = newFileUrl.split("/");
+                const newFileId = newUrlParts[newUrlParts.length - 1];
+                await downloadFile(newFileId);
+                toast.success(`Downloading ${fileName}...`);
+                return;
+              }
+            }
+          }
+        } catch (refreshError) {
+          console.error("Failed to refresh download URL:", refreshError);
+        }
+      }
+
+      toast.error("Failed to download file. URL mungkin sudah kadaluarsa.");
     } finally {
       setIsDownloading(false);
     }
@@ -311,7 +339,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
           {message.attachment && (
             <div className="mb-1">
               {message.attachment.type === "image" ? (
-                <img
+                <ImageWithRetry
                   src={message.attachment.url}
                   alt={message.attachment.name}
                   className="max-w-full h-auto rounded-lg cursor-pointer hover:opacity-90 transition-opacity max-h-48 sm:max-h-56"
@@ -319,13 +347,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
                     e.stopPropagation();
                     window.open(message.attachment!.url, "_blank");
                   }}
-                  onError={(e) => {
-                    console.error(
-                      "Image failed to load:",
-                      message.attachment!.url
-                    );
-                    e.currentTarget.style.display = "none";
-                  }}
+                  messageId={message.id}
                 />
               ) : (
                 <button
@@ -399,6 +421,117 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ImageWithRetry component to handle expired URLs
+interface ImageWithRetryProps {
+  src: string;
+  alt: string;
+  className?: string;
+  onClick?: (e: React.MouseEvent<HTMLImageElement>) => void;
+  messageId: string;
+}
+
+const ImageWithRetry: React.FC<ImageWithRetryProps> = ({
+  src,
+  alt,
+  className,
+  onClick,
+  messageId,
+}) => {
+  const [imageSrc, setImageSrc] = useState(src);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 2;
+
+  const refreshImageUrl = async () => {
+    if (retryCount >= maxRetries) {
+      setHasError(true);
+      return;
+    }
+
+    setIsLoading(true);
+    setRetryCount((prev) => prev + 1);
+
+    try {
+      // Try to refresh the URL by making a request to get updated attachment info
+      const response = await fetch(`/api/proxy/messages/${messageId}`);
+      if (response.ok) {
+        const messageData = await response.json();
+        if (messageData.attachment && messageData.attachment.url) {
+          setImageSrc(messageData.attachment.url);
+          setHasError(false);
+        } else {
+          setHasError(true);
+        }
+      } else {
+        setHasError(true);
+      }
+    } catch (error) {
+      console.error("Failed to refresh image URL:", error);
+      setHasError(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleError = () => {
+    console.error("Image failed to load:", imageSrc);
+
+    // Check if URL might be expired (contains AWS signature parameters)
+    const isExpiredUrl =
+      imageSrc.includes("X-Amz-Expires") || imageSrc.includes("X-Amz-Date");
+
+    if (isExpiredUrl && retryCount < maxRetries) {
+      refreshImageUrl();
+    } else {
+      setHasError(true);
+    }
+  };
+
+  const handleRetry = () => {
+    setRetryCount(0);
+    setHasError(false);
+    refreshImageUrl();
+  };
+
+  if (hasError) {
+    return (
+      <div className="flex flex-col items-center justify-center p-4 bg-gray-100 rounded border border-gray-300">
+        <FaExclamationTriangle className="text-yellow-500 mb-2" size={24} />
+        <p className="text-sm text-gray-600 mb-2">Gambar gagal dimuat</p>
+        <p className="text-xs text-gray-500 mb-3">
+          URL mungkin sudah kadaluarsa
+        </p>
+        <button
+          onClick={handleRetry}
+          className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
+          disabled={isLoading}
+        >
+          {isLoading ? "Memuat..." : "Coba Lagi"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+        </div>
+      )}
+      <img
+        src={imageSrc}
+        alt={alt}
+        className={className}
+        onClick={onClick}
+        onError={handleError}
+        style={{ display: isLoading ? "none" : "block" }}
+      />
     </div>
   );
 };

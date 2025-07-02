@@ -6,7 +6,6 @@ import {
   FaUser,
   FaEnvelope,
   FaDownload,
-  FaShareAlt,
   FaFile,
   FaCheck,
   FaChevronLeft,
@@ -469,9 +468,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                     <p className="text-sm font-medium truncate">
                       {attachment.filename}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {formatFileSize(attachment.size)}
-                    </p>
                   </div>
                   <div className="ml-2 flex">
                     <button
@@ -483,16 +479,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                       title="Download"
                     >
                       <FaDownload className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showShareDialog(attachment);
-                      }}
-                      className="p-1 text-gray-500 hover:text-blue-500"
-                      title="Share"
-                    >
-                      <FaShareAlt className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -552,9 +538,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                       <p className="text-sm font-medium truncate">
                         {attachment.filename}
                       </p>
-                      <p className="text-xs text-gray-500">
-                        {formatFileSize(attachment.size)}
-                      </p>
                       <p className="text-xs text-gray-400">
                         {new Date(attachment.uploaded_at).toLocaleDateString()}
                       </p>
@@ -569,16 +552,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                         title="Download"
                       >
                         <FaDownload className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          showShareDialog(attachment);
-                        }}
-                        className="p-2 text-gray-500 hover:text-blue-500"
-                        title="Share"
-                      >
-                        <FaShareAlt className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -626,9 +599,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                 <div>
                   <p className="text-sm font-medium">
                     {selectedAttachment.filename}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {formatFileSize(selectedAttachment.size)}
                   </p>
                 </div>
               </div>
@@ -710,9 +680,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
                     {selectedAttachment.filename}
                   </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {formatFileSize(selectedAttachment.size)}
-                  </p>
                   <p className="text-sm text-gray-600">
                     This file type cannot be previewed
                   </p>
@@ -726,14 +693,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                 >
                   <FaDownload className="h-4 w-4 mr-2" />
                   Download
-                </button>
-
-                <button
-                  onClick={() => showShareDialog(selectedAttachment)}
-                  className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
-                >
-                  <FaShareAlt className="h-4 w-4 mr-2" />
-                  Share
                 </button>
               </div>
 

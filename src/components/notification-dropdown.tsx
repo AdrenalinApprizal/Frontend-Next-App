@@ -118,7 +118,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   const getNotificationDisplayContent = (
     notification: Notification
   ): string => {
-   ({
+    ({
       id: notification.id,
       type: notification.type,
       body: notification.body,
@@ -144,14 +144,14 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       // PRIORITY 1: Check if sender_username is available in data object
       if (notification.data.sender_username) {
         const usernameContent = `New message from ${notification.data.sender_username}`;
-       
+
         return usernameContent;
       }
 
       // PRIORITY 2: Check if we have username in cache
       if (userCache[senderId]) {
         const cachedContent = `New message from ${userCache[senderId]}`;
-       
+
         return cachedContent;
       }
 
@@ -165,12 +165,10 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
         0,
         8
       )}...`;
-     
 
       // Trigger username fetch in background (don't await to avoid blocking UI)
       fetchUsername(senderId).then((username) => {
         // This will trigger a re-render when username is cached
-       
       });
 
       return fallbackContent;
@@ -279,10 +277,9 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   // Load notifications when dropdown opens
   useEffect(() => {
     if (isOpen) {
-
       getNotifications(1, 10)
         .then((response) => {
-          console.log("Notifications fetched successfully:", response);
+          // Notifications fetched successfully
         })
         .catch((err) => {
           console.error("Failed to fetch notifications:", err);
@@ -313,10 +310,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     );
 
     if (notificationsNeedingUsernames.length > 0) {
-      (
-        
-        notificationsNeedingUsernames.map((n) => n.data?.sender_id)
-      );
+      notificationsNeedingUsernames.map((n) => n.data?.sender_id);
 
       // Batch fetch usernames
       notificationsNeedingUsernames.forEach((notification) => {
@@ -409,7 +403,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
                             {notification.title}
                           </p>
                         )}
-                      
+
                       {/* Show sender info if available */}
                       {notification.data?.sender_id &&
                         (notification.data?.sender_username ||

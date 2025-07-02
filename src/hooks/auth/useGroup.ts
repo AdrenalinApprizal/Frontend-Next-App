@@ -9,12 +9,9 @@ function measurePerformance<T extends any[], R>(
   return async (...args: T) => {
     const start = performance.now();
     try {
-      console.log(`[Groups Store] Starting ${label}...`);
       const result = await callback(...args);
       const elapsed = performance.now() - start;
-      console.log(
-        `[Groups Store] Completed ${label} in ${elapsed.toFixed(2)}ms`
-      );
+
       return result;
     } catch (error) {
       const elapsed = performance.now() - start;
@@ -254,17 +251,12 @@ export const useGroup = () => {
     }
 
     const url = `${proxyUrl}${formattedEndpoint}`;
-    console.log(`[Groups Store] Calling API: ${url}`);
+
     const startTime = performance.now();
 
     try {
       const response = await fetch(`${proxyUrl}/${endpoint}`, mergedOptions);
       const endTime = performance.now();
-      console.log(
-        `[Groups Store] API call completed in ${(endTime - startTime).toFixed(
-          2
-        )}ms`
-      );
 
       // Handle different response formats
       if (!response.ok) {
@@ -279,7 +271,6 @@ export const useGroup = () => {
           options.method !== "PUT" &&
           options.method !== "DELETE"
         ) {
-          console.log(`[Groups Store] Using fallback for ${endpoint}`);
           if (endpoint.includes("members")) {
             return { members: [] };
           } else if (endpoint.includes("messages")) {
@@ -305,12 +296,10 @@ export const useGroup = () => {
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const data = await response.json();
-        console.log(`[Groups Store] Response for ${endpoint}:`, data);
         return data;
       }
 
       const text = await response.text();
-      console.log(`[Groups Store] Text response for ${endpoint}:`, text);
       return text;
     } catch (err) {
       const endTime = performance.now();
@@ -328,9 +317,6 @@ export const useGroup = () => {
         options.method !== "PUT" &&
         options.method !== "DELETE"
       ) {
-        console.log(
-          `[Groups Store] Using fallback for ${endpoint} after error`
-        );
         if (endpoint.includes("members")) {
           return { members: [] };
         } else if (endpoint.includes("messages")) {
@@ -348,16 +334,12 @@ export const useGroup = () => {
    */
   const getGroups = useCallback(
     async (page: number = 1, limit: number = 20): Promise<ApiResponse> => {
-      console.log(
-        `[Groups Store] Fetching groups (page ${page}, limit ${limit})`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
 
       try {
         const response = await apiCall(`groups?page=${page}&limit=${limit}`);
-        console.log(`[Groups Store] Groups API response:`, response);
 
         // Extract groups from various response formats
         let groupsList: Group[] = [];
@@ -379,23 +361,13 @@ export const useGroup = () => {
 
           if (arrayProps.length > 0) {
             const [propName, array] = arrayProps[0];
-            console.log(
-              `[Groups Store] Found array property '${propName}' in response`,
-              array
-            );
             groupsList = array as Group[];
           }
         }
 
-        console.log(`[Groups Store] Extracted ${groupsList.length} groups`);
         setGroups(groupsList);
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] getGroups completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -556,9 +528,6 @@ export const useGroup = () => {
       groupId: string,
       page: number = 1
     ): Promise<GroupMembersResponse> => {
-      console.log(
-        `[Groups Store] Fetching members for group ${groupId} (page ${page})`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -566,10 +535,6 @@ export const useGroup = () => {
       try {
         const response = await apiCall(
           `groups/${groupId}/members?page=${page}`
-        );
-        console.log(
-          `[Groups Store] Group members API response for ${groupId}:`,
-          response
         );
 
         // Extract members from various response formats
@@ -595,10 +560,6 @@ export const useGroup = () => {
 
             if (arrayProps.length > 0) {
               const [propName, array] = arrayProps[0];
-              console.log(
-                `[Groups Store] Found array property '${propName}' for members`,
-                array
-              );
               membersList = array as GroupMember[];
             }
           }
@@ -627,10 +588,6 @@ export const useGroup = () => {
           };
         });
 
-        console.log(
-          `[Groups Store] Processed ${processedMembers.length} members with consistent naming`
-        );
-
         if (page === 1 || page <= 0) {
           setGroupMembers(processedMembers);
         } else {
@@ -647,11 +604,6 @@ export const useGroup = () => {
         }
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] getGroupMembers completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -809,9 +761,6 @@ export const useGroup = () => {
       page: number = 1,
       limit: number = 20
     ): Promise<GroupMessagesResponse> => {
-      console.log(
-        `[Groups Store] Fetching messages for group ${groupId} (page ${page}, limit ${limit})`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -819,11 +768,6 @@ export const useGroup = () => {
       try {
         const response = await apiCall(
           `groups/${groupId}/messages?page=${page}&limit=${limit}`
-        );
-
-        console.log(
-          `[Groups Store] Group messages API response for ${groupId}:`,
-          response
         );
 
         // Extract messages from various response formats
@@ -847,17 +791,10 @@ export const useGroup = () => {
 
           if (arrayProps.length > 0) {
             const [propName, array] = arrayProps[0];
-            console.log(
-              `[Groups Store] Found array property '${propName}' in messages response`,
-              array
-            );
+
             messagesList = array as GroupMessage[];
           }
         }
-
-        console.log(
-          `[Groups Store] Processing ${messagesList.length} messages`
-        );
 
         // Process messages to ensure all required fields
         const processedMessages = messagesList.map((message: any) => {
@@ -896,11 +833,6 @@ export const useGroup = () => {
         }
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] getGroupMessages completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -966,9 +898,6 @@ export const useGroup = () => {
       messageType: string = "text",
       attachmentUrl?: string
     ): Promise<SendGroupMessageResponse> => {
-      console.log(
-        `[Groups Store] Sending ${messageType} message to group ${groupId}`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -986,14 +915,10 @@ export const useGroup = () => {
           group_id: groupId, // Add group_id to the payload for /messages endpoint
         };
 
-        console.log(`[Groups Store] Message payload:`, messageData);
-
         const response = await apiCall(`messages`, {
           method: "POST",
           body: JSON.stringify(messageData),
         });
-
-        console.log(`[Groups Store] Message send response:`, response);
 
         // Optionally update the local messages list to include the new message
         if (response && (response.data || response.message_id)) {
@@ -1025,11 +950,6 @@ export const useGroup = () => {
         }
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] sendGroupMessage completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return response;
@@ -1106,8 +1026,6 @@ export const useGroup = () => {
       try {
         const response = await apiCall(`groups/${groupId}/blocks?page=${page}`);
 
-        console.log(`[Groups Store] Raw getGroupBlocks response:`, response);
-
         // Handle different response structures
         // API can return: response.blocked_users or response.data.blocked_users or response.data
         let blockedUsersList = [];
@@ -1120,11 +1038,6 @@ export const useGroup = () => {
         } else if (Array.isArray(response)) {
           blockedUsersList = response;
         }
-
-        console.log(
-          `[Groups Store] Processed blocked users list:`,
-          blockedUsersList
-        );
 
         setBlockedUsers(blockedUsersList);
         setLoading(false);
@@ -1147,7 +1060,6 @@ export const useGroup = () => {
    */
   const blockGroupUser = useCallback(
     async (groupId: string, userId: string): Promise<ApiResponse> => {
-      console.log(`[Groups Store] Blocking user ${userId} in group ${groupId}`);
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -1163,8 +1075,6 @@ export const useGroup = () => {
           body: JSON.stringify({ blocked_user_id: userId }),
         });
 
-        console.log(`[Groups Store] Block user response:`, response);
-
         // Refresh blocked users list
         await getGroupBlocks(groupId);
 
@@ -1178,11 +1088,6 @@ export const useGroup = () => {
         setGroupMembers(updatedMembers);
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] blockGroupUser completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -1211,9 +1116,6 @@ export const useGroup = () => {
    */
   const unblockGroupUser = useCallback(
     async (groupId: string, userId: string): Promise<ApiResponse> => {
-      console.log(
-        `[Groups Store] Unblocking user ${userId} in group ${groupId}`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -1227,8 +1129,6 @@ export const useGroup = () => {
         const response = await apiCall(`groups/${groupId}/blocks/${userId}`, {
           method: "DELETE",
         });
-
-        console.log(`[Groups Store] Unblock user response:`, response);
 
         // Update local state for blocked users
         setBlockedUsers((prevBlocked) =>
@@ -1247,11 +1147,6 @@ export const useGroup = () => {
         setGroupMembers(updatedMembers);
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] unblockGroupUser completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -1284,9 +1179,6 @@ export const useGroup = () => {
       messageId: string,
       newContent: string
     ): Promise<ApiResponse> => {
-      console.log(
-        `[Groups Store] Editing message ${messageId} using unified endpoint`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -1298,15 +1190,13 @@ export const useGroup = () => {
         }
 
         // Use the unified PUT /messages/{id} endpoint
-        console.log(`[Groups Store] Calling PUT /messages/${messageId}`);
+
         const response = await apiCall(`messages/${messageId}`, {
           method: "PUT",
           body: JSON.stringify({
             content: newContent,
           }),
         });
-
-        console.log(`[Groups Store] Edit message response:`, response);
 
         // Update the local message list
         setGroupMessages((prevMessages) =>
@@ -1323,11 +1213,6 @@ export const useGroup = () => {
         );
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] editGroupMessage completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -1356,9 +1241,6 @@ export const useGroup = () => {
    */
   const deleteGroupMessage = useCallback(
     async (groupId: string, messageId: string): Promise<ApiResponse> => {
-      console.log(
-        `[Groups Store] Deleting message ${messageId} using unified endpoint`
-      );
       setLoading(true);
       setError(null);
       const startTime = performance.now();
@@ -1370,12 +1252,10 @@ export const useGroup = () => {
         }
 
         // Use the unified DELETE /messages/{id} endpoint
-        console.log(`[Groups Store] Calling DELETE /messages/${messageId}`);
+
         const response = await apiCall(`messages/${messageId}`, {
           method: "DELETE",
         });
-
-        console.log(`[Groups Store] Delete message response:`, response);
 
         // Update the local message list - mark as deleted instead of removing
         setGroupMessages((prevMessages) =>
@@ -1391,11 +1271,6 @@ export const useGroup = () => {
         );
 
         const endTime = performance.now();
-        console.log(
-          `[Groups Store] deleteGroupMessage completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
 
         setLoading(false);
         return {
@@ -1425,10 +1300,6 @@ export const useGroup = () => {
    */
   const getGroupLastMessage = useCallback(
     async (groupId: string): Promise<GroupMessagesResponse> => {
-      console.log(
-        `[Groups Store] getGroupLastMessage: Getting last message for group ${groupId}`
-      );
-
       return getGroupMessages(groupId, 1, 1);
     },
     [getGroupMessages]
@@ -1444,10 +1315,6 @@ export const useGroup = () => {
       page = 1,
       limit = 20
     ): Promise<GroupMessagesResponse> => {
-      console.log(
-        `[Groups Store] getGroupConversationHistory: Getting history for group ${groupId}, page ${page}, limit ${limit}`
-      );
-
       return getGroupMessages(groupId, page, limit);
     },
     [getGroupMessages]

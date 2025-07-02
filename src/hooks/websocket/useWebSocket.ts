@@ -178,9 +178,6 @@ export function useWebSocket(
       try {
         socketMessagesRef.current!.send(JSON.stringify(queueItem.message));
         processedIds.push(queueItem.id);
-        console.log(
-          `[WebSocket Messages] Successfully sent queued message: ${queueItem.id}`
-        );
       } catch (error) {
         console.error(
           `[WebSocket Messages] Failed to send queued message ${queueItem.id}:`,
@@ -216,12 +213,6 @@ export function useWebSocket(
         error
       );
     }
-
-    if (processedIds.length > 0) {
-      console.log(
-        `[WebSocket Messages] Processed ${processedIds.length} queued messages`
-      );
-    }
   }, [isMessagesConnected]);
 
   // Restore message queue from localStorage on component mount
@@ -235,9 +226,6 @@ export function useWebSocket(
         messageQueueRef.current = parsedQueue.filter(
           (item: any) =>
             item.timestamp > oneHourAgo && item.retryCount < item.maxRetries
-        );
-        console.log(
-          `[WebSocket Messages] Restored ${messageQueueRef.current.length} messages from queue`
         );
       }
     } catch (error) {
@@ -332,13 +320,11 @@ export function useWebSocket(
       return;
     }
 
-    console.log("[WebSocket] Starting connection process...");
-
     // Connect Messages WebSocket - this is the primary connection
     connectMessagesWebSocket();
 
     // Skip presence WebSocket for now as it's not implemented
-    console.log("[WebSocket] Skipping presence connection (not implemented)");
+
     setIsPresenceConnected(false);
     setIsPresenceConnecting(false);
   }, [validateToken]);
@@ -355,7 +341,6 @@ export function useWebSocket(
       setError(null);
 
       const wsUrl = getMessagesWebSocketUrl();
-      console.log(`[WebSocket Messages] Attempting connection to ${wsUrl}`);
 
       socketMessagesRef.current = new WebSocket(wsUrl);
 
@@ -368,9 +353,7 @@ export function useWebSocket(
           console.warn("[WebSocket Messages] Connection timeout");
           socketMessagesRef.current.close(4000, "Connection timeout");
           // Don't set error for timeout - just log and let fallback handle it
-          console.log(
-            "[WebSocket Messages] Falling back to HTTP for real-time features"
-          );
+
           setIsMessagesConnecting(false);
           updateConnectedState();
         }
@@ -397,9 +380,7 @@ export function useWebSocket(
 
       socketMessagesRef.current.onclose = (event) => {
         clearTimeout(timeoutId);
-        console.log(
-          `[WebSocket Messages] Connection closed: ${event.code} - ${event.reason}`
-        );
+
         setIsMessagesConnected(false);
         setIsMessagesConnecting(false);
 
@@ -409,9 +390,6 @@ export function useWebSocket(
         } else {
           // Don't set error for expected WebSocket failures in Next.js App Router
           // The app will automatically use EventBus as fallback
-          console.log(
-            "[WebSocket Messages] Using HTTP fallback for real-time features"
-          );
         }
         updateConnectedState();
       };
@@ -419,9 +397,7 @@ export function useWebSocket(
       console.warn("[WebSocket Messages] Connection error:", err);
       // Don't set error to prevent persistent toast notifications
       // The app will gracefully fall back to HTTP-based EventBus
-      console.log(
-        "[WebSocket Messages] Falling back to HTTP for real-time features"
-      );
+
       setIsMessagesConnecting(false);
       updateConnectedState();
     }
@@ -444,7 +420,6 @@ export function useWebSocket(
       setError(null);
 
       const wsUrl = getPresenceWebSocketUrl();
-      console.log(`[WebSocket Presence] Connecting to ${wsUrl}`);
 
       socketPresenceRef.current = new WebSocket(wsUrl);
 
@@ -491,7 +466,6 @@ export function useWebSocket(
   // Handle successful Messages connection
   const handleMessagesOpen = useCallback(
     (event: Event) => {
-      console.log("[WebSocket Messages] Connection established");
       setIsMessagesConnected(true);
       setIsMessagesConnecting(false);
       reconnectAttemptsRef.current = 0;
@@ -515,7 +489,6 @@ export function useWebSocket(
   // Handle successful Presence connection
   const handlePresenceOpen = useCallback(
     (event: Event) => {
-      console.log("[WebSocket Presence] Connection established");
       setIsPresenceConnected(true);
       setIsPresenceConnecting(false);
 
@@ -546,7 +519,6 @@ export function useWebSocket(
 
     try {
       socketMessagesRef.current.send(JSON.stringify(unreadSubscription));
-      console.log("[WebSocket Messages] Subscribed to unread counts");
     } catch (error) {
       console.error(
         "[WebSocket Messages] Error subscribing to unread counts:",
@@ -570,7 +542,6 @@ export function useWebSocket(
 
       try {
         socketPresenceRef.current.send(JSON.stringify(subscription));
-        console.log(`[WebSocket Presence] Subscribed to channel: ${channel}`);
 
         // Add to active subscriptions
         if (!activeSubscriptionsRef.current.includes(channel)) {
@@ -593,7 +564,6 @@ export function useWebSocket(
   const handleMessagesMessage = useCallback((event: MessageEvent) => {
     try {
       const message = JSON.parse(event.data) as WebSocketMessage;
-      console.log("[WebSocket Messages] Received message:", message);
 
       // Process message based on its type
       switch (message.type) {
@@ -626,10 +596,6 @@ export function useWebSocket(
           break;
 
         default:
-          console.log(
-            "[WebSocket Messages] Unhandled message type:",
-            message.type
-          );
       }
     } catch (error) {
       console.error("[WebSocket Messages] Failed to parse message:", error);
@@ -640,7 +606,6 @@ export function useWebSocket(
   const handlePresenceMessage = useCallback((event: MessageEvent) => {
     try {
       const message = JSON.parse(event.data) as WebSocketMessage;
-      console.log("[WebSocket Presence] Received message:", message);
 
       // Process message based on its type
       switch (message.type) {
@@ -661,10 +626,6 @@ export function useWebSocket(
           break;
 
         default:
-          console.log(
-            "[WebSocket Presence] Unhandled message type:",
-            message.type
-          );
       }
     } catch (error) {
       console.error("[WebSocket Presence] Failed to parse message:", error);
@@ -677,11 +638,6 @@ export function useWebSocket(
 
     // Emit event using our event bus
     eventBus.emit("unread-counts-updated", data.unreadCounts);
-
-    console.log(
-      "[WebSocket Messages] Unread counts updated:",
-      data.unreadCounts
-    );
   }, []);
 
   // Handle message read status updates
@@ -703,12 +659,6 @@ export function useWebSocket(
 
   // Handle typing notifications
   const handleTypingNotification = useCallback((data: TypingData) => {
-    console.log(
-      `[WebSocket] User ${data.user_id} is ${
-        data.is_typing ? "typing" : "not typing"
-      } to ${data.recipient_id}`
-    );
-
     // Emit event for components to react to typing status
     eventBus.emit("typing-status-changed", {
       userId: data.user_id,
@@ -719,10 +669,6 @@ export function useWebSocket(
 
   // Handle user status changes
   const handleStatusChange = useCallback((data: UserStatusData) => {
-    console.log(
-      `[WebSocket Presence] User ${data.user_id} status changed to ${data.status}`
-    );
-
     // Emit event for components to update UI
     eventBus.emit("user-status-changed", {
       userId: data.user_id,
@@ -733,13 +679,8 @@ export function useWebSocket(
 
   // Process a new incoming message
   const handleNewMessage = useCallback((data: NewMessageData) => {
-    console.log("[WebSocket Messages] New message:", data);
-
     // Enhanced message deduplication
     if (processedMessageIdsRef.current.has(data.id)) {
-      console.log(
-        `[WebSocket Messages] Duplicate message detected: ${data.id}`
-      );
       return;
     }
 
@@ -810,11 +751,6 @@ export function useWebSocket(
   // Handle connection close for Messages WebSocket
   const handleMessagesClose = useCallback(
     (event: CloseEvent) => {
-      console.log(
-        `[WebSocket Messages] Connection closed. Code: ${event.code}, Reason: ${
-          event.reason || "No reason provided"
-        }`
-      );
       setIsMessagesConnected(false);
       setIsMessagesConnecting(false);
       updateConnectedState();
@@ -840,11 +776,6 @@ export function useWebSocket(
   // Handle connection close for Presence WebSocket
   const handlePresenceClose = useCallback(
     (event: CloseEvent) => {
-      console.log(
-        `[WebSocket Presence] Connection closed. Code: ${event.code}, Reason: ${
-          event.reason || "No reason provided"
-        }`
-      );
       setIsPresenceConnected(false);
       setIsPresenceConnecting(false);
       updateConnectedState();
@@ -875,18 +806,13 @@ export function useWebSocket(
       reconnectAttemptsRef.current >= maxReconnectAttempts
     ) {
       if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-        console.log("[WebSocket Messages] Max reconnection attempts reached");
         // Don't set error for max reconnect attempts - let EventBus handle messaging
-        console.log("[WebSocket Messages] Using HTTP fallback for messaging");
       }
       return;
     }
 
     reconnectAttemptsRef.current++;
     const delay = reconnectIntervalRef.current * reconnectAttemptsRef.current;
-    console.log(
-      `[WebSocket Messages] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`
-    );
 
     setTimeout(() => {
       connectMessagesWebSocket();
@@ -901,7 +827,6 @@ export function useWebSocket(
       reconnectAttemptsRef.current >= maxReconnectAttempts
     ) {
       if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-        console.log("[WebSocket Presence] Max reconnection attempts reached");
         setError("Failed to connect after multiple attempts");
         // Show toast notification (if you have a toast library)
         // Example: toast.error("Failed to connect to presence service. Please refresh the page.");
@@ -911,9 +836,6 @@ export function useWebSocket(
 
     reconnectAttemptsRef.current++;
     const delay = reconnectIntervalRef.current * reconnectAttemptsRef.current;
-    console.log(
-      `[WebSocket Presence] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`
-    );
 
     setTimeout(() => {
       connectPresenceWebSocket();
@@ -925,9 +847,7 @@ export function useWebSocket(
     (message: WebSocketMessage) => {
       if (!isMessagesConnected || !socketMessagesRef.current) {
         // Queue message for when connection is established
-        console.log(
-          "[WebSocket Messages] Connection not ready, queueing message"
-        );
+
         addToMessageQueue(message);
 
         // Try to connect if not already connecting
@@ -983,10 +903,6 @@ export function useWebSocket(
       }
 
       try {
-        console.log(
-          `[WebSocket Messages] Sending private message to ${receiverId}`
-        );
-
         sendMessage({
           type: WebSocketMessageType.MESSAGE,
           data: {
@@ -1019,8 +935,6 @@ export function useWebSocket(
       }
 
       try {
-        console.log(`[WebSocket Messages] Sending group message to ${groupId}`);
-
         sendMessage({
           type: WebSocketMessageType.MESSAGE,
           data: {
@@ -1048,7 +962,6 @@ export function useWebSocket(
   // Disconnect Messages WebSocket
   const disconnectMessages = useCallback(() => {
     if (socketMessagesRef.current) {
-      console.log("[WebSocket Messages] Disconnecting...");
       socketMessagesRef.current.close(1000, "User logout");
       socketMessagesRef.current = null;
       setIsMessagesConnected(false);
@@ -1060,7 +973,6 @@ export function useWebSocket(
   // Disconnect Presence WebSocket
   const disconnectPresence = useCallback(() => {
     if (socketPresenceRef.current) {
-      console.log("[WebSocket Presence] Disconnecting...");
       socketPresenceRef.current.close(1000, "User logout");
       socketPresenceRef.current = null;
       setIsPresenceConnected(false);
@@ -1115,10 +1027,6 @@ export function useWebSocket(
       }
 
       try {
-        console.log(
-          `[WebSocket Messages] Subscribing to private messages from user: ${userId}`
-        );
-
         const subscription = {
           action: "subscribe",
           channel: `private:${userId}`,
@@ -1133,10 +1041,6 @@ export function useWebSocket(
             `private:${userId}`,
           ];
         }
-
-        console.log(
-          `[WebSocket Messages] Successfully subscribed to messages from: ${userId}`
-        );
       } catch (error) {
         console.error(
           `[WebSocket Messages] Error subscribing to private messages from ${userId}:`,
@@ -1163,10 +1067,6 @@ export function useWebSocket(
       }
 
       try {
-        console.log(
-          `[WebSocket Messages] Unsubscribing from private messages for user: ${userId}`
-        );
-
         const unsubscribeAction = {
           action: "unsubscribe",
           channel: `private:${userId}`,
@@ -1177,10 +1077,6 @@ export function useWebSocket(
         // Remove from active subscriptions list
         activeSubscriptionsRef.current = activeSubscriptionsRef.current.filter(
           (channel) => channel !== `private:${userId}`
-        );
-
-        console.log(
-          `[WebSocket Messages] Successfully unsubscribed from messages for: ${userId}`
         );
       } catch (error) {
         console.error(
@@ -1200,13 +1096,11 @@ export function useWebSocket(
   // Connect when component mounts if autoConnect is true
   useEffect(() => {
     if (options.autoConnect && session?.access_token) {
-      console.log("[WebSocket] Auto-connecting");
       connect();
     }
 
     // Clean up on unmount
     return () => {
-      console.log("[WebSocket] Component unmounting, disconnecting");
       disconnect();
     };
   }, [options.autoConnect, session?.access_token, connect, disconnect]);

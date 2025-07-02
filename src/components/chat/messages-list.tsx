@@ -129,23 +129,18 @@ export function MessagesList() {
   // Update local state when hook data changes
   useEffect(() => {
     if (hookFriends && Array.isArray(hookFriends)) {
-      console.log("[MessagesList] Transforming friends data:", hookFriends);
-
       // Process friends data for display
 
       const transformAndSetFriends = async () => {
         const friendsWithMessages = await transformFriendsToMessages(
           hookFriends
         );
-        console.log(
-          "[MessagesList] Transformed friends with profile pictures:",
-          friendsWithMessages.map((f) => ({
-            id: f.id,
-            name: f.sender.name,
-            profile_url: f.sender.profile_picture_url,
-            content: f.content,
-          }))
-        );
+        friendsWithMessages.map((f) => ({
+          id: f.id,
+          name: f.sender.name,
+          profile_url: f.sender.profile_picture_url,
+          content: f.content,
+        }));
         setMessages((prevMessages) => {
           // Remove old friend messages and add new ones
           const nonFriendMessages = prevMessages.filter(
@@ -200,7 +195,6 @@ export function MessagesList() {
       // Subscribe to message deletion events
       const handleMessageDeleted = (data: any) => {
         if (data.type === "message_deleted" && data.message_id) {
-          console.log(`[MessagesList] Message deleted: ${data.message_id}`);
           // Refresh the message list to reflect deletion
           getFriends();
           getGroups();
@@ -210,7 +204,6 @@ export function MessagesList() {
       // Subscribe to message edit events
       const handleMessageEdited = (data: any) => {
         if (data.type === "message_edited" && data.message_id) {
-          console.log(`[MessagesList] Message edited: ${data.message_id}`);
           // Refresh the message list to reflect edit
           getFriends();
           getGroups();
@@ -251,8 +244,6 @@ export function MessagesList() {
       conversationId: string;
       type: "private" | "group";
     }) => {
-      console.log(`[MessagesList] Received message deleted event:`, data);
-
       // Update local state to reflect the deletion
       setMessages((prevMessages) =>
         prevMessages.map((msg) => {
@@ -269,14 +260,8 @@ export function MessagesList() {
 
       // Also refresh data from server to ensure consistency
       if (data.type === "private") {
-        console.log(
-          `[MessagesList] Refreshing friends data after private message deletion`
-        );
         getFriends();
       } else if (data.type === "group") {
-        console.log(
-          `[MessagesList] Refreshing groups data after group message deletion`
-        );
         getGroups();
       }
     };
@@ -287,8 +272,6 @@ export function MessagesList() {
       content: string;
       type: "private" | "group";
     }) => {
-      console.log(`[MessagesList] Received message edited event:`, data);
-
       // Update local state to reflect the edit
       setMessages((prevMessages) =>
         prevMessages.map((msg) => {
@@ -305,14 +288,8 @@ export function MessagesList() {
 
       // Also refresh data from server to ensure consistency
       if (data.type === "private") {
-        console.log(
-          `[MessagesList] Refreshing friends data after private message edit`
-        );
         getFriends();
       } else if (data.type === "group") {
-        console.log(
-          `[MessagesList] Refreshing groups data after group message edit`
-        );
         getGroups();
       }
     };
@@ -334,35 +311,18 @@ export function MessagesList() {
     type: "friend" | "group"
   ) => {
     try {
-      console.log(
-        `[MessagesList] Getting last message for ${type}: ${conversationId}`
-      );
-
       let response = null;
 
       if (type === "group") {
         // For groups, use the dedicated group messages function
         response = await getGroupLastMessage(conversationId);
-        console.log(
-          `[MessagesList] Group response from getGroupLastMessage:`,
-          response
-        );
       } else {
         // For friends, use the unified getLastMessage function
         response = await getLastMessage(conversationId, "private");
-        console.log(
-          `[MessagesList] Friend response from getLastMessage:`,
-          response
-        );
       }
 
       // Use consistent response normalization
       const normalizedMessage = normalizeMessageResponse(response);
-
-      console.log(
-        `[MessagesList] ${type} ${conversationId} - Final normalized:`,
-        normalizedMessage
-      );
 
       return normalizedMessage;
     } catch (error) {
@@ -391,7 +351,6 @@ export function MessagesList() {
       await Promise.all([getFriends(), getGroups()]);
 
       // The useEffect hooks will automatically update the messages when hookFriends and hookGroups change
-      console.log("[MessagesList] Data refresh completed");
     } catch (err: any) {
       setError(err.message || "Failed to load conversations");
       console.error("Error loading conversations data:", err);
@@ -561,26 +520,11 @@ export function MessagesList() {
           // Handle different formats of last_message
           let lastMessage = group.last_message || {};
 
-          // Debug: Log the actual last_message structure for groups
-          console.log(
-            `[MessagesList] Group ${group.name || group.id} last_message:`,
-            lastMessage
-          );
-
           // If no last_message from group data, try to fetch from messages API
           if (!lastMessage || !Object.keys(lastMessage).length) {
-            console.log(
-              `[MessagesList] No last_message for group ${
-                group.name || group.id
-              }, fetching from API...`
-            );
             lastMessage = await getLastMessageForConversation(
               group.id,
               "group"
-            );
-            console.log(
-              `[MessagesList] API fetch result for group ${group.id}:`,
-              lastMessage ? "Found message" : "No message found"
             );
           }
 
@@ -589,13 +533,6 @@ export function MessagesList() {
           let messageContent = messageDisplay.content;
           let hasMessage = messageContent !== "No messages yet";
           let isDeleted = messageDisplay.isDeleted;
-
-          console.log(
-            `[MessagesList] Group ${
-              group.name || group.id
-            } - Content: "${messageContent}", HasMessage: ${hasMessage}, IsDeleted: ${isDeleted}, LastMessage:`,
-            lastMessage
-          );
 
           // Find a valid timestamp for sorting
           const lastActivity =
@@ -676,18 +613,9 @@ export function MessagesList() {
 
         // If no last_message from friend data, try to fetch from messages API
         if (!lastMessage || !Object.keys(lastMessage).length) {
-          console.log(
-            `[MessagesList] Friend ${friend.id} (${
-              friend.username || friend.name
-            }) has no last_message from friend data, fetching from API...`
-          );
           lastMessage = await getLastMessageForConversation(
             friend.id,
             "friend"
-          );
-          console.log(
-            `[MessagesList] API fetch result for friend ${friend.id}:`,
-            lastMessage ? "Found message" : "No message found"
           );
         }
 
@@ -696,13 +624,6 @@ export function MessagesList() {
         let messageContent = messageDisplay.content;
         let hasMessage = messageContent !== "No messages yet";
         let isDeleted = messageDisplay.isDeleted;
-
-        console.log(
-          `[MessagesList] Friend ${
-            friend.username || friend.name || friend.id
-          } - Content: "${messageContent}", HasMessage: ${hasMessage}, IsDeleted: ${isDeleted}, LastMessage:`,
-          lastMessage
-        );
 
         const lastActivity =
           friend.last_active ||

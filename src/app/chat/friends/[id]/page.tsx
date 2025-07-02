@@ -89,9 +89,6 @@ export default function FriendPage() {
       }
       displayName;
     } else {
-      console.log(
-        "[FriendPage] API returned fallback data, checking for provided name"
-      );
       // If API returned fallback but we have a provided name, use it
       if (providedName) {
         displayName = providedName;

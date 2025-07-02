@@ -110,6 +110,12 @@ interface GroupMessage {
   editHistory?: { content: string; editedAt: string }[];
   replyTo?: string;
   reactions?: { emoji: string; users: string[] }[];
+  // Local state tracking to prevent server overwrites
+  lastEditedAt?: string;
+  lastDeletedAt?: string;
+  // Protection timestamps to prevent overwrites for a period after operations
+  localEditProtection?: number;
+  localDeleteProtection?: number;
 }
 
 // Enhanced WebSocket message interface with better typing
@@ -241,13 +247,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   // Debug logging for blocked users
   useEffect(() => {
     if (blockedUsers && blockedUsers.length > 0) {
-      console.log(
-        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users:`,
-        blockedUsers.map((u) => ({
-          user_id: u.user_id || u.id,
-          blocked_at: u.blocked_at,
-        }))
-      );
+      // Blocked users loaded
     }
   }, [blockedUsers, groupId]);
 
@@ -429,16 +429,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   useEffect(() => {
     const fetchBlockedUsers = async () => {
       try {
-        console.log(`[GroupChat] Fetching blocked users for group ${groupId}`);
         await getGroupBlocks(groupId);
-        console.log(
-          `[GroupChat] Successfully fetched blocked users for group ${groupId}`
-        );
       } catch (error: any) {
-        console.error(
-          `[GroupChat] Failed to fetch blocked users for group ${groupId}:`,
-          error
-        );
         // Don't show error toast for blocked users fetch failure as it's not critical
       }
     };
@@ -448,27 +440,53 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     }
   }, [groupId, getGroupBlocks]);
 
-  // Fetch group messages
+  // Fetch group messages - FIXED: Use unified messages endpoint like private chat
   const fetchGroupMessages = useCallback(
     async (page = 1, limit = 20) => {
       try {
         setLoadingMessages(true);
 
-        const messagesData = await getGroupMessages(groupId, page, limit);
-        console.log(
-          `[GroupChat] Fetched ${
-            messagesData.messages?.length || 0
-          } messages for group ${groupId}`
+        // CHANGED: Use the same unified endpoint as private chat for consistency
+        // This endpoint has better support for edit/delete states
+        const response = await fetch(
+          `/api/proxy/messages/history?type=group&target_id=${groupId}&limit=${limit}&page=${page}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session?.access_token}`,
+            },
+          }
         );
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const messagesData = await response.json();
+
+        // Extract messages from various possible response formats
+        let messagesList = [];
+        if (Array.isArray(messagesData)) {
+          messagesList = messagesData;
+        } else if (
+          messagesData.messages &&
+          Array.isArray(messagesData.messages)
+        ) {
+          messagesList = messagesData.messages;
+        } else if (messagesData.data && Array.isArray(messagesData.data)) {
+          messagesList = messagesData.data;
+        }
 
         const paginationData = {
           current_page: messagesData.current_page || page,
-          total_pages: Math.ceil((messagesData.total || 0) / limit) || 1,
-          total_items: messagesData.total || messagesData.messages?.length || 0,
+          total_pages:
+            Math.ceil((messagesData.total || messagesList.length) / limit) || 1,
+          total_items: messagesData.total || messagesList.length || 0,
           items_per_page: limit,
           has_more_pages:
             (messagesData.current_page || page) <
-            (Math.ceil((messagesData.total || 0) / limit) || 1),
+            (Math.ceil((messagesData.total || messagesList.length) / limit) ||
+              1),
         };
 
         setPagination(paginationData);
@@ -484,19 +502,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               isCurrentUser
             );
 
-            // Debug logging for API message data
-            console.log(`[GroupChat] Processing message ${messageId}:`, {
-              content: apiMsg.content,
-              isEdited: (apiMsg as any).isEdited || (apiMsg as any).is_edited,
-              isDeleted:
-                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted,
-              editedAt: (apiMsg as any).editedAt || (apiMsg as any).edited_at,
-              deletedAt:
-                (apiMsg as any).deletedAt || (apiMsg as any).deleted_at,
-              originalContent:
-                (apiMsg as any).originalContent ||
-                (apiMsg as any).original_content,
-            });
+            // Process message data
 
             let attachment = undefined;
             if (apiMsg.attachment_url) {
@@ -566,8 +572,74 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         if (page === 1) {
-          setMessages(sortedMessages);
+          // SMART MERGE: Preserve local edit/delete states that haven't been synced yet
+          setMessages((prevMessages) => {
+            const mergedMessages = sortedMessages.map(
+              (newMsg: GroupMessage) => {
+                const existingMsg = prevMessages.find(
+                  (m) => m.id === newMsg.id
+                );
+
+                // If we have a locally edited/deleted message that's newer than server data,
+                // preserve the local state
+                if (existingMsg) {
+                  const now = Date.now();
+                  const hasEditProtection =
+                    existingMsg.localEditProtection &&
+                    now < existingMsg.localEditProtection;
+                  const hasDeleteProtection =
+                    existingMsg.localDeleteProtection &&
+                    now < existingMsg.localDeleteProtection;
+
+                  const hasLocalEdit =
+                    existingMsg.lastEditedAt &&
+                    new Date(existingMsg.lastEditedAt) >
+                      new Date(newMsg.timestamp);
+                  const hasLocalDelete =
+                    existingMsg.lastDeletedAt &&
+                    new Date(existingMsg.lastDeletedAt) >
+                      new Date(newMsg.timestamp);
+
+                  // ENHANCED: Also preserve if local state shows edit/delete but server doesn't
+                  const localEditNotOnServer =
+                    existingMsg.isEdited && !newMsg.isEdited;
+                  const localDeleteNotOnServer =
+                    existingMsg.isDeleted && !newMsg.isDeleted;
+
+                  const shouldPreserveLocal =
+                    hasEditProtection ||
+                    hasDeleteProtection ||
+                    hasLocalEdit ||
+                    hasLocalDelete ||
+                    localEditNotOnServer ||
+                    localDeleteNotOnServer;
+
+                  if (shouldPreserveLocal) {
+                    // Preserve local state over server state
+
+                    return {
+                      ...newMsg, // Use server data as base
+                      content: existingMsg.content, // But keep local content
+                      isEdited: existingMsg.isEdited, // Keep local edit state
+                      isDeleted: existingMsg.isDeleted, // Keep local delete state
+                      lastEditedAt: existingMsg.lastEditedAt, // Keep local timestamps
+                      lastDeletedAt: existingMsg.lastDeletedAt,
+                      localEditProtection: existingMsg.localEditProtection, // Keep protections
+                      localDeleteProtection: existingMsg.localDeleteProtection,
+                      pending: existingMsg.pending, // Keep pending state
+                    };
+                  }
+                }
+
+                return newMsg;
+              }
+            );
+
+            return mergedMessages;
+          });
         } else {
+          // For pagination (loading older messages), add them to the BEGINNING of the array
+          // since they are older than existing messages
           setMessages((prevMessages) => [...sortedMessages, ...prevMessages]);
         }
 
@@ -599,30 +671,13 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       // Messages from blocked users are primarily filtered by the backend
       // This function provides client-side validation as backup
 
-      console.log(
-        `[GroupChat] filterBlockedMessages called with ${messagesToFilter.length} messages`
-      );
-
       if (!blockedUsers || blockedUsers.length === 0) {
-        console.log(
-          `[GroupChat] No blocked users found, returning all ${messagesToFilter.length} messages`
-        );
         return messagesToFilter;
       }
-
-      console.log(
-        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users - applying client-side validation`
-      );
-      console.log(`[GroupChat] Blocked users:`, blockedUsers);
 
       // Create a Set of blocked user IDs for efficient lookup
       const blockedUserIds = new Set(
         blockedUsers.map((user) => user.user_id || user.id).filter(Boolean)
-      );
-
-      console.log(
-        `[GroupChat] Blocked user IDs set:`,
-        Array.from(blockedUserIds)
       );
 
       // Filter messages with client-side validation
@@ -636,27 +691,12 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         const senderId = message.sender.id;
         const isBlocked = blockedUserIds.has(senderId);
 
-        console.log(
-          `[GroupChat] Checking message from sender ${senderId}: isBlocked=${isBlocked}`
-        );
-
         if (isBlocked) {
-          console.log(
-            `[GroupChat] Client-side filter: Blocked message from user ${senderId}`
-          );
           return false;
         }
 
         return true;
       });
-
-      if (filtered.length !== messagesToFilter.length) {
-        console.log(
-          `[GroupChat] Client-side filtered ${
-            messagesToFilter.length - filtered.length
-          } messages from blocked users`
-        );
-      }
 
       return filtered;
     },
@@ -671,23 +711,23 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     // Then apply search filter if searching
     const finalMessages = isSearching ? filteredMessages : clientFiltered;
 
-    console.log(
-      `[GroupChat] Visible messages: ${finalMessages.length}/${
-        messages.length
-      } total, ${isSearching ? "search filtered" : "blocked user filtered"}`
-    );
-
-    return finalMessages;
+    // TEMP FIX: Reverse message order to put newest at bottom if they're currently at top
+    return finalMessages.slice().reverse();
   }, [messages, filteredMessages, isSearching, filterBlockedMessages]);
 
   // Handle edit message
   const handleEditMessage = useCallback(
     (messageId: string) => {
+      // Check if this is a temporary ID that shouldn't be edited via API
+      if (messageId.startsWith("temp-")) {
+        toast.error("Cannot edit message that hasn't been sent yet");
+        return;
+      }
+
       const message = messages.find((msg) => msg.id === messageId);
       if (message && !message.isDeleted && !message.pending) {
         setEditingMessageId(messageId);
         setInputMessage(message.content);
-        console.log(`[GroupChat] Editing message: ${messageId}`);
       }
     },
     [messages]
@@ -697,7 +737,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setInputMessage("");
-    console.log("[GroupChat] Edit cancelled");
   }, []);
 
   // Handle submit edit (updated to accept content parameter)
@@ -717,13 +756,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       setIsSending(true);
 
       try {
-        console.log(
-          "🔧 EDIT: Starting edit for message:",
-          editingMessageId,
-          "New content:",
-          messageContent
-        );
-
         // Update message optimistically
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
@@ -739,20 +771,18 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         // Call API to edit message
-        console.log("🔧 EDIT: Calling editGroupMessage API...");
         const response = await editGroupMessage(
           groupId,
           editingMessageId,
           messageContent
         );
-        console.log("🔧 EDIT: API response:", response);
 
         // Simple validation - if we get a response, consider it successful
         if (!response) {
           throw new Error("No response received from edit API");
         }
 
-        // Update with successful edit
+        // Update with successful edit - ENHANCED with protection timestamp
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
             msg.id === editingMessageId
@@ -761,6 +791,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                   content: messageContent,
                   isEdited: true,
                   pending: false,
+                  lastEditedAt: new Date().toISOString(), // Add timestamp to track local edits
+                  localEditProtection: Date.now() + 30000, // Protect from overwrites for 30 seconds
                 }
               : msg
           )
@@ -770,17 +802,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         setEditingMessageId(null);
 
         toast.success("Message updated successfully");
-        console.log(
-          `[GroupChat] Message edited successfully: ${editingMessageId}`
-        );
 
-        // Schedule a background refresh to ensure consistency with backend
-        setTimeout(() => {
-          if (!hasPendingOperations) {
-            console.log("[GroupChat] Background refresh after edit operation");
-            fetchGroupMessages(1, 20);
-          }
-        }, 2000);
+        // REMOVED: Background refresh that was causing state loss
+        // The message state is already correct from optimistic update + API response
       } catch (error: any) {
         console.error("🔧 EDIT ERROR: Failed to edit message:", error);
 
@@ -831,6 +855,12 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       const message = messages.find((msg) => msg.id === messageId);
       if (!message) return;
 
+      // Check if this is a temporary ID that shouldn't be deleted via API
+      if (messageId.startsWith("temp-")) {
+        toast.error("Cannot delete message that hasn't been sent yet");
+        return;
+      }
+
       // Show confirmation using react-hot-toast
       const shouldDelete = await new Promise<boolean>((resolve) => {
         toast(
@@ -872,8 +902,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
       if (!shouldDelete) return;
 
-      console.log("🗑️ DELETE: Starting delete for message:", messageId);
-
       try {
         // Optimistically mark message as deleted
         setMessages((prevMessages) =>
@@ -890,34 +918,31 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         // Call API to delete message
-        console.log("🗑️ DELETE: Calling deleteGroupMessage API...");
         const response = await deleteGroupMessage(groupId, messageId);
-        console.log("🗑️ DELETE: API response:", response);
 
         // Simple validation - if we get a response, consider it successful
         if (!response) {
           throw new Error("No response received from delete API");
         }
 
-        // Confirm deletion
+        // Confirm deletion - ENHANCED with protection timestamp
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
-            msg.id === messageId ? { ...msg, pending: false } : msg
+            msg.id === messageId
+              ? {
+                  ...msg,
+                  pending: false,
+                  lastDeletedAt: new Date().toISOString(), // Add timestamp to track local deletes
+                  localDeleteProtection: Date.now() + 30000, // Protect from overwrites for 30 seconds
+                }
+              : msg
           )
         );
 
         toast.success("Message deleted successfully");
-        console.log(`[GroupChat] Message deleted: ${messageId}`);
 
-        // Schedule a background refresh to ensure consistency with backend
-        setTimeout(() => {
-          if (!hasPendingOperations) {
-            console.log(
-              "[GroupChat] Background refresh after delete operation"
-            );
-            fetchGroupMessages(1, 20);
-          }
-        }, 2000);
+        // REMOVED: Background refresh that was causing message disappearance
+        // The message state is already correct from optimistic update + API response
       } catch (error: any) {
         console.error("🗑️ DELETE ERROR: Failed to delete message:", error);
 
@@ -1051,14 +1076,33 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
       const response = await sendGroupMessage(groupId, messageContent);
 
-      console.log("[GroupChat] Message sent successfully:", response);
+      // Extract real message ID from response
+      const realMessageId = response?.message_id;
 
-      // Update optimistic message to delivered
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
-        )
-      );
+      if (realMessageId) {
+        // Update optimistic message with real ID and delivered status
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === tempId
+              ? {
+                  ...msg,
+                  id: realMessageId, // Replace temp ID with real ID
+                  pending: false,
+                  delivered: true,
+                }
+              : msg
+          )
+        );
+      } else {
+        // Fallback: just mark as delivered if no real ID available
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === tempId
+              ? { ...msg, pending: false, delivered: true }
+              : msg
+          )
+        );
+      }
 
       toast.success("Message sent successfully", { id: `send-${tempId}` });
     } catch (error: any) {
@@ -1139,8 +1183,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   useEffect(() => {
     if (!wsMessages || wsMessages.length === 0 || !groupId) return;
 
-    console.log(`[GroupChat] Received WebSocket messages:`, wsMessages);
-
     const newGroupMessages = wsMessages.filter(
       (msg: any) => msg.group_id === groupId || msg.chatroom_id === groupId
     );
@@ -1151,9 +1193,34 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       const isCurrentUser = isMessageFromCurrentUser(wsMsg.sender_id);
       const senderInfo = resolveSenderName(wsMsg.sender_id, isCurrentUser);
 
+      // Check for edit/delete status from WebSocket message
+      const isEdited = Boolean(
+        wsMsg.isEdited ||
+          wsMsg.is_edited ||
+          wsMsg.edited ||
+          wsMsg.editedAt ||
+          wsMsg.edited_at
+      );
+
+      const isDeleted = Boolean(
+        wsMsg.isDeleted ||
+          wsMsg.is_deleted ||
+          wsMsg.deleted ||
+          wsMsg.deletedAt ||
+          wsMsg.deleted_at ||
+          wsMsg.content === "This message was deleted" ||
+          wsMsg.content === "[Deleted]"
+      );
+
+      // Handle deleted message content
+      let messageContent = wsMsg.content;
+      if (isDeleted && wsMsg.content !== "This message was deleted") {
+        messageContent = "This message was deleted";
+      }
+
       return {
         id: wsMsg.id,
-        content: wsMsg.content,
+        content: messageContent,
         sender: {
           id: String(wsMsg.sender_id),
           name: senderInfo.name,
@@ -1161,10 +1228,20 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         },
         timestamp: wsMsg.created_at || new Date().toISOString(),
         isCurrentUser,
+        isEdited,
+        isDeleted,
         pending: false,
         delivered: true,
       };
     });
+
+    // Track if we have new messages for background refresh decision
+    const hasNewMessages =
+      formattedNewMessages.length > 0 &&
+      formattedNewMessages.some(
+        (msg: GroupMessage) =>
+          !messages.some((prev: GroupMessage) => prev.id === msg.id)
+      );
 
     setMessages((prevMessages) => {
       const existingIds = new Set(prevMessages.map((m) => m.id));
@@ -1172,7 +1249,61 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         (m) => !existingIds.has(m.id)
       );
 
-      if (uniqueNewMessages.length === 0) return prevMessages;
+      if (uniqueNewMessages.length === 0) {
+        // No new messages, but check if existing messages need updates
+        // ENHANCED: Better merge of WebSocket updates with local states
+        const updatedMessages = prevMessages.map((existingMsg) => {
+          const wsUpdate = formattedNewMessages.find(
+            (ws) => ws.id === existingMsg.id
+          );
+          if (wsUpdate) {
+            // Check for local changes that should be preserved
+            const now = Date.now();
+            const hasEditProtection =
+              existingMsg.localEditProtection &&
+              now < existingMsg.localEditProtection;
+            const hasDeleteProtection =
+              existingMsg.localDeleteProtection &&
+              now < existingMsg.localDeleteProtection;
+
+            const hasRecentLocalEdit =
+              existingMsg.lastEditedAt &&
+              new Date(existingMsg.lastEditedAt) > new Date(Date.now() - 10000); // 10 seconds
+            const hasRecentLocalDelete =
+              existingMsg.lastDeletedAt &&
+              new Date(existingMsg.lastDeletedAt) >
+                new Date(Date.now() - 10000); // 10 seconds
+
+            // Also preserve if we have pending operations
+            const hasPendingOperation = existingMsg.pending;
+
+            const shouldPreserveLocal =
+              hasEditProtection ||
+              hasDeleteProtection ||
+              hasRecentLocalEdit ||
+              hasRecentLocalDelete ||
+              hasPendingOperation;
+
+            if (shouldPreserveLocal) {
+              // Preserve local changes over WebSocket updates
+
+              return existingMsg; // Keep existing message as-is
+            } else {
+              // Safe to update with WebSocket data
+              return {
+                ...existingMsg,
+                content: wsUpdate.content,
+                isEdited: wsUpdate.isEdited,
+                isDeleted: wsUpdate.isDeleted,
+                timestamp: wsUpdate.timestamp,
+              };
+            }
+          }
+          return existingMsg;
+        });
+
+        return updatedMessages;
+      }
 
       // Remove any temporary/optimistic messages that match the new real messages
       const messagesWithoutOptimistic = prevMessages.filter((msg) => {
@@ -1207,18 +1338,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       );
     });
 
-    // Refresh message history to ensure we have all messages
-    // But only if we don't have pending operations to avoid conflicts
-    setTimeout(() => {
-      if (!hasPendingOperations) {
-        console.log("[GroupChat] Background refresh from WebSocket");
-        fetchGroupMessages(1, 20);
-      } else {
-        console.log(
-          "[GroupChat] Skipping WebSocket refresh due to pending operations"
-        );
-      }
-    }, 1000);
+    // DISABLED: Background refresh completely to prevent state overwrites
+    // The WebSocket already provides real-time updates, no need for additional fetching
+    // that can overwrite local optimistic states for edit/delete operations
   }, [
     wsMessages,
     groupId,
@@ -1424,18 +1546,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                       setIsUploadingFile(true);
                       setUploadProgress(0);
 
-                      // Upload file and send message using fileUploadHelper
-                      const result = await uploadFileAndSendMessage(
-                        file,
-                        groupId,
-                        "", // messageText (empty since we're just sending a file)
-                        true, // isGroup set to true for group chat
-                        (progress: number) => setUploadProgress(progress),
-                        session?.access_token
-                      );
-
-                      // Add optimistic message with file attachment
-                      const tempId = `temp-${Date.now()}`;
+                      // Create optimistic message first
+                      const tempId = `temp-${Date.now()}-${Math.random()}`;
                       const optimisticMessage: GroupMessage = {
                         id: tempId,
                         content: `📎 ${file.name}`,
@@ -1456,7 +1568,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                             getMediaType(file.type) === "image"
                               ? "image"
                               : "file",
-                          url: result.fileUrl,
+                          url: URL.createObjectURL(file), // Use temporary URL for immediate display
                           name: file.name,
                           size: formatFileSize(file.size),
                         },
@@ -1468,14 +1580,55 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                         optimisticMessage,
                       ]);
 
-                      // Update message to delivered state
-                      setMessages((prevMessages) =>
-                        prevMessages.map((msg) =>
-                          msg.id === tempId
-                            ? { ...msg, pending: false, delivered: true }
-                            : msg
-                        )
+                      // Upload file and send message using fileUploadHelper
+                      const result = await uploadFileAndSendMessage(
+                        file,
+                        groupId,
+                        "", // messageText (empty since we're just sending a file)
+                        true, // isGroup set to true for group chat
+                        (progress: number) => setUploadProgress(progress),
+                        session?.access_token
                       );
+
+                      // Extract real message ID from response
+                      const realMessageId = result?.messageId;
+
+                      if (realMessageId) {
+                        // Update optimistic message with real ID and server URL
+                        setMessages((prevMessages) =>
+                          prevMessages.map((msg) =>
+                            msg.id === tempId
+                              ? {
+                                  ...msg,
+                                  id: realMessageId, // Replace temp ID with real ID
+                                  pending: false,
+                                  delivered: true,
+                                  attachment: {
+                                    ...msg.attachment!,
+                                    url: result.fileUrl,
+                                  },
+                                }
+                              : msg
+                          )
+                        );
+                      } else {
+                        // Fallback: just mark as delivered if no real ID available
+                        setMessages((prevMessages) =>
+                          prevMessages.map((msg) =>
+                            msg.id === tempId
+                              ? {
+                                  ...msg,
+                                  pending: false,
+                                  delivered: true,
+                                  attachment: {
+                                    ...msg.attachment!,
+                                    url: result.fileUrl,
+                                  },
+                                }
+                              : msg
+                          )
+                        );
+                      }
 
                       // Auto-scroll to show the new message
                       setTimeout(() => {

@@ -209,7 +209,7 @@ export function ChatArea({
   // Simplified session logging - reduced for production readiness
   useEffect(() => {
     if (process.env.NODE_ENV === "development") {
-      console.log("[ChatArea] Session:", {
+      ({
         currentUserId,
         friendId,
         messageCount: localMessages.length,
@@ -312,7 +312,7 @@ export function ChatArea({
 
   // Debug recipient data for header
   useEffect(() => {
-    console.log("[ChatArea] Debug recipient data:", {
+    ({
       friendId,
       recipientName,
       recipientData: recipientData
@@ -467,19 +467,10 @@ export function ChatArea({
             const blockedUserId = blockedUser.id;
             const match = blockedUserId === senderId;
 
-            if (match) {
-              console.log(
-                `[ChatArea] Found blocked user match: sender=${senderId}, blocked=${blockedUserId}`
-              );
-            }
-
             return match;
           });
 
           if (isBlocked) {
-            console.log(
-              `[ChatArea] Filtering out message from blocked user: ${senderId}`
-            );
             return false; // Hide message from blocked user
           }
         }
@@ -488,15 +479,7 @@ export function ChatArea({
       });
 
       if (filtered.length !== messages.length) {
-        console.log(
-          `[ChatArea] Filtered ${
-            messages.length - filtered.length
-          } messages from blocked users`
-        );
-        console.log(
-          `[ChatArea] Blocked users list:`,
-          blockedUsers.map((u) => ({ id: u.id, name: u.name }))
-        );
+        // Messages from blocked users have been filtered out
       }
 
       return filtered;
@@ -841,14 +824,7 @@ export function ChatArea({
   const debugApiResponse = useCallback(
     (response: any, source: string) => {
       if (process.env.NODE_ENV === "development") {
-        console.log(`[ChatArea] API ${source}:`, {
-          messageCount: Array.isArray(response)
-            ? response.length
-            : response?.data?.length || 0,
-          hasData: !!(response && (Array.isArray(response) || response.data)),
-          currentUserId,
-          friendId,
-        });
+        // Debug logging removed for cleaner production code
       }
     },
     [currentUserId, friendId]
@@ -910,9 +886,7 @@ export function ChatArea({
             url: transformedUrl,
             name: getFileNameFromUrl(message.attachment_url),
           };
-          console.log(
-            `[processApiMessages] Created attachment from URL: ${message.attachment_url} -> ${transformedUrl}`
-          );
+          // Attachment created from URL
         }
 
         // Handle attachment URL transformation for messages with existing attachments
@@ -926,9 +900,7 @@ export function ChatArea({
             // Update the message with the transformed URL
             processedMessage.attachment.url = transformedUrl;
 
-            console.log(
-              `[ChatArea] Transformed attachment URL: ${originalUrl} -> ${transformedUrl}`
-            );
+            // Attachment URL transformed
           } catch (error) {
             console.error(
               "[ChatArea] Error transforming attachment URL:",
@@ -997,10 +969,7 @@ export function ChatArea({
     const loadFreshMessages = async () => {
       try {
         if (process.env.NODE_ENV === "development") {
-          console.log(
-            "[ChatArea] Loading fresh messages for friendId:",
-            friendId
-          );
+          // Loading fresh messages for friend
         }
 
         // Always get the latest messages when switching rooms
@@ -1104,10 +1073,12 @@ export function ChatArea({
             // Check if we need to update anyway - compare message counts
             if (processedMessages.length > localMessages.length) {
               // Recalculate ownership for all messages to ensure correct attribution
-              const messagesWithCorrectOwnership = processedMessages.map((msg) => ({
-                ...msg,
-                isCurrentUser: isCurrentUserMessage(msg),
-              }));
+              const messagesWithCorrectOwnership = processedMessages.map(
+                (msg) => ({
+                  ...msg,
+                  isCurrentUser: isCurrentUserMessage(msg),
+                })
+              );
               setLocalMessages(messagesWithCorrectOwnership);
               saveToSessionStorage(messagesWithCorrectOwnership);
             } else if (
@@ -1116,10 +1087,12 @@ export function ChatArea({
             ) {
               // First load and we have some messages from API
               // Recalculate ownership to ensure correct attribution
-              const messagesWithCorrectOwnership = processedMessages.map((msg) => ({
-                ...msg,
-                isCurrentUser: isCurrentUserMessage(msg),
-              }));
+              const messagesWithCorrectOwnership = processedMessages.map(
+                (msg) => ({
+                  ...msg,
+                  isCurrentUser: isCurrentUserMessage(msg),
+                })
+              );
               setLocalMessages(messagesWithCorrectOwnership);
               saveToSessionStorage(messagesWithCorrectOwnership);
             }
@@ -1565,8 +1538,6 @@ export function ChatArea({
         saveToSessionStorage(updatedMessages);
         return updatedMessages;
       });
-
-      console.log(`[ChatArea] Message sent successfully with ID: ${messageId}`);
     } catch (error) {
       console.error("[ChatArea] Error sending message:", error);
 
@@ -1604,8 +1575,6 @@ export function ChatArea({
   const retryFailedMessage = useCallback(
     async (message: Message) => {
       if (!message.content || !friendId) return;
-
-      console.log(`[ChatArea] Retrying failed message: ${message.id}`);
 
       // Update message to show retrying state
       setLocalMessages((prev) =>
@@ -1731,7 +1700,6 @@ export function ChatArea({
       try {
         // You would implement sendTypingStatus in your WebSocket context
         // sendTypingStatus(friendId, true);
-        console.log(`[ChatArea] Sent typing indicator to ${friendId}`);
       } catch (error) {
         console.warn("[ChatArea] Failed to send typing indicator:", error);
       }
@@ -1742,7 +1710,6 @@ export function ChatArea({
       if (isConnected && friendId) {
         try {
           // sendTypingStatus(friendId, false);
-          console.log(`[ChatArea] Cleared typing indicator for ${friendId}`);
         } catch (error) {
           console.warn("[ChatArea] Failed to clear typing indicator:", error);
         }
@@ -1757,7 +1724,6 @@ export function ChatArea({
       if (message && !message.isDeleted && !message.pending) {
         setEditingMessageId(messageId);
         setInputMessage(message.content);
-        console.log(`[ChatArea] Editing message: ${messageId}`);
       }
     },
     [localMessages]
@@ -1767,7 +1733,6 @@ export function ChatArea({
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setInputMessage("");
-    console.log("[ChatArea] Edit cancelled");
   }, []);
 
   // Handle submit edit
@@ -1829,9 +1794,6 @@ export function ChatArea({
         duration: 3000,
         position: "top-center",
       });
-      console.log(
-        `[ChatArea] Message edited successfully: ${editingMessageId}`
-      );
     } catch (error) {
       console.error("[ChatArea] Error editing message:", error);
 
@@ -1938,7 +1900,6 @@ export function ChatArea({
           duration: 3000,
           position: "top-center",
         });
-        console.log(`[ChatArea] Message deleted: ${messageId}`);
       } catch (error) {
         console.error("[ChatArea] Error deleting message:", error);
 

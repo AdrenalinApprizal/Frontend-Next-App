@@ -13,7 +13,6 @@ import {
   FaCheck,
   FaBan,
   FaDownload,
-  FaShareAlt,
 } from "react-icons/fa";
 import { X, Search, UserMinus, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -148,11 +147,12 @@ export default function GroupProfileInfo({
       friendsFetchedRef.current = true;
 
       // Fetch both friends and blocked users in parallel
-      Promise.allSettled([getFriends(), getGroupBlocks(groupDetails.id)])
-        .catch(() => {
+      Promise.allSettled([getFriends(), getGroupBlocks(groupDetails.id)]).catch(
+        () => {
           // Reset the flag on error to allow retry
           friendsFetchedRef.current = false;
-        });
+        }
+      );
     }
   }, [groupDetails.id]); // Include groupDetails.id in dependencies
 
@@ -264,8 +264,6 @@ export default function GroupProfileInfo({
     (member) => member.isBlocked
   ).length;
 
-  
-
   // Additional debug: check each member against blocked users
   membersWithStatus.forEach((member) => {
     const userId = member.id || member.user_id || "";
@@ -275,7 +273,6 @@ export default function GroupProfileInfo({
         bu.user_id === member.id ||
         bu.user_id === member.user_id
     );
-    
   }); // Function to handle blocking a member with real API and confirmation dialog
   const handleBlockMember = async (memberId: string) => {
     // Find the member to show in confirmation dialog
@@ -368,7 +365,6 @@ export default function GroupProfileInfo({
       // Refresh blocked users list to ensure UI is up to date
       await getGroupBlocks(groupDetails.id);
 
-
       // Refresh the page after a timeout
       setTimeout(() => {
         window.location.reload();
@@ -393,7 +389,6 @@ export default function GroupProfileInfo({
 
       // Refresh blocked users list to ensure UI is up to date
       await getGroupBlocks(groupDetails.id);
-
 
       // Refresh the page after a timeout
       setTimeout(() => {
@@ -539,7 +534,6 @@ export default function GroupProfileInfo({
 
         return false;
       });
-
 
       // Convert messages to attachment format
       const attachmentData: AttachmentItem[] = attachmentMessages.map(
@@ -1087,9 +1081,6 @@ export default function GroupProfileInfo({
                     <p className="text-sm font-medium truncate">
                       {attachment.filename}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {formatFileSize(attachment.size)}
-                    </p>
                   </div>
                   <div className="ml-2 flex">
                     <button
@@ -1101,16 +1092,6 @@ export default function GroupProfileInfo({
                       title="Download"
                     >
                       <FaDownload className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showShareDialog(attachment);
-                      }}
-                      className="p-1 text-gray-500 hover:text-blue-500"
-                      title="Share"
-                    >
-                      <FaShareAlt className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -1294,9 +1275,6 @@ export default function GroupProfileInfo({
                       <p className="text-sm font-medium truncate">
                         {attachment.filename}
                       </p>
-                      <p className="text-xs text-gray-500">
-                        {formatFileSize(attachment.size)}
-                      </p>
                       <p className="text-xs text-gray-400">
                         {new Date(attachment.uploaded_at).toLocaleDateString()}
                       </p>
@@ -1311,16 +1289,6 @@ export default function GroupProfileInfo({
                         title="Download"
                       >
                         <FaDownload className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          showShareDialog(attachment);
-                        }}
-                        className="p-2 text-gray-500 hover:text-blue-500"
-                        title="Share"
-                      >
-                        <FaShareAlt className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -1374,9 +1342,6 @@ export default function GroupProfileInfo({
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
                     {selectedAttachment.filename}
                   </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {formatFileSize(selectedAttachment.size)}
-                  </p>
                   <p className="text-sm text-gray-600">
                     This file type cannot be previewed
                   </p>
@@ -1390,14 +1355,6 @@ export default function GroupProfileInfo({
                 >
                   <FaDownload className="h-4 w-4 mr-2" />
                   Download
-                </button>
-
-                <button
-                  onClick={() => showShareDialog(selectedAttachment)}
-                  className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
-                >
-                  <FaShareAlt className="h-4 w-4 mr-2" />
-                  Share
                 </button>
               </div>
 
@@ -1423,104 +1380,6 @@ export default function GroupProfileInfo({
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Share Dialog */}
-      {showShareModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-medium text-lg">Share File</h3>
-              <button
-                onClick={closeShareDialog}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <FaTimes className="h-5 w-5" />
-              </button>
-            </div>
-
-            {selectedAttachment && (
-              <div className="mb-4 p-3 bg-gray-50 rounded-md flex items-center">
-                <div className="mr-3">
-                  {isImage(selectedAttachment.mime_type) ? (
-                    <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-200">
-                      <img
-                        src={selectedAttachment.url}
-                        alt={selectedAttachment.filename}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.src =
-                            "https://via.placeholder.com/100?text=Image";
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-10 h-10 rounded-md bg-blue-100 flex items-center justify-center">
-                      <FaFile className="h-5 w-5 text-blue-500" />
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm font-medium">
-                    {selectedAttachment.filename}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {formatFileSize(selectedAttachment.size)}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">
-                Share with:
-              </label>
-              <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
-                {friendsList.map((friend) => (
-                  <div
-                    key={friend.id}
-                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 ${
-                      friend.shareSelected ? "bg-blue-50" : ""
-                    }`}
-                    onClick={() => toggleShareSelection(friend.id)}
-                  >
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-200 mr-2 flex items-center justify-center">
-                        {friend.avatar_url || friend.profile_picture_url ? (
-                          <img
-                            src={
-                              friend.avatar_url || friend.profile_picture_url
-                            }
-                            alt={friend.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <FaUser className="h-4 w-4 text-gray-500" />
-                        )}
-                      </div>
-                      <span className="text-sm">{friend.name}</span>
-                    </div>
-                    {friend.shareSelected && (
-                      <div className="h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
-                        <FaCheck className="h-2 w-2 text-white" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                onClick={handleShareFile}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
-                disabled={!friendsList.some((friend) => friend.shareSelected)}
-              >
-                Share
-              </button>
             </div>
           </div>
         </div>
