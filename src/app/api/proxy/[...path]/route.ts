@@ -61,18 +61,11 @@ async function handleRequest(
 
     // Enhanced logging for message endpoints to debug issues
     if (path.includes("messages")) {
-      console.log(
-        `[Proxy] Messages request: Path=${path}, Method=${method}, SearchParams=${searchParams}`
-      );
-
-      // Log detailed path components
-      console.log(`[Proxy] Path components:`, paths);
 
       // Log detailed query parameters
       const queryParams = Object.fromEntries(
         originalUrl.searchParams.entries()
       );
-      console.log(`[Proxy] Query parameters:`, queryParams);
 
       // Enhanced message history detection to match Vue.js patterns
       if (
@@ -82,22 +75,17 @@ async function handleRequest(
           path.includes("/group/") ||
           path === "messages/history") // Add exact match for root history endpoint
       ) {
-        console.log(`[Proxy] Message history detected: ${path}`);
 
         // Check if this request has been retried too many times
         const retryCount = parseInt(
           originalUrl.searchParams.get("_retryCount") || "0",
           10
         );
-        console.log(
-          `[Proxy] Message history request with retry count: ${retryCount}`
-        );
+       
 
         // If we've already tried too many times, break the loop
         if (retryCount >= 2) {
-          console.log(
-            `[Proxy] Breaking retry loop after ${retryCount} attempts for ${path}`
-          );
+          
           return NextResponse.json(
             {
               messages: [],
@@ -134,9 +122,7 @@ async function handleRequest(
         // Try each method
         for (const methodToTry of methodsToTry) {
           try {
-            console.log(
-              `[Proxy] Trying ${methodToTry} request for message history: ${url}`
-            );
+           
 
             const options: RequestInit = {
               method: methodToTry,
@@ -155,9 +141,7 @@ async function handleRequest(
             );
 
             if (response.ok) {
-              console.log(
-                `[Proxy] ${methodToTry} request successful for message history`
-              );
+             
               const contentType = response.headers.get("content-type");
               if (contentType?.includes("application/json")) {
                 const data = await response.json();
@@ -176,11 +160,7 @@ async function handleRequest(
                   success: true,
                 };
 
-                console.log(
-                  `[Proxy] Returning formatted message history data with ${
-                    formattedData.messages?.length || 0
-                  } messages`
-                );
+              
 
                 return NextResponse.json(formattedData, { status: 200 });
               } else {
@@ -250,13 +230,10 @@ async function handleRequest(
 
       // Special handling for UUID paths that may indicate direct message access
       if (paths.length > 1 && /^[0-9a-f-]{36}$/.test(paths[1])) {
-        console.log(
-          `[Proxy] Message ID detected: ${paths[1]}, this may be a direct message access`
-        );
+        
 
         // Special handling for direct message access with UUID - add fallback safety
         if (method === "GET") {
-          console.log(`[Proxy] Direct message GET request for ID: ${paths[1]}`);
 
           // Get authentication token
           const token = await getToken({
@@ -281,8 +258,6 @@ async function handleRequest(
             // CRITICAL FIX: Include search parameters for direct message requests too
             const url = `${baseUrl}/${path}${searchParams}`;
 
-            console.log(`[Proxy] Attempting to fetch direct message: ${url}`);
-
             // Make the request with timeout
             const response = await fetch(url, {
               method,
@@ -291,9 +266,6 @@ async function handleRequest(
             }).finally(() => clearTimeout(timeoutId));
 
             if (response.ok) {
-              console.log(
-                `[Proxy] Direct message fetch successful: ${response.status}`
-              );
               const data = await response.json();
               return NextResponse.json(data, { status: 200 });
             } else {
@@ -345,6 +317,13 @@ async function handleRequest(
       path === "notification" ||
       path.startsWith("notification/");
 
+    ({
+      isGroupEndpoint,
+      isMessagesEndpoint,
+      isAuthEndpoint,
+      isNotificationEndpoint,
+    });
+
     // Special handling for group messages - redirect to correct endpoint format
     let finalPath = path;
 
@@ -358,9 +337,7 @@ async function handleRequest(
       ) {
         const groupId = pathParts[1];
         finalPath = `groups/${groupId}/messages`;
-        console.log(
-          `[Proxy] Converting group message path from ${path} to ${finalPath}`
-        );
+       
       }
     }
 
@@ -376,9 +353,7 @@ async function handleRequest(
       if (messagesIndex > 0 && pathParts[messagesIndex + 1]) {
         const messageId = pathParts[messagesIndex + 1];
         finalPath = `messages/${messageId}`;
-        console.log(
-          `[Proxy] Redirecting group message ${method} from ${path} to ${finalPath}`
-        );
+       
       }
     }
 
@@ -436,6 +411,11 @@ async function handleRequest(
     } else {
       baseUrl = API_BASE_URL;
     }
+
+    console.log(`[Proxy] Selected baseUrl for '${path}': ${baseUrl}`);
+    console.log(
+      `[Proxy] Final URL will be: ${baseUrl}/${finalPath}${searchParams}`
+    );
 
     // CRITICAL FIX: Include search parameters in all API requests
     const url = `${baseUrl}/${finalPath}${searchParams}`;
@@ -1295,7 +1275,9 @@ async function handleRequest(
     if (path === "groups" || path.startsWith("groups/")) {
       try {
         const response = await fetch(url, options);
+        console.log(`[Proxy] POST to ${url} with options:`, options);
         console.log(`[Proxy] Response status for ${path}: ${response.status}`);
+        console.log(`[Proxy] Response data for ${path}:`, response);
 
         // Get response data
         if (response.ok) {

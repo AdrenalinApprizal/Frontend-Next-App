@@ -707,9 +707,7 @@ export const useMessages = () => {
     page = 1,
     limit = 20
   ): Promise<ApiResponse> => {
-    console.log(
-      `[Messages Store] Legacy getMessages called - converting to unified format`
-    );
+    console.log(`[Messages Store] getMessages called - using unified format`);
 
     // Enhanced parameter validation - prevent empty API calls
     if (!userId || userId.trim() === "") {
@@ -1577,138 +1575,45 @@ export const useMessages = () => {
   };
 
   /**
-   * Get conversation history - specifically for chat conversations
-   * This function explicitly calls /messages/history endpoint for conversation-specific messages
+   * Get the last message for a conversation (for MessagesList preview)
+   * Unified approach for both private and group conversations
+   */
+  const getLastMessage = async (
+    targetId: string,
+    type: "private" | "group" = "private"
+  ): Promise<ApiResponse> => {
+    console.log(
+      `[Messages Store] getLastMessage: Getting last message for ${type} chat with ${targetId}`
+    );
+
+    return getUnifiedMessages({
+      target_id: targetId,
+      type,
+      limit: 1,
+      page: 1,
+    });
+  };
+
+  /**
+   * Get conversation history (for ChatArea)
+   * Unified approach with proper pagination support
    */
   const getConversationHistory = async (
     targetId: string,
     type: "private" | "group" = "private",
-    limit = 20,
-    before?: string
+    page = 1,
+    limit = 20
   ): Promise<ApiResponse> => {
     console.log(
-      `[Messages Store] getConversationHistory: ${type} conversation with ${targetId}`
+      `[Messages Store] getConversationHistory: Getting history for ${type} chat with ${targetId}, page ${page}, limit ${limit}`
     );
 
-    // Parameter validation - prevent empty API calls
-    if (!targetId || targetId.trim() === "") {
-      console.error(
-        `[Messages Store] Invalid targetId provided to getConversationHistory:`,
-        targetId
-      );
-      return {
-        data: [],
-        messages: [],
-        success: false,
-        error:
-          "Invalid targetId: cannot fetch conversation history without a valid target ID",
-        pagination: {
-          current_page: 1,
-          total_pages: 1,
-          total_items: 0,
-          items_per_page: limit,
-          has_more_pages: false,
-        },
-      };
-    }
-
-    if (!type || !["private", "group"].includes(type)) {
-      console.error(
-        `[Messages Store] Invalid type provided to getConversationHistory:`,
-        type
-      );
-      return {
-        data: [],
-        messages: [],
-        success: false,
-        error: "Invalid type: must be 'private' or 'group'",
-        pagination: {
-          current_page: 1,
-          total_pages: 1,
-          total_items: 0,
-          items_per_page: limit,
-          has_more_pages: false,
-        },
-      };
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Use type directly like Vue.js implementation - no mapping needed
-      const apiType = type; // Keep original type: "private" or "group"
-
-      console.log(
-        `[Messages Store] Using type directly: '${type}' for conversation history API`
-      );
-
-      // Build query parameters for conversation history
-      const queryParams = new URLSearchParams({
-        type: apiType,
-        target_id: targetId,
-        limit: limit.toString(),
-      });
-
-      if (before) {
-        queryParams.append("before", before);
-      }
-
-      console.log(
-        `[Messages Store] Conversation history query:`,
-        queryParams.toString()
-      );
-
-      // Direct call to messages/history endpoint
-      const response = await apiCall(
-        `messages/history?${queryParams.toString()}`,
-        {
-          method: "GET",
-        }
-      );
-
-      if (response) {
-        console.log(
-          `[Messages Store] Conversation history loaded successfully`
-        );
-
-        // Extract messages from response
-        let messagesArray = [];
-        if (Array.isArray(response)) {
-          messagesArray = response;
-        } else if (response.messages && Array.isArray(response.messages)) {
-          messagesArray = response.messages;
-        } else if (response.data && Array.isArray(response.data)) {
-          messagesArray = response.data;
-        } else if (
-          response.data &&
-          response.data.messages &&
-          Array.isArray(response.data.messages)
-        ) {
-          messagesArray = response.data.messages;
-        }
-
-        console.log(
-          `[Messages Store] Extracted ${messagesArray.length} messages from conversation history`
-        );
-
-        setMessages(messagesArray);
-        setLoading(false);
-        return response;
-      } else {
-        throw new Error(
-          "No response received from conversation history endpoint"
-        );
-      }
-    } catch (error: any) {
-      console.error(
-        `[Messages Store] Error loading conversation history:`,
-        error
-      );
-      setError(`Failed to load conversation history: ${error.message}`);
-      setLoading(false);
-      throw error;
-    }
+    return getUnifiedMessages({
+      target_id: targetId,
+      type,
+      page,
+      limit,
+    });
   };
 
   return {
@@ -1722,6 +1627,8 @@ export const useMessages = () => {
 
     // Unified API
     getUnifiedMessages, // New unified function - primary recommended API
+    getLastMessage, // Helper for getting last message (MessagesList)
+    getConversationHistory, // Helper for getting conversation history (ChatArea)
 
     // Legacy Actions for backward compatibility
     getMessages, // Now delegates to getUnifiedMessages
@@ -1744,7 +1651,6 @@ export const useMessages = () => {
     postMessage,
     getUnreadCount,
     sendMessageWithAttachment,
-    getConversationHistory, // New dedicated function for conversation history
 
     // Performance metrics access if needed by consumers
     perfMetrics: perfMetrics.current,

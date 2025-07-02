@@ -1233,8 +1233,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading group chat...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4" />
         </div>
       </div>
     );
@@ -1581,19 +1580,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
             {/* Sidebar */}
             <div className="fixed lg:absolute right-0 top-0 h-full w-full sm:w-96 lg:w-80 bg-white border-l border-gray-200 z-50 lg:z-auto shadow-xl lg:shadow-none transform transition-transform duration-300">
-              {/* Mobile header */}
-              <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 lg:hidden bg-gray-50">
-                <h3 className="font-semibold text-gray-900 text-base sm:text-lg">
-                  Group Info
-                </h3>
-                <button
-                  onClick={() => setShowProfile(false)}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors touch-manipulation"
-                >
-                  <X className="text-lg" />
-                </button>
-              </div>
-
               {/* Content */}
               <div className="h-full overflow-hidden">
                 <GroupProfileInfo

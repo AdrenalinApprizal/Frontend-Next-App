@@ -20,13 +20,13 @@ export function LoginForm() {
     setErrorMsg("");
 
     try {
+    
       // Real authentication with your backend via NextAuth
       const result = await signIn("credentials", {
         email,
         password,
         redirect: false,
       });
-
       if (result?.error) {
         // Extract more useful error message if available
         let errorMessage =
@@ -47,7 +47,10 @@ export function LoginForm() {
         console.error("Authentication error:", result.error);
       } else if (result?.ok) {
         toast.success("Login successful!");
-        router.push("/chat/messages");
+        // Add a small delay to ensure the session is properly set
+        setTimeout(() => {
+          router.push("/chat/messages");
+        }, 100);
       } else {
         setErrorMsg("An unexpected error occurred. Please try again.");
         toast.error("An unexpected error occurred.");

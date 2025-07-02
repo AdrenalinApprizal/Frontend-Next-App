@@ -34,7 +34,6 @@ export function useBlockingListener({
   // Handle user blocked event
   const handleUserBlocked = useCallback(
     (data: BlockingEventData) => {
-      console.log("[BlockingListener] User blocked event:", data);
 
       // Only process if it's for the current group
       if (groupId && data.group_id !== groupId) {
@@ -52,7 +51,6 @@ export function useBlockingListener({
   // Handle user unblocked event
   const handleUserUnblocked = useCallback(
     (data: BlockingEventData) => {
-      console.log("[BlockingListener] User unblocked event:", data);
 
       // Only process if it's for the current group
       if (groupId && data.group_id !== groupId) {

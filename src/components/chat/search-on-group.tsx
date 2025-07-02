@@ -108,19 +108,26 @@ export default function SearchFilterPopup({
           <div className="flex flex-1 items-center">
             <div className="relative flex-1">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <FaSearch className="h-4 w-4 text-gray-400" />
+              <FaSearch className="h-4 w-4 text-gray-400" />
               </div>
               <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search Messages"
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleSearch();
-                  }
-                }}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSearchQuery(value);
+                if (value === "") {
+                // Instead of refreshing the page, trigger a search with empty query and current filters
+                onSearch("", selectedMembers);
+                }
+              }}
+              placeholder="Search Messages"
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                handleSearch();
+                }
+              }}
               />
             </div>
 

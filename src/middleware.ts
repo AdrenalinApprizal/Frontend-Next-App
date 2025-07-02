@@ -22,8 +22,7 @@ export async function middleware(request: NextRequest) {
     ) {
       tokenExpiry = new Date(token.expiresAt).getTime() / 1000;
     } else {
-      console.log(
-        "[Middleware] Invalid expiresAt format:",
+      (
         typeof token.expiresAt
       );
     }
@@ -31,8 +30,7 @@ export async function middleware(request: NextRequest) {
 
   const isTokenValid = !!token && tokenExpiry > now;
 
-  console.log(`[Middleware] Path: ${request.nextUrl.pathname}`);
-  console.log(`[Middleware] Token exists: ${!!token}, Valid: ${isTokenValid}`);
+  
 
   const isAuthPage =
     request.nextUrl.pathname === "/" ||
@@ -41,20 +39,17 @@ export async function middleware(request: NextRequest) {
 
   // If user is not authenticated and trying to access protected routes
   if (!isTokenValid && isProtectedRoute) {
-    console.log("[Middleware] Redirecting unauthenticated user to login page");
     const loginUrl = new URL("/", request.url);
     return NextResponse.redirect(loginUrl);
   }
 
   // If user is authenticated and trying to access auth pages
   if (isTokenValid && isAuthPage) {
-    console.log("[Middleware] Redirecting authenticated user to chat page");
     const chatUrl = new URL("/chat/messages", request.url);
     return NextResponse.redirect(chatUrl);
   }
 
   // Allow the request to proceed
-  console.log("[Middleware] Allowing request to proceed");
   return NextResponse.next();
 }
 

@@ -825,13 +825,17 @@ export function ChatArea({
       const stored = sessionStorage.getItem(conversationKey);
       if (stored) {
         const parsedMessages = JSON.parse(stored);
-        return parsedMessages;
+        // Recalculate ownership for cached messages to ensure correct attribution
+        return parsedMessages.map((msg: any) => ({
+          ...msg,
+          isCurrentUser: isCurrentUserMessage(msg),
+        }));
       }
     } catch (error) {
       console.warn("[ChatArea] Failed to load from session storage:", error);
     }
     return [];
-  }, [friendId]);
+  }, [friendId, isCurrentUserMessage]);
 
   // Simplified API response debug (development only)
   const debugApiResponse = useCallback(
@@ -1068,23 +1072,28 @@ export function ChatArea({
               );
 
               // Sort by timestamp
-              const sortedMessages = uniqueMessages.sort((a, b) => {
-                const timeA = new Date(
-                  a.raw_timestamp ||
-                    a.sent_at ||
-                    a.created_at ||
-                    a.timestamp ||
-                    0
-                ).getTime();
-                const timeB = new Date(
-                  b.raw_timestamp ||
-                    b.sent_at ||
-                    b.created_at ||
-                    b.timestamp ||
-                    0
-                ).getTime();
-                return timeA - timeB;
-              });
+              const sortedMessages = uniqueMessages
+                .sort((a, b) => {
+                  const timeA = new Date(
+                    a.raw_timestamp ||
+                      a.sent_at ||
+                      a.created_at ||
+                      a.timestamp ||
+                      0
+                  ).getTime();
+                  const timeB = new Date(
+                    b.raw_timestamp ||
+                      b.sent_at ||
+                      b.created_at ||
+                      b.timestamp ||
+                      0
+                  ).getTime();
+                  return timeA - timeB;
+                })
+                .map((msg) => ({
+                  ...msg,
+                  isCurrentUser: isCurrentUserMessage(msg),
+                }));
 
               // Save to session storage for next time
               saveToSessionStorage(sortedMessages);
@@ -1094,15 +1103,25 @@ export function ChatArea({
           } else {
             // Check if we need to update anyway - compare message counts
             if (processedMessages.length > localMessages.length) {
-              setLocalMessages(processedMessages);
-              saveToSessionStorage(processedMessages);
+              // Recalculate ownership for all messages to ensure correct attribution
+              const messagesWithCorrectOwnership = processedMessages.map((msg) => ({
+                ...msg,
+                isCurrentUser: isCurrentUserMessage(msg),
+              }));
+              setLocalMessages(messagesWithCorrectOwnership);
+              saveToSessionStorage(messagesWithCorrectOwnership);
             } else if (
               processedMessages.length > 0 &&
               cachedMessages.length === 0
             ) {
               // First load and we have some messages from API
-              setLocalMessages(processedMessages);
-              saveToSessionStorage(processedMessages);
+              // Recalculate ownership to ensure correct attribution
+              const messagesWithCorrectOwnership = processedMessages.map((msg) => ({
+                ...msg,
+                isCurrentUser: isCurrentUserMessage(msg),
+              }));
+              setLocalMessages(messagesWithCorrectOwnership);
+              saveToSessionStorage(messagesWithCorrectOwnership);
             }
           }
         } else {

@@ -20,15 +20,6 @@ export function FriendRequest({
   // Extract the correct ID to use for actions
   const friendshipId = request.friendship_id || request.id || "";
 
-  // Enhanced debug logging
-  console.log("[FriendRequest] ===== COMPONENT DEBUG =====");
-  console.log("[FriendRequest] Raw request object:", request);
-  console.log("[FriendRequest] request.friendship_id:", request.friendship_id);
-  console.log("[FriendRequest] request.id:", request.id);
-  console.log("[FriendRequest] Extracted friendshipId:", friendshipId);
-  console.log("[FriendRequest] friendshipId type:", typeof friendshipId);
-  console.log("[FriendRequest] friendshipId length:", friendshipId?.length);
-  console.log("[FriendRequest] All request keys:", Object.keys(request));
 
   // Additional validation
   if (!friendshipId) {

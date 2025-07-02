@@ -89,23 +89,6 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
     // Additional check for optimistic messages
     message.id?.startsWith("temp-");
 
-  // Debug info untuk setiap pesan yang di-render
-  console.log(
-    `🟢 DETAILED: Rendering message in GroupMessageItem ID ${message.id}:`,
-    {
-      content: message.content,
-      isCurrentUser: message.isCurrentUser,
-      forcedIsCurrentUser: isDefinitelyCurrentUser,
-      senderName: message.sender.name,
-      senderId: message.sender.id,
-      messageId: message.id,
-      isOptimistic: message._isOptimisticMessage,
-      isTemp: message.id?.startsWith("temp-"),
-      allMessageProps: Object.keys(message),
-      showActions,
-    }
-  );
-
   // Handler for edit button click
   const handleEditClick = () => {
     if (onEditClick) {
@@ -256,10 +239,10 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
         {/* Message bubble dengan interaksi yang ditingkatkan */}
         <div
           className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-3 relative group shadow-sm ${
-            isDefinitelyCurrentUser
-              ? message.isDeleted
-                ? "bg-gray-200 text-gray-500 italic"
-                : message.failed
+            message.isDeleted
+              ? "bg-gray-200 text-gray-500 italic"
+              : isDefinitelyCurrentUser
+              ? message.failed
                 ? "bg-red-100 text-red-800 border border-red-300 cursor-pointer hover:bg-red-200"
                 : "bg-blue-500 text-white"
               : "bg-white border border-gray-200 text-gray-800 hover:shadow-md"

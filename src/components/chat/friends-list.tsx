@@ -58,8 +58,6 @@ export default function FriendsList() {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        console.log("[FriendsList] Starting initial data fetch");
-
         // Use Promise.allSettled to ensure both requests are attempted even if one fails
         const results = await Promise.allSettled([
           getFriends(),
@@ -67,24 +65,9 @@ export default function FriendsList() {
           getBlockedUsers(), // Load blocked users on app startup
         ]);
 
-        console.log(
-          "[FriendsList] Initial data fetch results:",
-          results.map(
-            (r, i) =>
-              `${
-                i === 0
-                  ? "getFriends"
-                  : i === 1
-                  ? "getFriendRequests"
-                  : "getBlockedUsers"
-              }: ${r.status}`
-          )
-        );
-
         // If there are any friend requests, automatically show them
         if (friendRequests?.length > 0) {
           setRequestsHidden(false);
-          console.log("[FriendsList] Showing friend requests section");
         }
 
         // Initialize presence status for all friends
@@ -92,7 +75,6 @@ export default function FriendsList() {
           updateFriendsStatus();
         }
       } catch (err) {
-        console.error("[FriendsList] Error during initial data fetch:", err);
         // Even if there's an error, we'll continue with an empty array
       }
     };
@@ -136,14 +118,9 @@ export default function FriendsList() {
 
   const handleAcceptRequest = async (friendshipId: string) => {
     try {
-      console.log("[FriendsList] ===== ACCEPT REQUEST DEBUG =====");
-      console.log("[FriendsList] Received friendshipId:", friendshipId);
-      console.log("[FriendsList] All current friend requests:", friendRequests);
-      console.log("[FriendsList] Friend request count:", friendRequests.length);
-
       // Log each request's IDs
       friendRequests.forEach((req, index) => {
-        console.log(`[FriendsList] Request ${index + 1}:`, {
+        ({
           friendship_id: req.friendship_id,
           id: req.id,
           user: req.user?.username || req.user?.name,
@@ -223,22 +200,6 @@ export default function FriendsList() {
         }
       }
 
-      // Debug logging
-      console.log("🔍 [FriendsList] handleFriendSelect called:", {
-        friendId,
-        friend,
-        friendName,
-        sortedFriendsCount: sortedFriends.length,
-      });
-
-      // Enhanced debugging for API calls
-      console.log("🔍 [FriendsList] API Call Debug:", {
-        friendId,
-        friendIdType: typeof friendId,
-        friendIdLength: friendId?.length,
-        friendIdTrimmed: friendId?.trim(),
-        isEmptyOrWhitespace: !friendId || friendId.trim() === "",
-      });
 
       // Fetch messages, history, and unread count when a friend is selected
       await getMessages(friendId);
@@ -252,7 +213,6 @@ export default function FriendsList() {
       const url = `/chat/messages/${friendId}${
         friendName ? `?name=${encodeURIComponent(friendName)}` : ""
       }`;
-      console.log("🚀 [FriendsList] Navigating to URL:", url);
       router.push(url);
     } catch (err) {
       console.error("[FriendsList] Error loading messages:", err);

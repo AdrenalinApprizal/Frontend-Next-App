@@ -105,7 +105,6 @@ export const useNotification = () => {
         url = `${API_ENDPOINT}/${endpointPath}`.replace(/\/+/g, "/");
       }
 
-      console.log(`[Notification API] Calling SAasasa: ${url}`);
 
       const response = await fetch(url, mergedOptions);
 
@@ -160,7 +159,6 @@ export const useNotification = () => {
         method: "GET",
       });
 
-      console.log("[DEBUG] Response data from notifications API:", data);
 
       // Handle different response formats
       let notificationsData: Notification[] = [];
@@ -335,13 +333,11 @@ export const useNotification = () => {
     setError(null);
 
     try {
-      console.log("[Notifications] Fetching unread count...");
       // Using "/unread-count" with leading slash to ensure proper URL construction
       const response = await apiCall("/unread-count", {
         method: "GET",
       });
 
-      console.log("[DEBUG] Unread count response:", response);
 
       // Handle various response formats
       if (response && typeof response.count === "number") {
@@ -352,7 +348,6 @@ export const useNotification = () => {
         const possibleCountProps = ["count", "unread_count", "total", "unread"];
         for (const prop of possibleCountProps) {
           if (typeof response[prop] === "number") {
-            console.log(`[Notifications] Found count in property: ${prop}`);
             const count = response[prop];
             setUnreadCount(count);
             return { count };

@@ -118,7 +118,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   const getNotificationDisplayContent = (
     notification: Notification
   ): string => {
-    console.log("[NotificationDropdown] Processing notification:", {
+   ({
       id: notification.id,
       type: notification.type,
       body: notification.body,
@@ -129,16 +129,11 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
 
     // Prioritize body from backend if available (contains username)
     if (notification.body) {
-      console.log("[NotificationDropdown] Using body:", notification.body);
       return notification.body;
     }
 
     // Fallback to content field
     if (notification.content) {
-      console.log(
-        "[NotificationDropdown] Using content:",
-        notification.content
-      );
       return notification.content;
     }
 
@@ -149,20 +144,14 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       // PRIORITY 1: Check if sender_username is available in data object
       if (notification.data.sender_username) {
         const usernameContent = `New message from ${notification.data.sender_username}`;
-        console.log(
-          "[NotificationDropdown] Using sender_username from data:",
-          usernameContent
-        );
+       
         return usernameContent;
       }
 
       // PRIORITY 2: Check if we have username in cache
       if (userCache[senderId]) {
         const cachedContent = `New message from ${userCache[senderId]}`;
-        console.log(
-          "[NotificationDropdown] Using cached username:",
-          cachedContent
-        );
+       
         return cachedContent;
       }
 
@@ -176,23 +165,17 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
         0,
         8
       )}...`;
-      console.log(
-        "[NotificationDropdown] Using fallback with user ID:",
-        fallbackContent
-      );
+     
 
       // Trigger username fetch in background (don't await to avoid blocking UI)
       fetchUsername(senderId).then((username) => {
         // This will trigger a re-render when username is cached
-        console.log(
-          `[NotificationDropdown] Fetched username for ${senderId}: ${username}`
-        );
+       
       });
 
       return fallbackContent;
     }
 
-    console.log("[NotificationDropdown] Using default content");
     return "New notification";
   };
 
@@ -296,7 +279,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   // Load notifications when dropdown opens
   useEffect(() => {
     if (isOpen) {
-      console.log("Notification dropdown opened, fetching notifications...");
 
       getNotifications(1, 10)
         .then((response) => {
@@ -331,8 +313,8 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     );
 
     if (notificationsNeedingUsernames.length > 0) {
-      console.log(
-        "[NotificationDropdown] Auto-fetching usernames for notifications:",
+      (
+        
         notificationsNeedingUsernames.map((n) => n.data?.sender_id)
       );
 

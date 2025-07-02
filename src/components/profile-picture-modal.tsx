@@ -92,7 +92,6 @@ export function ProfilePictureModal({
       });
 
       const base64String = await filePromise;
-      console.log("File converted to base64, sending to API...");
 
       try {
         // Use the updateAvatar function from auth hook

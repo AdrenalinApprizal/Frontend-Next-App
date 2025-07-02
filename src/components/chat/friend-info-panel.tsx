@@ -179,7 +179,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       }
 
       const data = await response.json();
-      console.log("Message history response:", data);
 
       // Extract messages array from response
       let messages = [];
@@ -242,7 +241,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       );
 
       setAttachments(attachmentData);
-      console.log("Loaded attachments from messages:", attachmentData);
 
       // Set basic pagination
       setPagination({
@@ -266,7 +264,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   const loadMoreAttachments = async () => {
     // Since we load all attachments from message history in one request,
     // this function is no longer needed but kept for UI compatibility
-    console.log("Load more attachments disabled for message history approach");
   };
 
   // Download file using attachment URL

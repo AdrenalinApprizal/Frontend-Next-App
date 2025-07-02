@@ -1276,7 +1276,7 @@ export const useGroup = () => {
   );
 
   /**
-   * Edit a group message with enhanced logging and error handling
+   * Edit a group message using the unified PUT /messages/{id} endpoint
    */
   const editGroupMessage = useCallback(
     async (
@@ -1285,7 +1285,7 @@ export const useGroup = () => {
       newContent: string
     ): Promise<ApiResponse> => {
       console.log(
-        `[Groups Store] Editing message ${messageId} in group ${groupId}`
+        `[Groups Store] Editing message ${messageId} using unified endpoint`
       );
       setLoading(true);
       setError(null);
@@ -1297,87 +1297,14 @@ export const useGroup = () => {
           throw new Error("Group ID, message ID, and new content are required");
         }
 
-        // Try multiple endpoint patterns for group message editing
-        let response;
-        let lastError;
-
-        // Option 1: Try generic messages endpoint with group_id (primary method)
-        try {
-          console.log(
-            `[Groups Store] Trying messages endpoint: messages/${messageId}`
-          );
-          response = await apiCall(`messages/${messageId}`, {
-            method: "PUT",
-            body: JSON.stringify({
-              content: newContent,
-              group_id: groupId,
-              type: "text",
-            }),
-          });
-          console.log(
-            `[Groups Store] Messages endpoint edit successful:`,
-            response
-          );
-        } catch (messagesError) {
-          console.log(
-            `[Groups Store] Messages endpoint edit failed:`,
-            messagesError
-          );
-          lastError = messagesError;
-
-          // Option 2: Try group-specific endpoint as fallback
-          try {
-            console.log(
-              `[Groups Store] Trying group-specific edit endpoint: groups/${groupId}/messages/${messageId}`
-            );
-            response = await apiCall(
-              `groups/${groupId}/messages/${messageId}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({
-                  content: newContent,
-                  type: "text",
-                }),
-              }
-            );
-            console.log(
-              `[Groups Store] Group-specific edit successful:`,
-              response
-            );
-          } catch (groupError) {
-            console.log(
-              `[Groups Store] Group-specific edit endpoint failed:`,
-              groupError
-            );
-            lastError = groupError;
-
-            // Option 3: Try PATCH method (some APIs prefer PATCH for updates)
-            try {
-              console.log(
-                `[Groups Store] Trying PATCH method: messages/${messageId}`
-              );
-              response = await apiCall(`messages/${messageId}`, {
-                method: "PATCH",
-                body: JSON.stringify({
-                  content: newContent,
-                  group_id: groupId,
-                  type: "text",
-                }),
-              });
-              console.log(`[Groups Store] PATCH edit successful:`, response);
-            } catch (patchError) {
-              console.error(
-                `[Groups Store] All edit endpoints failed. Last errors:`,
-                {
-                  messagesError,
-                  groupError,
-                  patchError,
-                }
-              );
-              throw patchError;
-            }
-          }
-        }
+        // Use the unified PUT /messages/{id} endpoint
+        console.log(`[Groups Store] Calling PUT /messages/${messageId}`);
+        const response = await apiCall(`messages/${messageId}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            content: newContent,
+          }),
+        });
 
         console.log(`[Groups Store] Edit message response:`, response);
 
@@ -1394,18 +1321,6 @@ export const useGroup = () => {
               : msg
           )
         );
-
-        // Verify the edit was successful by checking the response status
-        if (response && response.success !== false) {
-          console.log(
-            `[Groups Store] Edit confirmed successful for message ${messageId}`
-          );
-        } else {
-          console.warn(
-            `[Groups Store] Edit may not have been successful - response:`,
-            response
-          );
-        }
 
         const endTime = performance.now();
         console.log(
@@ -1437,12 +1352,12 @@ export const useGroup = () => {
   );
 
   /**
-   * Delete (unsend) a group message with enhanced logging and error handling
+   * Delete (unsend) a group message using the unified DELETE /messages/{id} endpoint
    */
   const deleteGroupMessage = useCallback(
     async (groupId: string, messageId: string): Promise<ApiResponse> => {
       console.log(
-        `[Groups Store] Deleting message ${messageId} from group ${groupId}`
+        `[Groups Store] Deleting message ${messageId} using unified endpoint`
       );
       setLoading(true);
       setError(null);
@@ -1454,101 +1369,26 @@ export const useGroup = () => {
           throw new Error("Group ID and message ID are required");
         }
 
-        // Try multiple endpoint patterns for group message deletion
-        let response;
-        let lastError;
-
-        // Option 1: Try generic messages endpoint with group_id in body (primary method)
-        try {
-          console.log(
-            `[Groups Store] Trying messages delete endpoint: messages/${messageId}`
-          );
-          response = await apiCall(`messages/${messageId}`, {
-            method: "DELETE",
-            body: JSON.stringify({ group_id: groupId }),
-          });
-          console.log(`[Groups Store] Messages delete successful:`, response);
-        } catch (messagesError) {
-          console.log(`[Groups Store] Messages delete failed:`, messagesError);
-          lastError = messagesError;
-
-          // Option 2: Try group-specific endpoint as fallback
-          try {
-            console.log(
-              `[Groups Store] Trying group-specific delete endpoint: groups/${groupId}/messages/${messageId}`
-            );
-            response = await apiCall(
-              `groups/${groupId}/messages/${messageId}`,
-              {
-                method: "DELETE",
-              }
-            );
-            console.log(
-              `[Groups Store] Group-specific delete successful:`,
-              response
-            );
-          } catch (groupError) {
-            console.log(
-              `[Groups Store] Group-specific delete endpoint failed:`,
-              groupError
-            );
-            lastError = groupError;
-
-            // Option 3: Try generic messages endpoint with query parameter
-            try {
-              console.log(
-                `[Groups Store] Trying generic delete endpoint with query: messages/${messageId}?group_id=${groupId}`
-              );
-              response = await apiCall(
-                `messages/${messageId}?group_id=${groupId}`,
-                {
-                  method: "DELETE",
-                }
-              );
-              console.log(
-                `[Groups Store] Generic delete with query successful:`,
-                response
-              );
-            } catch (queryError) {
-              console.error(
-                `[Groups Store] All delete endpoints failed. Last errors:`,
-                {
-                  messagesError,
-                  groupError,
-                  queryError,
-                }
-              );
-              throw queryError;
-            }
-          }
-        }
+        // Use the unified DELETE /messages/{id} endpoint
+        console.log(`[Groups Store] Calling DELETE /messages/${messageId}`);
+        const response = await apiCall(`messages/${messageId}`, {
+          method: "DELETE",
+        });
 
         console.log(`[Groups Store] Delete message response:`, response);
 
-        // Update the local message list
+        // Update the local message list - mark as deleted instead of removing
         setGroupMessages((prevMessages) =>
           prevMessages.map((msg) =>
             msg.id === messageId || msg.message_id === messageId
               ? {
                   ...msg,
-                  content: "",
+                  content: "This message was deleted",
                   isDeleted: true,
                 }
               : msg
           )
         );
-
-        // Verify the delete was successful by checking the response status
-        if (response && response.success !== false) {
-          console.log(
-            `[Groups Store] Delete confirmed successful for message ${messageId}`
-          );
-        } else {
-          console.warn(
-            `[Groups Store] Delete may not have been successful - response:`,
-            response
-          );
-        }
 
         const endTime = performance.now();
         console.log(
@@ -1579,6 +1419,40 @@ export const useGroup = () => {
     [session?.access_token]
   );
 
+  /**
+   * Get the last message for a group (for MessagesList preview)
+   * Consistent with private message approach
+   */
+  const getGroupLastMessage = useCallback(
+    async (groupId: string): Promise<GroupMessagesResponse> => {
+      console.log(
+        `[Groups Store] getGroupLastMessage: Getting last message for group ${groupId}`
+      );
+
+      return getGroupMessages(groupId, 1, 1);
+    },
+    [getGroupMessages]
+  );
+
+  /**
+   * Get group conversation history (for GroupChatArea)
+   * Consistent with private conversation approach
+   */
+  const getGroupConversationHistory = useCallback(
+    async (
+      groupId: string,
+      page = 1,
+      limit = 20
+    ): Promise<GroupMessagesResponse> => {
+      console.log(
+        `[Groups Store] getGroupConversationHistory: Getting history for group ${groupId}, page ${page}, limit ${limit}`
+      );
+
+      return getGroupMessages(groupId, page, limit);
+    },
+    [getGroupMessages]
+  );
+
   return {
     // State
     loading,
@@ -1602,6 +1476,8 @@ export const useGroup = () => {
     removeGroupMember,
     leaveGroup,
     getGroupMessages,
+    getGroupLastMessage, // New helper for getting last message
+    getGroupConversationHistory, // New helper for getting conversation history
     loadMoreMessages,
     sendGroupMessage,
     sendGroupMessageWithAttachment,

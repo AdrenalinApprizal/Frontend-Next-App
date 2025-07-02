@@ -20,6 +20,7 @@ import { toast } from "react-hot-toast";
 import { useGroup } from "@/hooks/auth/useGroup";
 import usePresence from "@/hooks/presence/usePresence";
 import { useFriendship } from "@/hooks/auth/useFriends";
+import { useSession } from "next-auth/react";
 
 interface GroupProfileInfoProps {
   groupName: string;
@@ -104,6 +105,7 @@ export default function GroupProfileInfo({
 
   // Presence hook for realtime user status
   const presence = usePresence();
+  const { data: session } = useSession();
 
   // Component state
   const [groupDetails, setGroupDetails] =
@@ -147,11 +149,6 @@ export default function GroupProfileInfo({
 
       // Fetch both friends and blocked users in parallel
       Promise.allSettled([getFriends(), getGroupBlocks(groupDetails.id)])
-        .then((results) => {
-          console.log("[GroupInfoPanel] Initialization completed:");
-          console.log("- Friends fetch:", results[0].status);
-          console.log("- Blocked users fetch:", results[1].status);
-        })
         .catch(() => {
           // Reset the flag on error to allow retry
           friendsFetchedRef.current = false;
@@ -267,30 +264,7 @@ export default function GroupProfileInfo({
     (member) => member.isBlocked
   ).length;
 
-  // Debug logging for blocked users
-  console.log("[GroupInfoPanel] Blocked users data:", {
-    blockedUsersCount: blockedUsers.length,
-    blockedMembersCount,
-    blockedUsers: blockedUsers.map((u) => ({
-      user_id: u.user_id,
-      blocked_at: u.blocked_at,
-    })),
-    allMembers: groupDetails.members.map((m) => ({
-      id: m.id,
-      user_id: m.user_id,
-      name: m.name,
-    })),
-    membersWithBlocks: membersWithStatus
-      .filter((m) => m.isBlocked)
-      .map((m) => ({
-        id: m.id,
-        user_id: m.user_id,
-        name: m.name,
-        isBlocked: m.isBlocked,
-        blockedAt: m.blockedAt,
-      })),
-    groupId: groupDetails.id,
-  });
+  
 
   // Additional debug: check each member against blocked users
   membersWithStatus.forEach((member) => {
@@ -301,22 +275,43 @@ export default function GroupProfileInfo({
         bu.user_id === member.id ||
         bu.user_id === member.user_id
     );
-    console.log(
-      `[GroupInfoPanel] Member ${
-        member.name
-      } (${userId}): blocked=${!!blockedUser}`,
-      {
-        member: { id: member.id, user_id: member.user_id },
-        blockedUser: blockedUser
-          ? { user_id: blockedUser.user_id, blocked_at: blockedUser.blocked_at }
-          : null,
-      }
-    );
+    
   }); // Function to handle blocking a member with real API and confirmation dialog
   const handleBlockMember = async (memberId: string) => {
     // Find the member to show in confirmation dialog
     const memberToBlock = membersWithStatus.find((m) => m.id === memberId);
     if (!memberToBlock) return;
+
+    // Handle if user wants to block themselves
+    // Get current user ID from context, localStorage, or session
+    const currentUserId = session?.user?.id || "";
+
+    if (memberId === currentUserId || memberToBlock.user_id === currentUserId) {
+      toast.error("You cannot block yourself", {
+        duration: 3000,
+        style: {
+          background: "#fee2e2",
+          color: "#dc2626",
+          border: "1px solid #fecaca",
+        },
+      });
+      setActiveDropdown(null);
+      return;
+    }
+
+    // Check if the member is an owner
+    if (memberToBlock.role === "owner") {
+      toast.error("You cannot block the group owner", {
+        duration: 3000,
+        style: {
+          background: "#fee2e2",
+          color: "#dc2626",
+          border: "1px solid #fecaca",
+        },
+      });
+      setActiveDropdown(null);
+      return;
+    }
 
     // Show confirmation dialog using toast
     const confirmBlock = await new Promise<boolean>((resolve) => {
@@ -373,7 +368,11 @@ export default function GroupProfileInfo({
       // Refresh blocked users list to ensure UI is up to date
       await getGroupBlocks(groupDetails.id);
 
-      console.log("[GroupInfoPanel] User blocked, blocked users updated");
+
+      // Refresh the page after a timeout
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
     } catch (error: any) {
       console.error("Error blocking user:", error);
       toast.error(error.message || "Failed to block user");
@@ -395,7 +394,11 @@ export default function GroupProfileInfo({
       // Refresh blocked users list to ensure UI is up to date
       await getGroupBlocks(groupDetails.id);
 
-      console.log("[GroupInfoPanel] User unblocked, blocked users updated");
+
+      // Refresh the page after a timeout
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
     } catch (error: any) {
       console.error("Error unblocking user:", error);
       toast.error(error.message || "Failed to unblock user");
@@ -489,7 +492,6 @@ export default function GroupProfileInfo({
       }
 
       const data = await response.json();
-      console.log("Group message history response:", data);
 
       // Extract messages array from response
       let messages = [];
@@ -538,7 +540,6 @@ export default function GroupProfileInfo({
         return false;
       });
 
-      console.log("Found attachment messages:", attachmentMessages.length);
 
       // Convert messages to attachment format
       const attachmentData: AttachmentItem[] = attachmentMessages.map(
@@ -627,7 +628,6 @@ export default function GroupProfileInfo({
       );
 
       setAttachments(validAttachments);
-      console.log("Loaded group attachments:", validAttachments);
 
       // Set pagination
       setPagination({
@@ -652,7 +652,6 @@ export default function GroupProfileInfo({
   const loadMoreAttachments = async () => {
     // Since we load all attachments from message history in one request,
     // this function is no longer needed but kept for UI compatibility
-    console.log("Load more attachments disabled for message history approach");
   };
 
   // Download file using attachment URL
@@ -786,7 +785,7 @@ export default function GroupProfileInfo({
   }, [apiFriends]);
 
   return (
-    <div className="w-80 h-full border-l border-gray-200 bg-white overflow-y-auto shadow-lg">
+    <div className="w-full h-full border-l border-gray-200 bg-white overflow-y-auto shadow-lg">
       <div className="p-4 border-b border-gray-200">
         <div className="flex justify-between items-center mb-4">
           <div></div>
@@ -952,74 +951,76 @@ export default function GroupProfileInfo({
                       )}
                     </div>
                   </div>
-                  <div className="relative">
-                    <button
-                      className={`p-1 rounded-full transition-colors ${
-                        member.isBlocked
-                          ? "text-red-400 hover:text-red-600 hover:bg-red-100"
-                          : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleMemberDropdown(member.id);
-                      }}
-                    >
-                      <FaEllipsisV className="h-3 w-3" />
-                    </button>
-
-                    {activeDropdown === member.id && (
-                      <div
-                        ref={dropdownRef}
-                        className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden"
+                  {member.id != session?.user.id && (
+                    <div className="relative">
+                      <button
+                        className={`p-1 rounded-full transition-colors ${
+                          member.isBlocked
+                            ? "text-red-400 hover:text-red-600 hover:bg-red-100"
+                            : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleMemberDropdown(member.id);
+                        }}
                       >
-                        <button
-                          className={`flex w-full text-left px-4 py-3 text-sm items-center transition-colors ${
-                            member.isBlocked
-                              ? "hover:bg-green-50 text-green-700"
-                              : "hover:bg-red-50 text-red-700"
-                          }`}
-                          onClick={() =>
-                            member.isBlocked
-                              ? handleUnblockMember(member.id)
-                              : handleBlockMember(member.id)
-                          }
-                          disabled={loading}
-                        >
-                          {member.isBlocked ? (
-                            <>
-                              <FaCheck className="mr-3 h-4 w-4 text-green-600" />
-                              <div className="flex flex-col">
-                                <span className="font-medium text-green-700">
-                                  Unblock User
-                                </span>
-                                <span className="text-xs text-green-600">
-                                  Allow messages again
-                                </span>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <FaBan className="mr-3 h-4 w-4 text-red-600" />
-                              <div className="flex flex-col">
-                                <span className="font-medium text-red-700">
-                                  Block User
-                                </span>
-                                <span className="text-xs text-red-600">
-                                  Stop receiving messages
-                                </span>
-                              </div>
-                            </>
-                          )}
+                        <FaEllipsisV className="h-3 w-3" />
+                      </button>
 
-                          {loading && (
-                            <div className="ml-auto">
-                              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin opacity-50"></div>
-                            </div>
-                          )}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                      {activeDropdown === member.id && (
+                        <div
+                          ref={dropdownRef}
+                          className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden"
+                        >
+                          <button
+                            className={`flex w-full text-left px-4 py-3 text-sm items-center transition-colors ${
+                              member.isBlocked
+                                ? "hover:bg-green-50 text-green-700"
+                                : "hover:bg-red-50 text-red-700"
+                            }`}
+                            onClick={() =>
+                              member.isBlocked
+                                ? handleUnblockMember(member.id)
+                                : handleBlockMember(member.id)
+                            }
+                            disabled={loading}
+                          >
+                            {member.isBlocked ? (
+                              <>
+                                <FaCheck className="mr-3 h-4 w-4 text-green-600" />
+                                <div className="flex flex-col">
+                                  <span className="font-medium text-green-700">
+                                    Unblock User
+                                  </span>
+                                  <span className="text-xs text-green-600">
+                                    Allow messages again
+                                  </span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <FaBan className="mr-3 h-4 w-4 text-red-600" />
+                                <div className="flex flex-col">
+                                  <span className="font-medium text-red-700">
+                                    Block User
+                                  </span>
+                                  <span className="text-xs text-red-600">
+                                    Stop receiving messages
+                                  </span>
+                                </div>
+                              </>
+                            )}
+
+                            {loading && (
+                              <div className="ml-auto">
+                                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin opacity-50"></div>
+                              </div>
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

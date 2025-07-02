@@ -130,7 +130,6 @@ export const useAuth = () => {
         typeof fileOrBase64 === "string" &&
         fileOrBase64.startsWith("data:")
       ) {
-        console.log("[DEBUG] Updating avatar with base64 string");
 
         // Direct upload to profile avatar endpoint
         const avatarEndpoint = `${proxyUrl}/users/profile/avatar`;
@@ -156,7 +155,6 @@ export const useAuth = () => {
       // Handle File object
       else if (fileOrBase64 instanceof File) {
         const file = fileOrBase64;
-        console.log("[DEBUG] Updating avatar with file:", file.name);
 
         // The rest of your implementation...
         return { success: true, profile_picture_url: "example_url" };
@@ -186,8 +184,6 @@ export const useAuth = () => {
         throw new Error("No authentication token available");
       }
 
-      console.log("wkwkwk", `${API_BASE_URL}/users/profile`);
-
       const response = await fetch(`${API_BASE_URL}/users/profile`, {
         method: "PUT",
         headers: {
@@ -207,7 +203,6 @@ export const useAuth = () => {
       }
 
       const result = await response.json();
-      console.log("[DEBUG] Profile update successful:", result);
 
       return result;
     } catch (error: any) {
@@ -227,7 +222,6 @@ export const useAuth = () => {
         throw new Error("No authentication token available");
       }
 
-      console.log("[DEBUG] Changing password");
 
       const response = await fetch(`${API_BASE_URL}/users/password`, {
         method: "PUT",
@@ -248,7 +242,6 @@ export const useAuth = () => {
       }
 
       const result = await response.json();
-      console.log("[DEBUG] Password change successful:", result);
 
       return result;
     } catch (error: any) {
@@ -279,7 +272,6 @@ export const useAuth = () => {
         throw new Error("No authentication token available");
       }
 
-      console.log("[DEBUG] Getting user info");
 
       const response = await fetch(`${API_BASE_URL}/users/me`, {
         method: "GET",
@@ -299,7 +291,6 @@ export const useAuth = () => {
       }
 
       const result = await response.json();
-      console.log("[DEBUG] Get user info successful:", result);
 
       return result;
     } catch (error: any) {

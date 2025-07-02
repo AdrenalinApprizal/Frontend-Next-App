@@ -164,15 +164,6 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
     setShowActions(!showActions);
   };
 
-  // Debug logging for message positioning
-  console.log("[ChatAreaItem] Rendering message:", {
-    messageId: message.id,
-    content: message.content?.substring(0, 20),
-    isCurrentUser: message.isCurrentUser,
-    sender_id: message.sender_id,
-    positioning: message.isCurrentUser ? "right" : "left",
-  });
-
   // Get sender info
   const senderName = message.isCurrentUser
     ? "You"
@@ -217,31 +208,6 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
     return senderAvatar;
   }, [senderAvatar]);
 
-  // Debug logging for avatar
-  if (!message.isCurrentUser) {
-    console.log("[ChatAreaItem] Avatar debug for message:", {
-      messageId: message.id,
-      senderName,
-      senderAvatar: validatedAvatar
-        ? validatedAvatar.substring(0, 50) + "..."
-        : null,
-      avatarLength: validatedAvatar?.length || 0,
-      isDataUrl: validatedAvatar?.startsWith("data:") || false,
-      isBase64: validatedAvatar?.includes("base64") || false,
-      messageData: {
-        sender: message.sender,
-        senderAvatarUrl: message.sender?.avatar_url,
-      },
-      recipientData: {
-        profile_picture_url: recipient.profile_picture_url
-          ? recipient.profile_picture_url.substring(0, 50) + "..."
-          : null,
-        avatar: recipient.avatar
-          ? recipient.avatar.substring(0, 50) + "..."
-          : null,
-      },
-    });
-  }
 
   return (
     <div

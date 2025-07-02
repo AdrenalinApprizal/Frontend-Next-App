@@ -6,6 +6,17 @@ export type EventTypes = {
   "message-received": any;
   "message-sent": any;
   "message-read": string[];
+  "message-deleted": {
+    messageId: string;
+    conversationId: string;
+    type: "private" | "group";
+  };
+  "message-edited": {
+    messageId: string;
+    conversationId: string;
+    content: string;
+    type: "private" | "group";
+  };
   "friend-status-changed": { userId: string; status: "online" | "offline" };
   "retry-failed-message": string;
   "typing-status-changed": {

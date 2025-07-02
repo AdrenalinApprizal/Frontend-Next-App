@@ -10,28 +10,31 @@ const handler = NextAuth({
         email: { label: "Email", type: "text" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
+       
         try {
           if (!credentials?.email || !credentials?.password) {
             throw new Error("Email and password are required");
           }
 
           // Use the proxy endpoint instead of directly connecting to the backend
-          const response = await fetch(
-            `${process.env.NEXTAUTH_URL || ""}/api/proxy/auth/login`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({
-                email: credentials.email,
-                password: credentials.password,
-              }),
-              cache: "no-store",
-            }
-          );
+          const authUrl = `${
+            process.env.NEXTAUTH_URL || ""
+          }/api/proxy/auth/login`;
+
+          const response = await fetch(authUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              email: credentials.email,
+              password: credentials.password,
+            }),
+            cache: "no-store",
+          });
+
 
           const data = await response.json();
 
@@ -52,6 +55,7 @@ const handler = NextAuth({
             throw new Error("Invalid response from authentication server");
           }
 
+
           // Return user data
           return {
             id: data.user_id || data.id,
@@ -69,6 +73,12 @@ const handler = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
+      ({
+        tokenExists: !!token,
+        userExists: !!user,
+        userAccessToken: user?.access_token ? "Present" : "Missing",
+      });
+
       if (user) {
         token.access_token = user.access_token;
         token.expiresAt = user.expiresAt;
@@ -77,6 +87,12 @@ const handler = NextAuth({
       return token;
     },
     async session({ session, token }) {
+      ( {
+        sessionExists: !!session,
+        tokenExists: !!token,
+        tokenAccessToken: token?.access_token ? "Present" : "Missing",
+      });
+
       // Use type assertion to ensure TypeScript recognizes these properties
       session.access_token = token.access_token as string;
       session.expiresAt = token.expiresAt as string;
@@ -103,3 +119,5 @@ const handler = NextAuth({
 // Export the GET and POST functions
 export const GET = handler;
 export const POST = handler;
+
+
