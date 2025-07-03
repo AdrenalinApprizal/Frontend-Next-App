@@ -150,7 +150,6 @@ export function useEventBus() {
           throw new Error("Failed to send message");
         }
       } catch (error) {
-        console.error("[EventBus] Failed to send private message:", error);
 
         // Emit retry event for failed messages
         emit("retry-failed-message", recipientId);

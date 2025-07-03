@@ -80,7 +80,6 @@ export function formatMessageTimestamp(options: TimestampOptions): string {
         });
     }
   } catch (error) {
-    console.warn("Error formatting timestamp:", error);
     return ""; // Return empty string for consistency
   }
 }
@@ -103,7 +102,6 @@ export function formatTimeString(timestamp: string | number | Date): string {
       hour12: false,
     });
   } catch (error) {
-    console.warn("Error formatting time string:", error);
     return "";
   }
 }
@@ -154,14 +152,12 @@ export function extractValidDate(
         trimmedTimestamp === "Invalid Date" ||
         trimmedTimestamp === ""
       ) {
-        console.warn("Invalid timestamp string detected:", timestamp);
         return null;
       }
 
       // Try parsing as ISO string or other common formats
       const date = new Date(trimmedTimestamp);
       if (isNaN(date.getTime())) {
-        console.warn("Could not parse timestamp string:", timestamp);
         return null;
       }
       return date;
@@ -169,12 +165,7 @@ export function extractValidDate(
 
     return null;
   } catch (error) {
-    console.warn(
-      "Error extracting date from timestamp:",
-      error,
-      "Input:",
-      timestamp
-    );
+   
     return null;
   }
 }
@@ -188,10 +179,6 @@ export function formatDateForSeparator(
   try {
     const date = extractValidDate(timestamp);
     if (!date) {
-      console.warn(
-        "formatDateForSeparator received invalid timestamp:",
-        timestamp
-      );
       return "Unknown Date";
     }
 
@@ -225,12 +212,7 @@ export function formatDateForSeparator(
       });
     }
   } catch (error) {
-    console.warn(
-      "Error formatting date for separator:",
-      error,
-      "Input:",
-      timestamp
-    );
+    
     return "Unknown Date";
   }
 }
@@ -256,7 +238,6 @@ export function isSameDay(
       date1.getDate() === date2.getDate()
     );
   } catch (error) {
-    console.warn("Error comparing dates:", error);
     return false;
   }
 }
@@ -276,7 +257,6 @@ export function getTimeDifference(timestamp: string | number | Date): string {
       format: "relative",
     });
   } catch (error) {
-    console.warn("Error getting time difference:", error);
     return "Unknown time";
   }
 }

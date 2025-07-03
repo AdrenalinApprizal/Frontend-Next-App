@@ -11,7 +11,6 @@ const handler = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials, req) {
-       
         try {
           if (!credentials?.email || !credentials?.password) {
             throw new Error("Email and password are required");
@@ -35,14 +34,10 @@ const handler = NextAuth({
             cache: "no-store",
           });
 
-
           const data = await response.json();
 
           if (!response.ok) {
-            console.error(
-              `Auth API error: ${response.status} ${response.statusText}`,
-              data
-            );
+            data;
             // Throw specific error message if available from API
             throw new Error(
               data?.message ||
@@ -55,7 +50,6 @@ const handler = NextAuth({
             throw new Error("Invalid response from authentication server");
           }
 
-
           // Return user data
           return {
             id: data.user_id || data.id,
@@ -65,7 +59,6 @@ const handler = NextAuth({
             expiresAt: data.expires_at || data.expiresAt,
           };
         } catch (error) {
-          console.error("Authentication error:", error);
           throw error; // Re-throw to let NextAuth handle the error
         }
       },
@@ -87,7 +80,7 @@ const handler = NextAuth({
       return token;
     },
     async session({ session, token }) {
-      ( {
+      ({
         sessionExists: !!session,
         tokenExists: !!token,
         tokenAccessToken: token?.access_token ? "Present" : "Missing",
@@ -119,5 +112,3 @@ const handler = NextAuth({
 // Export the GET and POST functions
 export const GET = handler;
 export const POST = handler;
-
-

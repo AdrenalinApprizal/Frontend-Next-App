@@ -148,17 +148,15 @@ export const sendMessageWithFile = async (
     headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
   });
 
-
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[FileUpload] Step 2 failed:`, {
+    ({
       status: response.status,
       statusText: response.statusText,
       error: errorText,
@@ -192,7 +190,6 @@ export const uploadFileAndSendMessage = async (
   if (!validation.valid) {
     throw new Error(validation.error);
   }
-
 
   try {
     // Step 1: Upload file
@@ -230,7 +227,6 @@ export const uploadFileAndSendMessage = async (
 
     return result;
   } catch (error) {
-    console.error("[FileUpload] 2-step process failed:", error);
     throw error;
   }
 };

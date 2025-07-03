@@ -53,7 +53,6 @@ const useUserInfoQuery = () => {
     queryKey: ["userInfo"],
     queryFn: async () => {
       if (!access_token || status !== "authenticated") {
-        console.error("Not authenticated in useUserInfoQuery");
         throw new Error("Not authenticated");
       }
 
@@ -86,7 +85,6 @@ const useUserInfoQuery = () => {
               break;
             }
           } catch (err) {
-            console.warn(`Error fetching from ${endpoint}:`, err);
           }
         }
 
@@ -128,7 +126,6 @@ const useUserInfoQuery = () => {
       } catch (error: unknown) {
         const errorMessage =
           error instanceof Error ? error.message : "An unknown error occurred";
-        console.error("User info fetch error:", errorMessage);
         throw new Error(`Failed to fetch user info: ${errorMessage}`);
       }
     },

@@ -109,10 +109,7 @@ export default function FriendsList() {
         });
       }
     } catch (err) {
-      console.error(
-        "[FriendsList] Error fetching friends' presence status:",
-        err
-      );
+      
     }
   };
 
@@ -133,16 +130,7 @@ export default function FriendsList() {
       await getFriendRequests();
       await getFriends();
     } catch (err: any) {
-      console.error("[FriendsList] Failed to accept friend request:", err);
-      console.error("[FriendsList] Error details:", {
-        message: err.message,
-        stack: err.stack,
-        friendshipId: friendshipId,
-        availableRequests: friendRequests.map((req) => ({
-          friendship_id: req.friendship_id,
-          id: req.id,
-        })),
-      });
+      
       toast.error("Failed to accept friend request: " + err.message);
     }
   };
@@ -153,7 +141,6 @@ export default function FriendsList() {
       toast.success("Friend request rejected");
       await getFriendRequests();
     } catch (err) {
-      console.error("[FriendsList] Failed to reject friend request:", err);
       toast.error("Failed to reject friend request");
     }
   };
@@ -169,7 +156,6 @@ export default function FriendsList() {
       setShowAddFriendPopup(false); // Close modal after success
       await getFriendRequests(); // Refresh the requests list
     } catch (err: any) {
-      console.error("[FriendsList] Failed to add friend by username:", err);
       toast.error(err.message || "Failed to send friend request");
     } finally {
       setIsAddingByUsername(false);
@@ -215,7 +201,6 @@ export default function FriendsList() {
       }`;
       router.push(url);
     } catch (err) {
-      console.error("[FriendsList] Error loading messages:", err);
       toast.error("Failed to load messages");
     }
   };
@@ -238,7 +223,6 @@ export default function FriendsList() {
         const results = await searchFriends(searchQuery);
         setSearchedFriends(results);
       } catch (err) {
-        console.error("[FriendsList] Error searching friends:", err);
         setSearchedFriends([]);
       } finally {
         setIsSearchingFriends(false);

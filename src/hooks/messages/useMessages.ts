@@ -508,10 +508,7 @@ export const useMessages = () => {
             break;
           }
         } catch (error) {
-          console.warn(
-            `[Messages Store] Endpoint ${endpoint.url} failed:`,
-            error
-          );
+        
           lastError = error;
         }
       }
@@ -533,15 +530,7 @@ export const useMessages = () => {
       } else if (Array.isArray(response.messages)) {
         messagesArray = response.messages;
       } else {
-        // Log the actual response structure to debug
-        console.warn(`[Messages Store] Unexpected response structure:`, {
-          responseKeys: Object.keys(response || {}),
-          responseType: typeof response,
-          isArray: Array.isArray(response),
-          dataExists: !!response?.data,
-          dataType: typeof response?.data,
-          dataIsArray: Array.isArray(response?.data),
-        });
+       
         messagesArray = [];
       }
 
@@ -590,12 +579,7 @@ export const useMessages = () => {
       return response;
     } catch (err: any) {
       const endTime = performance.now();
-      console.error(
-        `[Messages Store] Failed to fetch unified messages after ${(
-          endTime - startTime
-        ).toFixed(2)}ms:`,
-        err
-      );
+      
 
       const errorMsg = err.message || "Failed to fetch messages";
       setError(errorMsg);
@@ -630,12 +614,7 @@ export const useMessages = () => {
   ): Promise<ApiResponse> => {
     // Enhanced parameter validation - prevent empty API calls
     if (!userId || userId.trim() === "") {
-      console.error(
-        `[Messages Store] Invalid userId provided to getMessages:`,
-        userId
-      );
-      console.error(`[Messages Store] userId type:`, typeof userId);
-      console.error(`[Messages Store] userId length:`, userId?.length);
+      
       return {
         data: [],
         messages: [],
@@ -698,7 +677,6 @@ export const useMessages = () => {
       return response;
     } catch (err: any) {
       setError(`Failed to get conversations: ${err.message}`);
-      console.error("[Messages] Error fetching conversations:", err);
       setLoading(false);
 
       // Return a fallback response for consistency
@@ -738,7 +716,6 @@ export const useMessages = () => {
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error(`[Messages] Failed to send message:`, err);
       setError(`Failed to send message: ${err.message}`);
       setLoading(false);
       throw err;
@@ -785,10 +762,7 @@ export const useMessages = () => {
       return response;
     } catch (err: any) {
       setError(`Failed to send group message: ${err.message}`);
-      console.error(
-        `[Messages] Error sending message to group ${groupId}:`,
-        err
-      );
+     
       setLoading(false);
 
       // Return error response instead of throwing for consistency with other methods
@@ -866,12 +840,6 @@ export const useMessages = () => {
       return response;
     } catch (err: any) {
       const endTime = performance.now();
-      console.error(
-        `[Messages Store] Failed to edit message after ${(
-          endTime - startTime
-        ).toFixed(2)}ms:`,
-        err
-      );
 
       setError(`Failed to edit message: ${err.message}`);
       setLoading(false);
@@ -997,12 +965,7 @@ export const useMessages = () => {
       return response;
     } catch (err: any) {
       const endTime = performance.now();
-      console.error(
-        `[Messages Store] Failed to delete message after ${(
-          endTime - startTime
-        ).toFixed(2)}ms:`,
-        err
-      );
+     
 
       // Provide more specific error messages based on the error type
       let errorMessage = "Failed to delete message";

@@ -370,7 +370,6 @@ export default function GroupProfileInfo({
         window.location.reload();
       }, 500);
     } catch (error: any) {
-      console.error("Error blocking user:", error);
       toast.error(error.message || "Failed to block user");
     }
   };
@@ -395,7 +394,6 @@ export default function GroupProfileInfo({
         window.location.reload();
       }, 500);
     } catch (error: any) {
-      console.error("Error unblocking user:", error);
       toast.error(error.message || "Failed to unblock user");
     }
   };
@@ -460,7 +458,6 @@ export default function GroupProfileInfo({
         });
       }
     } catch (error: any) {
-      console.error("Error adding members:", error);
       toast.error(error.message || "Failed to add members to the group");
     }
   };
@@ -595,14 +592,7 @@ export default function GroupProfileInfo({
             }
           }
 
-          // Log warning if we still couldn't find a URL
-          if (!attachmentUrl) {
-            console.warn(
-              `Message has file type but no attachment URL: ${JSON.stringify(
-                msg
-              )}`
-            );
-          }
+        
 
           return {
             file_id: msg.message_id || msg.id,
@@ -634,7 +624,6 @@ export default function GroupProfileInfo({
 
       setCurrentPage(1);
     } catch (error) {
-      console.error("Error loading group attachments:", error);
       // Silently handle error
       setAttachments([]); // Set empty array as fallback
     } finally {
@@ -666,7 +655,6 @@ export default function GroupProfileInfo({
 
       toast.success("File download started");
     } catch (error) {
-      console.error("Error downloading file:", error);
       toast.error("Failed to download file");
     }
   };

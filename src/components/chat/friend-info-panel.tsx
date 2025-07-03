@@ -83,6 +83,9 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // Avatar fallback state
+  const [avatarError, setAvatarError] = useState(false);
+
   // Modal states
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -139,6 +142,19 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   // Helper function to check if attachment is an image
   const isImage = (mimeType: string) => {
     return mimeType.startsWith("image/");
+  };
+
+  // Reset avatar error when friendDetails changes
+  useEffect(() => {
+    setAvatarError(false);
+  }, [friendDetails?.avatar, friendDetails?.profile_picture_url]);
+
+  // Helper function to get proper avatar URL
+  const getValidAvatarUrl = (): string => {
+    const avatarUrl =
+      friendDetails?.profile_picture_url || friendDetails?.avatar;
+    if (!avatarUrl || avatarError) return "";
+    return avatarUrl;
   };
 
   // Initialize friends list
@@ -251,7 +267,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       });
       setCurrentPage(1);
     } catch (error) {
-      console.error("Error loading attachments from messages:", error);
       // Silently handle error
       setAttachments([]); // Set empty array as fallback
     } finally {
@@ -279,7 +294,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
       toast.success("File download started");
     } catch (error) {
-      console.error("Error downloading file:", error);
       toast.error("Failed to download file");
     }
   };
@@ -339,7 +353,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
       closeShareDialog();
     } catch (error) {
-      console.error("Error sharing file:", error);
       // Silently handle error - file service might not be available
     }
   };
@@ -383,11 +396,12 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
         <div className="flex flex-col items-center">
           <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center ring-2 ring-gray-100">
-            {friendDetails?.avatar || friendDetails?.profile_picture_url ? (
+            {getValidAvatarUrl() ? (
               <img
-                src={friendDetails.avatar || friendDetails.profile_picture_url}
-                alt={friendDetails.name}
+                src={getValidAvatarUrl()}
+                alt={friendDetails?.name || "Profile"}
                 className="h-full w-full object-cover"
+                onError={() => setAvatarError(true)}
               />
             ) : (
               <FaUser className="h-12 w-12 text-gray-400" />

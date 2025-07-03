@@ -54,7 +54,6 @@ export function GroupsList() {
       // Navigate to the chat with this group
       router.push(`/chat/messages/${groupId}?type=group`);
     } catch (err) {
-      console.error("[GroupsList] Error navigating to group:", err);
       toast.error("Failed to open group chat");
     }
   };
@@ -323,7 +322,6 @@ export function GroupsList() {
       resetForm();
       setShowCreateGroupPopup(false);
     } catch (error: any) {
-      console.error("Error creating group:", error);
       setErrors({
         general: error.message || "Failed to create group. Please try again.",
       });

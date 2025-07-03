@@ -104,7 +104,6 @@ export function MessagesList() {
     getGroups,
     createGroup,
     getGroupMessages,
-    getGroupLastMessage,
     getGroupConversationHistory,
   } = useGroup();
 
@@ -313,23 +312,32 @@ export function MessagesList() {
     try {
       let response = null;
 
+      // Use unified getLastMessage function for both friends and groups
       if (type === "group") {
-        // For groups, use the dedicated group messages function
-        response = await getGroupLastMessage(conversationId);
+        response = await getLastMessage(conversationId, "group");
       } else {
-        // For friends, use the unified getLastMessage function
         response = await getLastMessage(conversationId, "private");
       }
 
       // Use consistent response normalization
       const normalizedMessage = normalizeMessageResponse(response);
 
+      // Check if the response indicates no conversation history exists
+      // Return null if there's truly no chat history (empty response, no data, etc.)
+      if (
+        !normalizedMessage ||
+        (response &&
+          response.data &&
+          Array.isArray(response.data) &&
+          response.data.length === 0) ||
+        (response && response.success === false)
+      ) {
+        return null;
+      }
+
       return normalizedMessage;
     } catch (error) {
-      console.error(
-        `[MessagesList] Failed to get last message for ${type} ${conversationId}:`,
-        error
-      );
+      // If API call fails, treat as no conversation history
       return null;
     }
   };
@@ -353,7 +361,6 @@ export function MessagesList() {
       // The useEffect hooks will automatically update the messages when hookFriends and hookGroups change
     } catch (err: any) {
       setError(err.message || "Failed to load conversations");
-      console.error("Error loading conversations data:", err);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -446,7 +453,6 @@ export function MessagesList() {
         result?.message || `Friend request sent to ${friendUsername}`
       );
     } catch (err: any) {
-      console.error("Failed to add friend:", err);
       toast.error(err.message || "Failed to send friend request");
     } finally {
       setIsAddingFriend(false);
@@ -489,7 +495,6 @@ export function MessagesList() {
       // Refresh data to show the new group
       await getGroups();
     } catch (err: any) {
-      console.error("Failed to create group:", err);
       toast.error(err.message || "Failed to create group");
     } finally {
       setIsLoading(false);
@@ -512,7 +517,7 @@ export function MessagesList() {
   const transformGroupsToMessages = async (
     groups: any[]
   ): Promise<Message[]> => {
-    // Filter out invalid groups first
+    // Process all groups and only show those with conversation history
     const validGroups = await Promise.all(
       groups
         .filter((group) => group && group.id)
@@ -526,13 +531,25 @@ export function MessagesList() {
               group.id,
               "group"
             );
+
+            // If API returns null/empty, this group has no conversation history
+            // Return null to filter it out from the list
+            if (!lastMessage) {
+              return null;
+            }
           }
 
           // Enhanced check for message existence - check multiple possible content fields
           const messageDisplay = getMessageDisplayContent(lastMessage);
           let messageContent = messageDisplay.content;
-          let hasMessage = messageContent !== "No messages yet";
+          let hasMessage =
+            messageContent !== "No messages yet" && !messageDisplay.isDeleted;
           let isDeleted = messageDisplay.isDeleted;
+
+          // If still no message content and not deleted, skip this group
+          if (!hasMessage && !isDeleted) {
+            return null;
+          }
 
           // Find a valid timestamp for sorting
           const lastActivity =
@@ -542,16 +559,19 @@ export function MessagesList() {
             group.created_at ||
             new Date().toISOString();
 
-          // Format content properly with sender name if it's a group message
+          // Format content properly - handle deleted messages first, then regular messages
           let content;
-          if (hasMessage) {
-            // Include sender name in the preview if available
+          if (isDeleted) {
+            // Always show deleted message indicator for deleted messages
+            content = "This message was deleted";
+          } else if (hasMessage) {
+            // Include sender name in the preview if available for regular messages
             content = lastMessage.sender_name
               ? `${lastMessage.sender_name}: ${messageContent}`
               : messageContent;
           } else {
-            // Show "No messages yet" for groups without messages
-            content = "No messages yet";
+            // This case should not happen due to the filter above, but keep as fallback
+            return null;
           }
 
           return {
@@ -563,9 +583,10 @@ export function MessagesList() {
               id: group.id,
             },
             content: content,
-            timestamp: hasMessage
-              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-              : "",
+            timestamp:
+              hasMessage || isDeleted
+                ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+                : "",
             formattedTime: formatTimestamp(lastActivity),
             read: !group.unread_count || group.unread_count === 0,
             readStatus:
@@ -579,13 +600,18 @@ export function MessagesList() {
             type: "group" as MessageType,
             lastActivity,
             isTyping: false, // Will be updated by WebSocket events
-            hasMessages: hasMessage, // Flag to identify which have real messages
+            hasMessages: hasMessage || isDeleted, // Include deleted messages as having conversation history
           } as Message;
         })
     );
 
+    // Filter out null results (groups with no conversation history)
+    const filteredGroups = validGroups.filter(
+      (group): group is Message => group !== null
+    );
+
     // Sort groups (we're sure all values are valid now after filtering)
-    return validGroups.sort((a, b) => {
+    return filteredGroups.sort((a, b) => {
       // First sort by whether they have messages (those with messages come first)
       const aHasMessages = a.hasMessages ? 1 : 0;
       const bHasMessages = b.hasMessages ? 1 : 0;
@@ -604,7 +630,7 @@ export function MessagesList() {
   const transformFriendsToMessages = async (
     friends: any[]
   ): Promise<Message[]> => {
-    // Show ALL friends, not just those with messages
+    // Process all friends and only show those with conversation history
     const friendMessages = await Promise.all(
       friends.map(async (friend) => {
         const userId = friend.id;
@@ -617,13 +643,25 @@ export function MessagesList() {
             friend.id,
             "friend"
           );
+
+          // If API returns null/empty, this friend has no conversation history
+          // Return null to filter it out from the list
+          if (!lastMessage) {
+            return null;
+          }
         }
 
         // Enhanced check for message existence - check multiple possible content fields
         const messageDisplay = getMessageDisplayContent(lastMessage);
         let messageContent = messageDisplay.content;
-        let hasMessage = messageContent !== "No messages yet";
+        let hasMessage =
+          messageContent !== "No messages yet" && !messageDisplay.isDeleted;
         let isDeleted = messageDisplay.isDeleted;
+
+        // If still no message content and not deleted, skip this friend
+        if (!hasMessage && !isDeleted) {
+          return null;
+        }
 
         const lastActivity =
           friend.last_active ||
@@ -649,6 +687,17 @@ export function MessagesList() {
           displayName = "User";
         }
 
+        // Determine content based on message state
+        let content;
+        if (isDeleted) {
+          content = "This message was deleted";
+        } else if (hasMessage) {
+          content = messageContent;
+        } else {
+          // This case should not happen due to the filter above, but keep as fallback
+          return null;
+        }
+
         return {
           id: friend.id,
           sender: {
@@ -661,12 +710,13 @@ export function MessagesList() {
                 ? ("online" as UserStatus)
                 : ("offline" as UserStatus),
           },
-          content: hasMessage ? messageContent : "No messages yet",
-          timestamp: hasMessage
-            ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-            : friendStatus === "online"
-            ? "Online"
-            : "Offline",
+          content: content,
+          timestamp:
+            hasMessage || isDeleted
+              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+              : friendStatus === "online"
+              ? "Online"
+              : "Offline",
           formattedTime: formatTimestamp(lastActivity),
           read: !friend.unread_count || friend.unread_count === 0,
           readStatus:
@@ -680,13 +730,18 @@ export function MessagesList() {
           type: "friend" as MessageType,
           lastActivity,
           isTyping: isTyping[userId] || false,
-          hasMessages: hasMessage, // Add flag to identify which have real messages
+          hasMessages: hasMessage || isDeleted, // Include deleted messages as having conversation history
         };
       })
     );
 
+    // Filter out null results (friends with no conversation history)
+    const filteredFriends = friendMessages.filter(
+      (friend) => friend !== null
+    ) as Message[];
+
     // Sort to show friends with messages first, then those without messages
-    return friendMessages.sort((a, b) => {
+    return filteredFriends.sort((a, b) => {
       const aHasMessages = a.hasMessages ? 1 : 0;
       const bHasMessages = b.hasMessages ? 1 : 0;
 
@@ -696,8 +751,8 @@ export function MessagesList() {
       }
 
       // If both have messages or both don't have messages, sort by activity time
-      const aTime = new Date(a.lastActivity).getTime();
-      const bTime = new Date(b.lastActivity).getTime();
+      const aTime = new Date(a.lastActivity || new Date()).getTime();
+      const bTime = new Date(b.lastActivity || new Date()).getTime();
       return bTime - aTime;
     });
   };
@@ -711,6 +766,17 @@ export function MessagesList() {
   const getMessageDisplayContent = (
     lastMessage: any
   ): { content: string; isDeleted: boolean } => {
+    if (!lastMessage || typeof lastMessage !== "object") {
+      return { content: "No messages yet", isDeleted: false };
+    }
+
+    // Handle array response (like your JSON data with "0", "1" keys)
+    if (Array.isArray(lastMessage)) {
+      lastMessage = lastMessage[0];
+    } else if (typeof lastMessage === "object" && "0" in lastMessage) {
+      lastMessage = lastMessage["0"];
+    }
+
     if (!lastMessage || typeof lastMessage !== "object") {
       return { content: "No messages yet", isDeleted: false };
     }

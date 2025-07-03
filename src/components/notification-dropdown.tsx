@@ -95,7 +95,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
 
       return username;
     } catch (error) {
-      console.error(`Error fetching username for ${userId}:`, error);
 
       // Cache a fallback username to avoid repeated failed requests
       const fallbackUsername = `User-${userId.substring(0, 8)}`;
@@ -226,7 +225,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
           }
         }
       } catch (error: any) {
-        console.error("Error marking notification as read:", error);
         toast.error(error.message || "Failed to mark notification as read");
       }
     }
@@ -238,7 +236,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       await markAllAsRead();
       toast.success("All notifications marked as read");
     } catch (error: any) {
-      console.error("Error marking all notifications as read:", error);
       toast.error(error.message || "Failed to mark all notifications as read");
     }
   };
@@ -251,7 +248,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     try {
       await loadMoreNotifications();
     } catch (error: any) {
-      console.error("Error loading more notifications:", error);
       toast.error(error.message || "Failed to load more notifications");
     } finally {
       setIsLoadingMore(false);
@@ -261,13 +257,11 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   // Load data when component mounts
   useEffect(() => {
     getUnreadCount().catch((err) => {
-      console.error("Failed to fetch unread count:", err);
     });
 
     // Set up periodic refresh of unread count
     const interval = setInterval(() => {
       getUnreadCount().catch((err) => {
-        console.error("Failed to update unread count:", err);
       });
     }, 60000); // Refresh every minute
 
@@ -282,7 +276,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
           // Notifications fetched successfully
         })
         .catch((err) => {
-          console.error("Failed to fetch notifications:", err);
 
           // Only show error toast for actual errors, not for empty results
           if (
@@ -292,7 +285,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
             toast.error(`Error loading notifications: ${err.message}`);
           } else {
             // Handle the case where notifications might be empty but not an error
-            console.warn("No notifications found or empty response format");
           }
         });
     }
@@ -316,7 +308,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       notificationsNeedingUsernames.forEach((notification) => {
         if (notification.data?.sender_id) {
           fetchUsername(notification.data.sender_id).catch((err) => {
-            console.error("Failed to fetch username:", err);
           });
         }
       });

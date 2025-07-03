@@ -44,7 +44,6 @@ export function LoginForm() {
 
         setErrorMsg(errorMessage);
         toast.error(errorMessage);
-        console.error("Authentication error:", result.error);
       } else if (result?.ok) {
         toast.success("Login successful!");
         // Add a small delay to ensure the session is properly set
@@ -56,7 +55,6 @@ export function LoginForm() {
         toast.error("An unexpected error occurred.");
       }
     } catch (error) {
-      console.error("Login error:", error);
       setErrorMsg("An error occurred during login.");
       toast.error("An error occurred during login.");
     } finally {

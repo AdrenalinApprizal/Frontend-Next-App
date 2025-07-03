@@ -94,13 +94,11 @@ export function usePresence(
           const errorMsg =
             data.message || `HTTP ${response.status}: ${response.statusText}`;
           setError(errorMsg);
-          console.error("[Presence] Failed to update status:", errorMsg);
           return { success: false, error: true, message: errorMsg };
         }
       } catch (error: any) {
         const errorMsg = error.message || "Network error occurred";
         setError(errorMsg);
-        console.error("[Presence] Network error:", error);
         return { success: false, error: true, message: errorMsg };
       } finally {
         setIsLoading(false);

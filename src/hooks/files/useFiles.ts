@@ -172,7 +172,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to fetch user media");
-      console.error(`Error fetching media for user ${userId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -220,7 +219,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to fetch group media");
-      console.error(`Error fetching media for group ${groupId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -255,7 +253,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to fetch user files");
-      console.error(`Error fetching files for user ${userId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -290,7 +287,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to fetch group files");
-      console.error(`Error fetching files for group ${groupId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -321,7 +317,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to fetch files");
-      console.error("Error fetching all files:", err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -393,7 +388,6 @@ export const useFiles = () => {
       return data;
     } catch (err: any) {
       setError(err.message || "Failed to upload file");
-      console.error("Error uploading file:", err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -451,7 +445,6 @@ export const useFiles = () => {
       return blob;
     } catch (err: any) {
       setError(err.message || "Failed to download file");
-      console.error(`Error downloading file ${fileId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -480,7 +473,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to delete file");
-      console.error(`Error deleting file ${fileId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -530,7 +522,6 @@ export const useFiles = () => {
       return response;
     } catch (err: any) {
       setError(err.message || "Failed to share file");
-      console.error(`Error sharing file ${fileId}:`, err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -586,7 +577,6 @@ export const useFiles = () => {
       return data;
     } catch (err: any) {
       setError(err.message || "Failed to send file message");
-      console.error("Error sending file message:", err);
       throw err;
     } finally {
       setIsLoading(false);
@@ -642,7 +632,6 @@ export const useFiles = () => {
       return data;
     } catch (err: any) {
       setError(err.message || "Failed to send file message");
-      console.error("Error sending file message to group:", err);
       throw err;
     } finally {
       setIsLoading(false);

@@ -35,7 +35,6 @@ export function Sidebar() {
       toast.success("Successfully logged out");
       router.push("/");
     } catch (error) {
-      console.error("Logout error:", error);
       toast.dismiss();
       toast.error("An error occurred during logout");
     } finally {

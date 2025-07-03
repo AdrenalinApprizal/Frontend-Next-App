@@ -166,39 +166,11 @@ async function handleRequest(
                   { status: 200 }
                 );
               }
-            } else if (response.status === 405) {
-              // Special handling for 405 Method Not Allowed
-              console.error(
-                `[Proxy] ${methodToTry} request got 405 Method Not Allowed, trying alternate method`
-              );
-              // Continue to next method in loop
-            } else {
-              console.error(
-                `[Proxy] ${methodToTry} request failed for message history: ${response.status}`
-              );
-              // Try the next method if this one failed
             }
           } catch (error) {
-            console.error(
-              `[Proxy] Error trying ${methodToTry} for message history:`,
-              error
-            );
-            // Try the next method if this one failed
+            error;
           }
         }
-
-        // If all methods failed, return a fallback empty response
-        console.error(
-          `[Proxy] All methods failed for message history, returning fallback`
-        );
-
-        // Log detailed diagnostic information for troubleshooting
-        console.error(`[Proxy] Message history failure diagnostics: 
-          - URL: ${url}
-          - Available methods: ${methodsToTry.join(", ")}
-          - Query parameters: ${originalUrl.search}
-          - Authentication: ${token?.access_token ? "Present" : "Missing"}
-        `);
 
         return NextResponse.json(
           {
@@ -257,9 +229,7 @@ async function handleRequest(
               const data = await response.json();
               return NextResponse.json(data, { status: 200 });
             } else {
-              console.error(
-                `[Proxy] Direct message fetch failed: ${response.status}`
-              );
+             
 
               // Return empty data with success status to avoid breaking UI
               return NextResponse.json(
@@ -274,7 +244,6 @@ async function handleRequest(
               );
             }
           } catch (error: any) {
-            console.error(`[Proxy] Error fetching direct message:`, error);
 
             // Return empty data with success status to avoid breaking UI
             return NextResponse.json(
@@ -482,16 +451,14 @@ async function handleRequest(
           return NextResponse.json(data, { status: response.status });
         } else {
           const errorText = await response.text();
-          console.error(
-            `[Proxy] WebSocket error response: ${response.status} ${errorText}`
-          );
+          
           return NextResponse.json(
             { error: `WebSocket connection error: ${errorText}` },
             { status: response.status }
           );
         }
       } catch (error) {
-        console.error(`[Proxy] WebSocket fetch error:`, error);
+        
         return NextResponse.json(
           {
             error: "WebSocket proxy error",
@@ -547,10 +514,7 @@ async function handleRequest(
           (async () => {
             try {
             } catch (formDataError) {
-              console.error(
-                "[Proxy] Error in FormData debug logging:",
-                formDataError
-              );
+              
             }
           })();
 
@@ -581,19 +545,14 @@ async function handleRequest(
               } else {
                 try {
                   const errorData = await response.json();
-                  console.error(
-                    `[Proxy] FormData error response: ${response.status}`,
-                    errorData
-                  );
+                  
                   return NextResponse.json(errorData, {
                     status: response.status,
                   });
                 } catch (err) {
                   // Using the cloned response for text if JSON parsing fails
                   const text = await responseClone.text();
-                  console.error(
-                    `[Proxy] FormData error response text: ${text}`
-                  );
+                  
                   return NextResponse.json(
                     { error: "API Error", details: text },
                     { status: response.status }
@@ -602,7 +561,7 @@ async function handleRequest(
               }
             })
             .catch((error) => {
-              console.error(`[Proxy] FormData fetch error:`, error);
+              
               return NextResponse.json(
                 { error: "Proxy Error", message: error.message },
                 { status: 500 }
@@ -631,7 +590,7 @@ async function handleRequest(
           options.body = await req.text();
         }
       } catch (error) {
-        console.error("[Proxy] Error processing request body:", error);
+        
         return NextResponse.json(
           { error: "Proxy Error", message: "Failed to process request body" },
           { status: 400 }
@@ -678,16 +637,13 @@ async function handleRequest(
             );
           }
         } else {
-          // For error responses, provide a fallback to prevent UI breakage
-          console.error(`[Proxy] Messages history error: ${response.status}`);
+          
 
           // Try to parse error response for logging purposes
           let errorMessage = "Unknown error";
           try {
             const errorText = await response.text();
-            console.error(
-              `[Proxy] Messages history error response: ${response.status} - ${errorText}`
-            );
+           
 
             try {
               const errorData = JSON.parse(errorText);
@@ -696,7 +652,6 @@ async function handleRequest(
               errorMessage = errorText;
             }
           } catch (textError) {
-            console.error(`[Proxy] Error reading response text:`, textError);
           }
 
           // For 404 or other common errors, return empty array with 200 status
@@ -712,7 +667,6 @@ async function handleRequest(
           );
         }
       } catch (fetchError) {
-        console.error(`[Proxy] Messages history fetch error:`, fetchError);
 
         // Return fallback for fetch errors as well
         return NextResponse.json(
@@ -765,9 +719,7 @@ async function handleRequest(
           let errorMessage = "Failed to send message";
           try {
             const errorText = await response.text();
-            console.error(
-              `[Proxy] Message send error: ${response.status} - ${errorText}`
-            );
+            
 
             try {
               const errorData = JSON.parse(errorText);
@@ -776,7 +728,6 @@ async function handleRequest(
               errorMessage = errorText;
             }
           } catch (textError) {
-            console.error(`[Proxy] Error reading response text:`, textError);
           }
 
           // Return user-friendly error
@@ -789,7 +740,6 @@ async function handleRequest(
           );
         }
       } catch (fetchError) {
-        console.error(`[Proxy] Message send fetch error:`, fetchError);
 
         const errorMessage =
           fetchError instanceof Error ? fetchError.message : String(fetchError);
@@ -815,14 +765,10 @@ async function handleRequest(
           const errorData = await response
             .json()
             .catch(() => ({ error: "Authentication failed" }));
-          console.error(
-            `[Proxy] Auth error response: ${response.status}`,
-            errorData
-          );
+          
           return NextResponse.json(errorData, { status: response.status });
         }
       } catch (error) {
-        console.error(`[Proxy] Auth endpoint exception:`, error);
         return NextResponse.json(
           { error: "Authentication service unavailable" },
           { status: 503 }
@@ -869,13 +815,10 @@ async function handleRequest(
                 return NextResponse.json([], { status: 200 });
               }
             } else {
-              console.error(
-                `[Proxy] Error for friend requests: ${response.status}`
-              );
+              
               return NextResponse.json([], { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for friend requests:`, error);
             return NextResponse.json([], { status: 200 });
           }
         }
@@ -903,13 +846,10 @@ async function handleRequest(
                 return NextResponse.json([], { status: 200 });
               }
             } else {
-              console.error(
-                `[Proxy] Error for friends list: ${response.status}`
-              );
+              
               return NextResponse.json([], { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for friends list:`, error);
             return NextResponse.json([], { status: 200 });
           }
         }
@@ -962,7 +902,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         return NextResponse.json(path.includes("search") ? [] : [], {
           status: 200,
         });
@@ -1005,7 +944,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
 
         // Return fallback responses even for exceptions
         if (path === "presence/status") {
@@ -1055,13 +993,10 @@ async function handleRequest(
                 }
               }
             } else {
-              console.error(
-                `[Proxy] Error for unread-count: ${response.status}`
-              );
+              
               return NextResponse.json({ count: 0 }, { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for unread-count:`, error);
             return NextResponse.json({ count: 0 }, { status: 200 });
           }
         }
@@ -1104,7 +1039,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
 
         // Return fallback responses even for exceptions
         if (path === "notifications") {
@@ -1172,7 +1106,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         if (path === "groups") {
           return NextResponse.json(
             { groups: [], current_page: 1, page_size: 20, total: 0 },
@@ -1242,7 +1175,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         if (path === "files") {
           return NextResponse.json(
             { files: [], current_page: 1, page_size: 20, total: 0 },
@@ -1274,14 +1206,12 @@ async function handleRequest(
     if (response.ok) {
       return NextResponse.json(data, { status: response.status });
     } else {
-      console.error(`[Proxy] Error response: ${response.status}`, data);
       return NextResponse.json(
         { error: data.error || "API Error", details: data },
         { status: response.status }
       );
     }
   } catch (error: any) {
-    console.error("[Proxy] Error:", error);
     return NextResponse.json(
       { error: "Proxy Error", message: error.message },
       { status: 500 }

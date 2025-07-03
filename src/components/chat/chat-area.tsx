@@ -17,13 +17,10 @@ import {
 } from "react-icons/fa";
 import { Paperclip } from "lucide-react";
 import { useMessages } from "@/hooks/messages/useMessages";
-import { useFriendship } from "@/hooks/auth/useFriends";
+import { useFriendship, Friend } from "@/hooks/auth/useFriends";
 import usePresence from "@/hooks/presence/usePresence";
 import { toast } from "react-hot-toast";
-import {
-  formatMessageTimestamp,
-  formatDateForSeparator,
-} from "@/utils/timestampHelper";
+import { formatMessageTimestamp } from "@/utils/timestampHelper";
 import {
   uploadFileAndSendMessage,
   validateFile,
@@ -31,11 +28,11 @@ import {
   getMediaType,
 } from "@/utils/fileUploadHelper";
 import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
-import { eventBus } from "@/hooks/websocket/useEventBus";
-import ChatAreaItem from "./chat-area-item";
-import UserProfileInfo from "./friend-info-panel";
-import SearchOnFriend from "./search-on-friend";
+import { useEventBus } from "@/hooks/websocket/useEventBus";
 import { OptimizedAvatar } from "../optimized-avatar";
+import SearchOnFriend from "./search-on-friend";
+import UserProfileInfo from "./friend-info-panel";
+import ChatAreaItem from "./chat-area-item";
 
 // Define message interface based on the Vue template
 interface Message {
@@ -107,37 +104,81 @@ interface ChatAreaProps {
 
 // Format timestamp for display using centralized helper - matches Vue.js implementation
 const formatTimestamp = (dateString?: string): string => {
-  if (!dateString) {
-    console.warn("formatTimestamp called with empty/null dateString");
-    return "No Time";
-  }
+  if (!dateString) return "Invalid Date";
 
   try {
-    // Use 'time' format for HH:MM display in message bubbles like Vue.js
-    const result = formatMessageTimestamp({
-      timestamp: dateString,
-      format: "time",
-    });
-
-    // If result is empty, it means the timestamp was invalid
-    if (!result) {
-      console.warn(
-        "formatMessageTimestamp returned empty result for:",
-        dateString
-      );
-      return "No Time";
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return "Invalid Date";
     }
 
-    return result;
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffMinutes < 1) {
+      return "Just now";
+    } else if (diffMinutes < 60) {
+      return `${diffMinutes}m ago`;
+    } else if (diffHours < 24) {
+      return `${diffHours}h ago`;
+    } else if (diffDays < 7) {
+      return `${diffDays}d ago`;
+    } else {
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+      });
+    }
   } catch (error) {
-    console.warn(
-      "Error in formatTimestamp:",
-      error,
-      "for dateString:",
-      dateString
-    );
-    return "No Time";
+    return "Invalid Date";
   }
+};
+
+// Helper function for date separator formatting
+const formatDateForSeparator = (date: Date): string => {
+  const now = new Date();
+  const today = now.toDateString();
+  const yesterday = new Date(now.getTime() - 86400000).toDateString();
+  const dateString = date.toDateString();
+
+  if (dateString === today) {
+    return "Today";
+  } else if (dateString === yesterday) {
+    return "Yesterday";
+  } else {
+    return date.toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }
+};
+
+// Helper function to validate avatar URLs including data URLs
+const validateAvatarUrl = (avatarUrl: string): string | null => {
+  if (!avatarUrl) return null;
+
+  // Validate data URL (base64)
+  if (avatarUrl.startsWith("data:")) {
+    const maxSize = 2 * 1024 * 1024; // 2MB limit
+    if (avatarUrl.length > maxSize) {
+      return null;
+    }
+
+    // Validate data URL format
+    const dataUrlRegex =
+      /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
+    if (!dataUrlRegex.test(avatarUrl)) {
+      return null;
+    }
+  }
+
+  return avatarUrl;
 };
 
 export function ChatArea({
@@ -171,11 +212,14 @@ export function ChatArea({
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [recipientAvatarError, setRecipientAvatarError] = useState(false);
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainer = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Prevent dependency array issues by using refs for functions that could change
   const isMountedRef = useRef(true);
@@ -192,9 +236,39 @@ export function ChatArea({
     deleteMessage,
   } = useMessages();
 
-  const { getFriendById, recipientData, setRecipientData, blockedUsers } =
-    useFriendship();
+  const {
+    recipientData,
+    setRecipientData,
+    blockedUsers,
+    getFriendAvatar,
+    getFriends,
+    friends,
+  } = useFriendship();
   const presence = usePresence();
+  const eventBus = useEventBus();
+
+  // Helper function to get sender avatar from friends cache
+  const getSenderAvatar = useCallback(
+    (senderId: string): string | null => {
+      if (!senderId || senderId === currentUserId) return null;
+
+      const avatarUrl = getFriendAvatar(senderId);
+
+      return avatarUrl;
+    },
+    [getFriendAvatar, currentUserId, friendId]
+  );
+
+  // Helper function to get friend data from friends list (instead of API call)
+  const getFriendFromList = useCallback(
+    (friendId: string): Friend | null => {
+      if (!friendId || !friends || friends.length === 0) return null;
+
+      const friend = friends.find((f) => f.id === friendId);
+      return friend || null;
+    },
+    [friends]
+  );
 
   const {
     connect,
@@ -206,16 +280,35 @@ export function ChatArea({
     unsubscribeFromPrivateMessages,
   } = useWebSocketContext();
 
-  // Simplified session logging - reduced for production readiness
+  // Add effect to track session readiness
   useEffect(() => {
-    if (process.env.NODE_ENV === "development") {
-      ({
-        currentUserId,
-        friendId,
-        messageCount: localMessages.length,
-      });
+    if (session?.user?.id && currentUserId) {
+      setSessionReady(true);
+    } else {
+      setSessionReady(false);
     }
-  }, [currentUserId, friendId, localMessages.length]);
+  }, [session, currentUserId]);
+
+  // Load friends list to populate avatar cache and recipient data
+  useEffect(() => {
+    if (sessionReady && currentUserId) {
+      getFriends()
+        .then((friends) => {
+          // After loading friends, update recipient data if we have a friendId
+          if (friendId && friends && friends.length > 0) {
+            const friend = friends.find((f) => f.id === friendId);
+            if (friend) {
+              setRecipientData({
+                ...friend,
+                display_name:
+                  friend.full_name || friend.display_name || friend.name,
+              });
+            }
+          }
+        })
+        .catch((err) => {});
+    }
+  }, [sessionReady, currentUserId, getFriends, friendId, setRecipientData]);
 
   // Memoized recipient based on data and presence
   const recipient = useMemo(() => {
@@ -293,8 +386,6 @@ export function ChatArea({
     const nameParts = displayName.split(" ");
     const firstName = nameParts[0] || "";
     const lastName = nameParts.slice(1).join(" ") || "";
-    const avatar_url =
-      recipientData.profile_picture_url || recipientData.avatar;
 
     // Create a recipient object with properly typed fields
     return {
@@ -302,7 +393,7 @@ export function ChatArea({
       name: displayName,
       profile_picture_url:
         recipientData.profile_picture_url || recipientData.avatar,
-      avatar: recipientData.avatar || recipientData.profile_picture_url,
+      avatar: recipientData.profile_picture_url || recipientData.avatar, // Prioritas profile_picture_url
       status: onlineStatus,
       // Use firstName/lastName from our parsing
       first_name: firstName,
@@ -310,64 +401,88 @@ export function ChatArea({
     };
   }, [friendId, recipientName, recipientData, presence]);
 
-  // Debug recipient data for header
-  useEffect(() => {
-    ({
-      friendId,
-      recipientName,
-      recipientData: recipientData
-        ? {
-            id: recipientData.id,
-            name: recipientData.name,
-            profile_picture_url: recipientData.profile_picture_url,
-            avatar: recipientData.avatar,
-            avatar_url: (recipientData as any).avatar_url,
-            all_keys: Object.keys(recipientData),
-          }
-        : null,
-      finalRecipient: {
-        name: recipient.name,
-        profile_picture_url: recipient.profile_picture_url,
-        avatar: recipient.avatar,
-        hasProfilePic: !!recipient.profile_picture_url,
-        hasAvatar: !!recipient.avatar,
-      },
-    });
-  }, [friendId, recipientName, recipientData, recipient]);
+  // === PROFILE PICTURE FLOW IMPLEMENTATION ===
 
-  // Validate recipient avatar
+  // Handler for recipient avatar error
+  const handleRecipientAvatarError = useCallback(() => {
+    setRecipientAvatarError(true);
+  }, []);
+
+  // Reset avatar error when recipient changes
+  useEffect(() => {
+    setRecipientAvatarError(false);
+  }, [recipient.id, recipient.profile_picture_url, recipient.avatar]);
+
+  // 1. Header Profile Picture: recipient.profile_picture_url → recipient.avatar → fallback
   const validatedRecipientAvatar = useMemo(() => {
+    // Don't show avatar if there was an error
+    if (recipientAvatarError) return null;
+
+    // Priority 1: recipient.profile_picture_url
     const avatarUrl = recipient.profile_picture_url || recipient.avatar;
+
     if (!avatarUrl) return null;
 
-    // Check if it's a data URL
-    if (avatarUrl.startsWith("data:")) {
-      // Check size limit (most browsers support up to 2MB for data URLs)
-      const maxSize = 2 * 1024 * 1024; // 2MB
-      if (avatarUrl.length > maxSize) {
-        console.warn(
-          "[ChatArea] Avatar too large:",
-          avatarUrl.length,
-          "bytes, max:",
-          maxSize
-        );
-        return null; // Fallback to default icon
+    // Validate avatar URL including data URL validation
+    const validated = validateAvatarUrl(avatarUrl);
+
+    return validated;
+  }, [
+    recipient.profile_picture_url,
+    recipient.avatar,
+    recipientAvatarError,
+    recipient.id,
+    recipient.name,
+  ]);
+
+  // 2. Message Bubble Avatar Enhancement: Enhance messages with cached avatar data
+  const enhanceMessageWithAvatar = useCallback(
+    (message: any) => {
+      // Skip enhancement for current user messages
+      if (message.isCurrentUser) return message;
+
+      // Priority 1: message.sender.avatar_url (from API/WebSocket)
+      if (message.sender?.avatar_url) {
+        return message; // Already has avatar, no enhancement needed
       }
 
-      // Validate data URL format
-      const dataUrlRegex =
-        /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
-      if (!dataUrlRegex.test(avatarUrl)) {
-        console.warn(
-          "[ChatArea] Invalid data URL format:",
-          avatarUrl.substring(0, 100)
-        );
-        return null;
+      // Priority 2: Get from friends cache
+      if (message.sender_id) {
+        const cachedAvatar = getSenderAvatar(message.sender_id);
+        if (cachedAvatar) {
+          return {
+            ...message,
+            sender: {
+              ...message.sender,
+              id: message.sender_id,
+              avatar_url: cachedAvatar,
+              profile_picture_url: cachedAvatar,
+            },
+          };
+        }
       }
-    }
 
-    return avatarUrl;
-  }, [recipient.profile_picture_url, recipient.avatar]);
+      // Priority 3: Use recipient data if message is from the chat partner
+      if (message.sender_id === friendId) {
+        const recipientAvatar =
+          recipient.profile_picture_url || recipient.avatar;
+        if (recipientAvatar) {
+          return {
+            ...message,
+            sender: {
+              ...message.sender,
+              id: message.sender_id,
+              avatar_url: recipientAvatar,
+              profile_picture_url: recipientAvatar,
+            },
+          };
+        }
+      }
+
+      return message; // No avatar enhancement possible
+    },
+    [getSenderAvatar, friendId, recipient.profile_picture_url, recipient.avatar]
+  );
 
   // Simplified message ownership detection - backend now returns reliable sender_id
   const isCurrentUserMessage = useCallback(
@@ -389,6 +504,18 @@ export function ChatArea({
     },
     [currentUserId]
   );
+
+  // Re-calculate ownership when currentUserId becomes available after refresh
+  useEffect(() => {
+    if (currentUserId && sessionReady && localMessages.length > 0) {
+      setLocalMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          isCurrentUser: isCurrentUserMessage(msg),
+        }))
+      );
+    }
+  }, [currentUserId, sessionReady, localMessages.length, isCurrentUserMessage]);
 
   // Helper functions for file handling
   const getFileTypeFromUrl = (url: string): "image" | "file" => {
@@ -431,9 +558,6 @@ export function ChatArea({
       if (lastPart && lastPart.match(/^[a-f0-9-]{36}$/)) {
         fileId = lastPart;
       } else {
-        console.warn(
-          `[ChatArea] Could not extract file ID from URL: ${backendUrl}`
-        );
         return backendUrl; // Return original if we can't parse it
       }
     }
@@ -487,33 +611,31 @@ export function ChatArea({
     [blockedUsers]
   );
 
-  // Debug function to check current session and message data
-  const debugSessionAndMessages = useCallback(() => {
-    // Simple debug function - logs removed for cleaner production code
-    // Basic session validation
-    const sessionValid = !!(session && currentUserId && friendId);
-    const messageCount = localMessages.length;
-
-    if (!sessionValid) {
-      toast.error("Session validation failed", {
-        duration: 2000,
-        position: "top-center",
-      });
-      return;
-    }
-
-    toast.success(`Debug: ${messageCount} messages loaded`, {
-      duration: 2000,
-      position: "top-center",
-    });
-  }, [session, currentUserId, friendId, localMessages]);
-
   // Enhanced message grouping by date with better formatting
   const groupedMessages = useMemo(() => {
-    if (!localMessages || !Array.isArray(localMessages)) return [];
+    // Use filteredMessages when searching, otherwise use localMessages
+    const messagesToProcess = isSearching ? filteredMessages : localMessages;
 
-    // First filter out messages from blocked users
-    const filteredMessages = filterBlockedMessages(localMessages);
+    console.log("groupedMessages - isSearching:", isSearching);
+    console.log(
+      "groupedMessages - filteredMessages.length:",
+      filteredMessages.length
+    );
+    console.log(
+      "groupedMessages - localMessages.length:",
+      localMessages.length
+    );
+    console.log(
+      "groupedMessages - messagesToProcess.length:",
+      messagesToProcess.length
+    );
+
+    if (!messagesToProcess || !Array.isArray(messagesToProcess)) return [];
+
+    // First filter out messages from blocked users (if not already searching)
+    const messagesAfterBlocking = isSearching
+      ? messagesToProcess
+      : filterBlockedMessages(messagesToProcess);
 
     const messagesByDate: Record<
       string,
@@ -530,7 +652,7 @@ export function ChatArea({
     const yesterday = new Date(Date.now() - 86400000).toDateString();
 
     // Sort filtered messages by timestamp first
-    const sortedMessages = [...filteredMessages].sort((a, b) => {
+    const sortedMessages = [...messagesAfterBlocking].sort((a, b) => {
       // Use raw_timestamp for most accurate sorting, fallback to other timestamps
       const timeA = new Date(
         a.raw_timestamp || a.sent_at || a.created_at || a.timestamp || 0
@@ -552,20 +674,6 @@ export function ChatArea({
 
       // Check if date is invalid and provide fallback
       if (isNaN(messageDate.getTime())) {
-        console.warn("Invalid date for message:", {
-          messageId: message.id,
-          content: message.content?.substring(0, 20),
-          raw_timestamp: message.raw_timestamp,
-          sent_at: message.sent_at,
-          created_at: message.created_at,
-          timestamp: message.timestamp,
-          allTimestamps: {
-            raw_timestamp: message.raw_timestamp,
-            sent_at: message.sent_at,
-            created_at: message.created_at,
-            timestamp: message.timestamp,
-          },
-        });
         messageDate.setTime(new Date().getTime()); // Set to current time as fallback
       }
 
@@ -599,7 +707,7 @@ export function ChatArea({
     return Object.values(messagesByDate).sort(
       (a, b) => new Date(a.dateKey).getTime() - new Date(b.dateKey).getTime()
     );
-  }, [localMessages, filterBlockedMessages]);
+  }, [localMessages, filteredMessages, isSearching, filterBlockedMessages]);
 
   // Session storage management for message caching
   const saveToSessionStorage = useCallback(
@@ -645,7 +753,6 @@ export function ChatArea({
           JSON.stringify(optimizedMessages)
         );
       } catch (error) {
-        console.warn("[ChatArea] Failed to save to session storage:", error);
         // Handle QuotaExceededError by keeping only 50 latest messages
         if (
           error instanceof DOMException &&
@@ -670,134 +777,12 @@ export function ChatArea({
               conversationKey,
               JSON.stringify(reducedMessages)
             );
-          } catch (retryError) {
-            console.error(
-              "[ChatArea] Failed to save reduced messages:",
-              retryError
-            );
-          }
+          } catch (retryError) {}
         }
       }
     },
     [friendId]
   );
-
-  // Comprehensive function to debug and fix recipient_ids issues
-  const debugAndFixRecipientIds = useCallback(() => {
-    // Analyze current messages for recipient_id issues
-    const problematicMessages: any[] = [];
-    const fixedMessages: Message[] = [];
-
-    localMessages.forEach((msg) => {
-      const isProblematic =
-        !msg.recipient_id || msg.recipient_id === "undefined";
-
-      if (isProblematic) {
-        problematicMessages.push(msg);
-
-        // Attempt to fix the message
-        let fixedRecipientId = msg.recipient_id;
-
-        // Fix logic: infer recipient_id based on sender_id
-        if (!fixedRecipientId || fixedRecipientId === "undefined") {
-          if (msg.sender_id === String(currentUserId)) {
-            // Current user sent this message, recipient should be friend
-            fixedRecipientId = friendId;
-          } else if (msg.sender_id === String(friendId)) {
-            // Friend sent this message, recipient should be current user
-            fixedRecipientId = String(currentUserId);
-          } else if (msg.receiver_id && msg.receiver_id !== "undefined") {
-            // Use receiver_id as fallback
-            fixedRecipientId = msg.receiver_id;
-          }
-        }
-
-        // Create fixed message
-        const fixedMessage: Message = {
-          ...msg,
-          recipient_id: fixedRecipientId,
-          receiver_id: fixedRecipientId, // Also update receiver_id for consistency
-        };
-
-        // Recalculate ownership
-        fixedMessage.isCurrentUser = isCurrentUserMessage(fixedMessage);
-        fixedMessages.push(fixedMessage);
-      }
-    });
-
-    // Store fixes for potential application
-    if (fixedMessages.length > 0) {
-      (window as any).__messageFixData = {
-        fixedMessages,
-        originalProblematicMessages: problematicMessages,
-        timestamp: new Date().toISOString(),
-      };
-    }
-
-    return {
-      total: localMessages.length,
-      problematic: problematicMessages.length,
-      fixed: fixedMessages.length,
-      recommendations:
-        problematicMessages.length > 0
-          ? [
-              `Found ${problematicMessages.length} messages with missing/invalid recipient_id`,
-            ]
-          : [],
-    };
-  }, [
-    localMessages,
-    currentUserId,
-    friendId,
-    recipient.name,
-    isCurrentUserMessage,
-  ]);
-
-  // Function to apply recipient_id fixes stored by debugAndFixRecipientIds
-  const applyRecipientIdFixes = useCallback(() => {
-    const fixData = (window as any).__messageFixData;
-    if (!fixData || !fixData.fixedMessages) {
-      toast.error("No fixes available. Run debugAndFixRecipientIds first.", {
-        duration: 3000,
-        position: "top-center",
-      });
-      return;
-    }
-
-    // Create a map of message ID to fixed data
-    const fixMap = new Map();
-    fixData.fixedMessages.forEach((fixed: Message) => {
-      fixMap.set(fixed.id, fixed);
-    });
-
-    // Apply fixes to local messages
-    setLocalMessages((prev) => {
-      const updatedMessages = prev.map((msg) => {
-        const fix = fixMap.get(msg.id);
-        if (fix) {
-          return fix;
-        }
-        return msg;
-      });
-
-      // Save to session storage
-      saveToSessionStorage(updatedMessages);
-      return updatedMessages;
-    });
-
-    toast.success(
-      `Applied ${fixData.fixedMessages.length} recipient_id fixes!`,
-      {
-        duration: 3000,
-        position: "top-center",
-      }
-    );
-
-    // Clear fix data
-    delete (window as any).__messageFixData;
-  }, [saveToSessionStorage]);
-
-  // Remove auto-fix effects - backend is now consistent and reliable
 
   // Load messages from session storage
   const loadFromSessionStorage = useCallback((): Message[] => {
@@ -808,27 +793,19 @@ export function ChatArea({
       const stored = sessionStorage.getItem(conversationKey);
       if (stored) {
         const parsedMessages = JSON.parse(stored);
-        // Recalculate ownership for cached messages to ensure correct attribution
+        // PERBAIKAN: Jangan recalculate ownership jika currentUserId belum ready
+        if (!currentUserId) {
+          return parsedMessages; // Return as-is, akan di-update nanti
+        }
+        // Recalculate ownership untuk cached messages
         return parsedMessages.map((msg: any) => ({
           ...msg,
           isCurrentUser: isCurrentUserMessage(msg),
         }));
       }
-    } catch (error) {
-      console.warn("[ChatArea] Failed to load from session storage:", error);
-    }
+    } catch (error) {}
     return [];
-  }, [friendId, isCurrentUserMessage]);
-
-  // Simplified API response debug (development only)
-  const debugApiResponse = useCallback(
-    (response: any, source: string) => {
-      if (process.env.NODE_ENV === "development") {
-        // Debug logging removed for cleaner production code
-      }
-    },
-    [currentUserId, friendId]
-  );
+  }, [friendId, isCurrentUserMessage, currentUserId]); // Tambahkan currentUserId ke dependency
 
   // Enhanced message validation and processing - backend now returns consistent data
   const processApiMessages = useCallback(
@@ -876,6 +853,9 @@ export function ChatArea({
         // Simple ownership calculation - backend sender_id is now reliable
         processedMessage.isCurrentUser = isCurrentUserMessage(processedMessage);
 
+        // 3. Apply Avatar Enhancement Strategy
+        const enhancedMessage = enhanceMessageWithAvatar(processedMessage);
+
         // Handle attachment creation from attachment_url (similar to group-chat-area.tsx)
         if (message.attachment_url && !processedMessage.attachment) {
           const fileType = getFileTypeFromUrl(message.attachment_url);
@@ -901,19 +881,13 @@ export function ChatArea({
             processedMessage.attachment.url = transformedUrl;
 
             // Attachment URL transformed
-          } catch (error) {
-            console.error(
-              "[ChatArea] Error transforming attachment URL:",
-              error,
-              processedMessage.attachment.url
-            );
-          }
+          } catch (error) {}
         }
 
-        return processedMessage;
+        return enhancedMessage;
       });
     },
-    [isCurrentUserMessage, currentUserId, friendId]
+    [isCurrentUserMessage, currentUserId, friendId, enhanceMessageWithAvatar]
   );
 
   // Enhanced message loading with session storage integration (Vue.js style)
@@ -948,35 +922,57 @@ export function ChatArea({
       setLocalMessages([]);
     }
 
-    // 2. Load friend details
-    getFriendById(friendId)
-      .then((response) => {
-        if (response && isMountedRef.current) {
+    // 2. Load friend details from friends list (using /api/friends, not /api/friends/:id)
+    const loadFriendDetails = async () => {
+      try {
+        // First ensure we have the friends list loaded
+        const friendsList = await getFriends();
+
+        if (!isMountedRef.current) return;
+
+        // Find friend in the list
+        const friend = friendsList.find((f) => f.id === friendId);
+
+        if (friend) {
           setRecipientData({
-            ...response,
+            ...friend,
             display_name:
-              response.full_name || response.display_name || response.name,
+              friend.full_name || friend.display_name || friend.name,
+          });
+        } else {
+          // Friend not found in list, create minimal recipient data
+          setRecipientData({
+            id: friendId,
+            name: recipientName || friendId || "Contact",
+            email: "",
+            username: friendId,
+            display_name: recipientName || friendId || "Contact",
+            status: "offline",
           });
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (isMountedRef.current) {
           toast.error("Could not load contact information");
+          // Set minimal recipient data on error
+          setRecipientData({
+            id: friendId,
+            name: recipientName || friendId || "Contact",
+            email: "",
+            username: friendId,
+            display_name: recipientName || friendId || "Contact",
+            status: "offline",
+          });
         }
-      });
+      }
+    };
+
+    loadFriendDetails();
 
     // Always load fresh messages from API
     const loadFreshMessages = async () => {
       try {
-        if (process.env.NODE_ENV === "development") {
-          // Loading fresh messages for friend
-        }
-
         // Always get the latest messages when switching rooms
         const response = await getMessages(friendId);
-
-        // Add debug logging here
-        debugApiResponse(response, "getMessages");
 
         if (!isMountedRef.current) return; // Stop if component unmounted
 
@@ -1160,12 +1156,14 @@ export function ChatArea({
     };
   }, [
     friendId,
-    getFriendById,
+    getFriends,
     getMessages,
     isCurrentUserMessage,
     loadFromSessionStorage,
     processApiMessages,
     saveToSessionStorage,
+    setRecipientData,
+    recipientName,
   ]);
 
   // Enhanced WebSocket event listeners with better deduplication (Vue.js style)
@@ -1223,24 +1221,27 @@ export function ChatArea({
         timestamp: formatTimestamp(validRawTimestamp),
       };
 
+      // 4. Apply Avatar Enhancement to WebSocket messages
+      const finalEnhancedMessage = enhanceMessageWithAvatar(enhancedMessage);
+
       // Enhanced deduplication with multiple ID checks
       setLocalMessages((prev) => {
         const messageExists = prev.some((msg) => {
           // Check multiple possible ID matches
           const msgIds = [msg.id, msg.message_id].filter(Boolean);
           const newMsgIds = [
-            enhancedMessage.id,
-            enhancedMessage.message_id,
+            finalEnhancedMessage.id,
+            finalEnhancedMessage.message_id,
           ].filter(Boolean);
 
           // Check if any ID combination matches
           return (
             msgIds.some((id) => newMsgIds.includes(id)) ||
             // Content-based deduplication for edge cases
-            (msg.content === enhancedMessage.content &&
+            (msg.content === finalEnhancedMessage.content &&
               Math.abs(
                 new Date(msg.created_at).getTime() -
-                  new Date(enhancedMessage.created_at).getTime()
+                  new Date(finalEnhancedMessage.created_at).getTime()
               ) < 1000)
           );
         });
@@ -1249,7 +1250,7 @@ export function ChatArea({
           return prev;
         }
 
-        const updatedMessages = [...prev, enhancedMessage].sort((a, b) => {
+        const updatedMessages = [...prev, finalEnhancedMessage].sort((a, b) => {
           const timeA = new Date(
             a.raw_timestamp || a.sent_at || a.created_at || a.timestamp || 0
           ).getTime();
@@ -1343,24 +1344,42 @@ export function ChatArea({
     };
 
     // Register enhanced event listeners
-    eventBus.on("new_message", handleNewMessage);
-    eventBus.on("message-received", handleNewMessage); // Fixed event name
-    eventBus.on("typing-status-changed", handleTypingStatus);
-    eventBus.on("user_typing", handleTypingStatus); // Alternative event name
-    eventBus.on("message-read", handleMessageRead); // Fixed event name
+    const unsubscribeNewMessage = eventBus.on("new_message", handleNewMessage);
+    const unsubscribeMessageReceived = eventBus.on(
+      "message-received",
+      handleNewMessage
+    ); // Fixed event name
+    const unsubscribeTypingStatus = eventBus.on(
+      "typing-status-changed",
+      handleTypingStatus
+    );
+    const unsubscribeUserTyping = eventBus.on(
+      "user_typing",
+      handleTypingStatus
+    ); // Alternative event name
+    const unsubscribeMessageRead = eventBus.on(
+      "message-read",
+      handleMessageRead
+    ); // Fixed event name
     // Note: message_updated and message_deleted are not defined in EventTypes
     // These would need to be added to the EventTypes interface or handled differently
 
     // Cleanup
     return () => {
-      eventBus.off("new_message", handleNewMessage);
-      eventBus.off("message-received", handleNewMessage);
-      eventBus.off("typing-status-changed", handleTypingStatus);
-      eventBus.off("user_typing", handleTypingStatus);
-      eventBus.off("message-read", handleMessageRead);
+      unsubscribeNewMessage();
+      unsubscribeMessageReceived();
+      unsubscribeTypingStatus();
+      unsubscribeUserTyping();
+      unsubscribeMessageRead();
       // Removed message_updated and message_deleted event cleanup
     };
-  }, [friendId, currentUserId, isCurrentUserMessage, saveToSessionStorage]);
+  }, [
+    friendId,
+    currentUserId,
+    isCurrentUserMessage,
+    saveToSessionStorage,
+    enhanceMessageWithAvatar,
+  ]);
 
   // Setup WebSocket connection
   useEffect(() => {
@@ -1539,8 +1558,6 @@ export function ChatArea({
         return updatedMessages;
       });
     } catch (error) {
-      console.error("[ChatArea] Error sending message:", error);
-
       // Update optimistic message to show failure state
       setLocalMessages((prev) =>
         prev.map((msg) => {
@@ -1601,10 +1618,6 @@ export function ChatArea({
               messageId = message.id;
             }
           } catch (wsError) {
-            console.warn(
-              "[ChatArea] WebSocket retry failed, using API:",
-              wsError
-            );
             response = await sendMessage(friendId, message.content);
             if (
               response &&
@@ -1655,8 +1668,6 @@ export function ChatArea({
           position: "top-center",
         });
       } catch (error) {
-        console.error("[ChatArea] Retry failed:", error);
-
         // Update message to show retry failure
         setLocalMessages((prev) =>
           prev.map((msg) =>
@@ -1700,9 +1711,7 @@ export function ChatArea({
       try {
         // You would implement sendTypingStatus in your WebSocket context
         // sendTypingStatus(friendId, true);
-      } catch (error) {
-        console.warn("[ChatArea] Failed to send typing indicator:", error);
-      }
+      } catch (error) {}
     }
 
     // Clear typing indicator after 3 seconds
@@ -1710,9 +1719,7 @@ export function ChatArea({
       if (isConnected && friendId) {
         try {
           // sendTypingStatus(friendId, false);
-        } catch (error) {
-          console.warn("[ChatArea] Failed to clear typing indicator:", error);
-        }
+        } catch (error) {}
       }
     }, 3000);
   }, [isConnected, friendId]);
@@ -1733,6 +1740,20 @@ export function ChatArea({
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setInputMessage("");
+
+    // Force clear textarea directly via ref
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+    }
+
+    // Force clear input after a short delay to ensure it sticks
+    setTimeout(() => {
+      setInputMessage("");
+      if (textareaRef.current) {
+        textareaRef.current.value = "";
+        textareaRef.current.blur(); // Remove focus from textarea
+      }
+    }, 10);
   }, []);
 
   // Handle submit edit
@@ -1786,17 +1807,29 @@ export function ChatArea({
         return updatedMessages;
       });
 
-      // Clear edit state
+      // Clear edit state immediately and ensure input is cleared
       setEditingMessageId(null);
       setInputMessage("");
+
+      // Force clear textarea directly via ref
+      if (textareaRef.current) {
+        textareaRef.current.value = "";
+      }
+
+      // Force clear input after a short delay to ensure it sticks
+      setTimeout(() => {
+        setInputMessage("");
+        if (textareaRef.current) {
+          textareaRef.current.value = "";
+          textareaRef.current.blur(); // Remove focus from textarea
+        }
+      }, 10);
 
       toast.success("Message updated successfully", {
         duration: 3000,
         position: "top-center",
       });
     } catch (error) {
-      console.error("[ChatArea] Error editing message:", error);
-
       // Revert optimistic update
       setLocalMessages((prev) =>
         prev.map((msg) =>
@@ -1901,8 +1934,6 @@ export function ChatArea({
           position: "top-center",
         });
       } catch (error) {
-        console.error("[ChatArea] Error deleting message:", error);
-
         // Revert optimistic deletion
         setLocalMessages((prev) =>
           prev.map((msg) =>
@@ -1925,11 +1956,25 @@ export function ChatArea({
 
     if (query.trim()) {
       setIsSearching(true);
-      setFilteredMessages(
-        localMessages.filter((msg) =>
-          msg.content.toLowerCase().includes(query.toLowerCase())
-        )
-      );
+      const searchResults = localMessages.filter((msg) => {
+        // Search in message content (case insensitive)
+        const contentMatch =
+          msg.content &&
+          msg.content.toLowerCase().includes(query.toLowerCase());
+
+        // Optionally search in sender name too
+        const senderMatch =
+          msg.sender?.name &&
+          msg.sender.name.toLowerCase().includes(query.toLowerCase());
+
+        return contentMatch || senderMatch;
+      });
+
+      console.log("Search query:", query);
+      console.log("Total messages:", localMessages.length);
+      console.log("Search results:", searchResults.length);
+
+      setFilteredMessages(searchResults);
     } else {
       clearSearch();
     }
@@ -1975,6 +2020,23 @@ export function ChatArea({
     },
     [editingMessageId, handleSubmitEdit, handleSendMessage]
   );
+
+  // Check if session and data are ready
+  const isLoadingOrSessionNotReady = isLoading || !sessionReady;
+
+  // Show loading if session is not ready yet
+  if (isLoadingOrSessionNotReady) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-white">
+        <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          <p className="mt-2 text-sm text-gray-500">
+            {!sessionReady ? "Loading session..." : "Loading messages..."}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full bg-white">
@@ -2044,53 +2106,39 @@ export function ChatArea({
           {isLoadingMore && (
             <div className="text-center py-2">
               <span className="inline-flex items-center">
-                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500 mr-2"></div>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500 mr-2"></div>
                 Loading older messages...
               </span>
             </div>
           )}
 
-          {/* Loading state */}
-          {isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-50 bg-opacity-80 z-10">
-              <div className="flex flex-col items-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                <p className="mt-2 text-sm text-gray-500">
-                  Loading messages...
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* No messages placeholder */}
-          {!isLoading && localMessages.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div
-                className={
-                  isSearching
-                    ? "text-center text-gray-500"
-                    : "text-center text-gray-500"
-                }
-              >
-                {isSearching ? (
-                  <>
-                    <p className="mb-1">No matching messages found</p>
-                    <button
-                      onClick={clearSearch}
-                      className="text-blue-500 hover:underline"
-                    >
-                      Clear search
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="mb-1">No messages yet</p>
-                    <p className="text-sm">
-                      Start the conversation by sending a message
-                    </p>
-                  </>
-                )}
-              </div>
+          {/* Empty state */}
+          {!isLoadingMore && groupedMessages.length === 0 && (
+            <div
+              className={
+                isSearching
+                  ? "text-center text-gray-500"
+                  : "text-center text-gray-500"
+              }
+            >
+              {isSearching ? (
+                <>
+                  <p className="mb-1">No matching messages found</p>
+                  <button
+                    onClick={clearSearch}
+                    className="text-blue-500 hover:underline"
+                  >
+                    Clear search
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="mb-1">No messages yet</p>
+                  <p className="text-sm">
+                    Start the conversation by sending a message
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -2110,7 +2158,7 @@ export function ChatArea({
                 </div>
               </div>
 
-              {/* Messages for this date */}
+              {/* Message items */}
               {group.messages.map((message) => (
                 <ChatAreaItem
                   key={message.id}
@@ -2124,8 +2172,8 @@ export function ChatArea({
             </div>
           ))}
 
-          {/* End of messages indicator for auto-scroll */}
-          <div ref={messagesEndRef}></div>
+          {/* Scroll anchor */}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Message input area */}
@@ -2215,7 +2263,6 @@ export function ChatArea({
 
                     toast.success("File uploaded successfully!");
                   } catch (error) {
-                    console.error("File upload failed:", error);
                     toast.error(
                       error instanceof Error
                         ? error.message
@@ -2242,6 +2289,7 @@ export function ChatArea({
             </button>
 
             <textarea
+              ref={textareaRef}
               value={inputMessage}
               onChange={(e) => {
                 setInputMessage(e.target.value);
@@ -2310,7 +2358,7 @@ export function ChatArea({
             email: recipient.email || "",
             phone: "",
             status: recipient.status === "online" ? "online" : "offline",
-            avatar: recipient.avatar,
+            profile_picture_url: recipient.profile_picture_url || "",
             username: recipient.name,
           }}
           onClose={() => setShowInfo(false)}

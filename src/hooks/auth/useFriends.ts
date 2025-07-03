@@ -67,6 +67,10 @@ export const useFriendship = () => {
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<User[]>([]);
+  // Add avatar cache for efficient lookups
+  const [friendAvatarCache, setFriendAvatarCache] = useState<
+    Map<string, string>
+  >(new Map());
   const [searchPagination, setSearchPagination] = useState<PaginationMeta>({
     current_page: 1,
     total: 0,
@@ -83,6 +87,16 @@ export const useFriendship = () => {
   });
   const [selectedFriend, setSelectedFriend] = useState<Friend | null>(null);
   const [recipientData, setRecipientData] = useState<Friend | null>(null);
+
+  // Helper function to get avatar from cache
+  const getFriendAvatar = useCallback(
+    (friendId: string): string | null => {
+      const avatarUrl = friendAvatarCache.get(friendId) || null;
+
+      return avatarUrl;
+    },
+    [friendAvatarCache]
+  );
 
   // Base URL for API proxy
   const proxyUrl = "/api/proxy";
@@ -133,10 +147,6 @@ export const useFriendship = () => {
 
       // Handle different response formats
       if (!response.ok) {
-        console.error(
-          `[Friends API] Error response for ${endpoint}: ${response.status}`
-        );
-
         // For common endpoints that should never fail the UI, return fallback values
         if (endpoint.includes("friends") && !endpoint.includes("add")) {
           return endpoint.includes("requests") ? [] : [];
@@ -158,14 +168,13 @@ export const useFriendship = () => {
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const data = await response.json();
+
         return data.data || data;
       }
 
       const text = await response.text();
       return text;
     } catch (err) {
-      console.error(`[Friends API] Fetch error for ${endpoint}:`, err);
-
       // Handle specific error types
       if (err instanceof Error) {
         if (err.name === "AbortError" || err.name === "TimeoutError") {
@@ -248,13 +257,11 @@ export const useFriendship = () => {
 
           friendsList = array as Array<Partial<User>>;
         } else {
-          console.error("[Friends] Unexpected response format:", response);
           if (response && typeof response === "object") {
           }
           friendsList = [];
         }
       } else {
-        console.error("[Friends] Unexpected response format:", response);
         friendsList = [];
       }
 
@@ -315,11 +322,19 @@ export const useFriendship = () => {
 
       setFriends(processedFriends);
 
+      // Update avatar cache when friends are loaded
+      const avatarCacheMap = new Map<string, string>();
+      processedFriends.forEach((friend) => {
+        if (friend.id && friend.profile_picture_url) {
+          avatarCacheMap.set(friend.id, friend.profile_picture_url);
+        }
+      });
+
+      setFriendAvatarCache(avatarCacheMap);
+
       setLoading(false);
       return processedFriends;
     } catch (err: any) {
-      console.error("[Friends] Error fetching friends:", err);
-
       // Handle specific error types
       let errorMessage = "Failed to get friends";
       if (
@@ -413,17 +428,9 @@ export const useFriendship = () => {
 
           if (!foundArrays) {
             setFriendRequests([]);
-            console.error(
-              "[Friends Store] Could not find any array in friend requests response:",
-              response
-            );
           }
         } else {
           setFriendRequests([]);
-          console.error(
-            "[Friends Store] Unexpected friend requests format:",
-            response
-          );
         }
 
         // Log the final friendRequests state
@@ -436,8 +443,6 @@ export const useFriendship = () => {
         setLoading(false);
         return response;
       } catch (err: any) {
-        console.error("[Friends] Error fetching friend requests:", err.message);
-
         // Handle specific error types
         let errorMessage = "Failed to get friend requests";
         if (
@@ -577,9 +582,6 @@ export const useFriendship = () => {
           !searchResponse ||
           (!Array.isArray(searchResponse) && !searchResponse.data)
         ) {
-          console.error(
-            `[Friends Store] User '${username}' not found in search response`
-          );
           throw new Error("User not found");
         }
 
@@ -593,21 +595,12 @@ export const useFriendship = () => {
         try {
           await getFriendRequests();
         } catch (refreshErr) {
-          console.error(
-            "[Friends Store] Error refreshing requests:",
-            refreshErr
-          );
           // Don't throw here as the main operation was successful
         }
 
         setLoading(false);
         return response;
       } catch (err: any) {
-        console.error(
-          `[Friends Store] Error adding friend ${username}:`,
-          err.message
-        );
-
         // Handle specific error types
         let errorMessage = `Failed to add friend ${username}`;
         if (
@@ -652,22 +645,11 @@ export const useFriendship = () => {
         );
 
         if (!request) {
-          console.error(
-            "[Friends Store] Could not find friend request with ID:",
-            friendshipId
-          );
-          console.error(
-            "[Friends Store] Available friendship_ids:",
-            friendRequests.map((req) => ({
-              friendship_id: req.friendship_id,
-              id: req.id,
-              user: req.user?.username || req.user?.name,
-            }))
-          );
-          console.warn(
-            "[Friends Store] BYPASSING validation and trying API call anyway..."
-          );
-          // Don't throw error, continue with API call
+          friendRequests.map((req) => ({
+            friendship_id: req.friendship_id,
+            id: req.id,
+            user: req.user?.username || req.user?.name,
+          }));
         }
 
         // 2. Accept the friend request - use the provided ID directly
@@ -734,9 +716,6 @@ export const useFriendship = () => {
 
         // If all methods failed, throw the last error
         if (!acceptResponse) {
-          console.error(
-            "[Friends Store] All accept methods failed, throwing last error"
-          );
           throw (
             lastError || new Error("All friend request accept methods failed")
           );
@@ -789,17 +768,12 @@ export const useFriendship = () => {
         try {
           await Promise.all([getFriendRequests(), getFriends()]);
         } catch (refreshError) {
-          console.error(
-            "[Friends Store] Error refreshing lists after acceptance:",
-            refreshError
-          );
           // Don't throw here, as the acceptance was successful
         }
 
         setLoading(false);
         return acceptResponse;
       } catch (err: any) {
-        console.error("[Friends Store] Error accepting friend request:", err);
         setError(`Failed to accept friend request: ${err.message}`);
         setLoading(false);
         throw err;
@@ -828,18 +802,11 @@ export const useFriendship = () => {
         setFriendRequests(updatedRequests); // Fetch from API to ensure data consistency (like Vue implementation)
         try {
           await getFriendRequests();
-        } catch (refreshErr) {
-          console.error(
-            "[Friends Store] Error refreshing requests after rejection:",
-            refreshErr
-          );
-          // Don't throw here as the main operation was successful
-        }
+        } catch (refreshErr) {}
 
         setLoading(false);
         return response;
       } catch (err: any) {
-        console.error("[Friends Store] Error rejecting request:", err);
         setError(`Failed to reject friend request: ${err.message}`);
         setLoading(false);
         throw err;
@@ -895,10 +862,6 @@ export const useFriendship = () => {
       setLoading(false);
       return blockedList;
     } catch (err: any) {
-      console.error(
-        "[Friends Store] Error fetching blocked users:",
-        err.message
-      );
       setError(`Failed to fetch blocked users: ${err.message}`);
       setLoading(false);
       throw err;
@@ -925,7 +888,6 @@ export const useFriendship = () => {
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error("[Friends Store] Error blocking user:", err.message);
       setError(`Failed to block user: ${err.message}`);
       setLoading(false);
       throw err;
@@ -950,10 +912,6 @@ export const useFriendship = () => {
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error(
-        "[Friends Store] Error blocking user by username:",
-        err.message
-      );
       setError(`Failed to block user by username: ${err.message}`);
       setLoading(false);
       throw err;
@@ -980,7 +938,6 @@ export const useFriendship = () => {
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error("[Friends Store] Error unblocking user:", err.message);
       setError(`Failed to unblock user: ${err.message}`);
       setLoading(false);
       throw err;
@@ -1005,10 +962,6 @@ export const useFriendship = () => {
       setLoading(false);
       return response;
     } catch (err: any) {
-      console.error(
-        "[Friends Store] Error unblocking user by username:",
-        err.message
-      );
       setError(`Failed to unblock user by username: ${err.message}`);
       setLoading(false);
       throw err;
@@ -1036,7 +989,6 @@ export const useFriendship = () => {
       setLoading(false);
       return results;
     } catch (err: any) {
-      console.error(`[Friends Store] Error searching friends:`, err);
       setError(`Failed to search friends: ${err.message}`);
       setLoading(false);
       throw err;
@@ -1048,7 +1000,6 @@ export const useFriendship = () => {
    */
   const getFriendById = async (friendId: string) => {
     if (!friendId) {
-      console.error("[FriendsHook] Invalid friendId provided:", friendId);
       return null;
     }
 
@@ -1067,32 +1018,7 @@ export const useFriendship = () => {
       try {
         const response = await apiCall(`friends/${friendId}`, {
           method: "GET",
-        });
-
-        // Add comprehensive logging for friend by ID response
-        ({
-          responseType: typeof response,
-          responseKeys:
-            response && typeof response === "object"
-              ? Object.keys(response)
-              : "not an object",
-          hasDataField: !!response?.data,
-          dataType: response?.data ? typeof response.data : "no data",
-          dataKeys:
-            response?.data && typeof response.data === "object"
-              ? Object.keys(response.data)
-              : "no data keys",
-          rawData: response?.data || response,
-          profilePictureFields: {
-            "response.data.profile_picture_url":
-              response?.data?.profile_picture_url,
-            "response.data.avatar_url": response?.data?.avatar_url,
-            "response.data.avatar": response?.data?.avatar,
-            "response.profile_picture_url": response?.profile_picture_url,
-            "response.avatar_url": response?.avatar_url,
-            "response.avatar": response?.avatar,
-          },
-        });
+        }); // Add comprehensive logging for friend by ID response
 
         response?.data ? Object.keys(response.data) : "No data field";
         ({
@@ -1156,19 +1082,6 @@ export const useFriendship = () => {
               "Unknown",
           };
 
-          ({
-            original_profile_picture_url: friendData.profile_picture_url,
-            original_avatar_url: friendData.avatar_url,
-            original_avatar: friendData.avatar,
-            final_avatar: formattedFriend.avatar,
-            final_profile_picture_url: formattedFriend.profile_picture_url,
-            avatar_is_base64:
-              formattedFriend.avatar?.startsWith?.("data:") || false,
-            profile_picture_url_is_base64:
-              formattedFriend.profile_picture_url?.startsWith?.("data:") ||
-              false,
-          });
-
           // Set recipient data
           setRecipientData(formattedFriend);
 
@@ -1182,13 +1095,22 @@ export const useFriendship = () => {
             return prev;
           });
 
+          // Update avatar cache with the new friend's avatar
+          if (formattedFriend.id && formattedFriend.profile_picture_url) {
+            setFriendAvatarCache((prev) => {
+              const newCache = new Map(prev);
+              newCache.set(
+                formattedFriend.id,
+                formattedFriend.profile_picture_url!
+              );
+              return newCache;
+            });
+          }
+
           setLoading(false);
           return formattedFriend;
         }
-      } catch (apiError) {
-        console.error("[FriendsHook] API error fetching friend:", apiError);
-        // Fall through to try alternate methods
-      }
+      } catch (apiError) {}
 
       // If API fails, try to construct a minimal friend object from the ID
       const minimalFriend: Friend = {
@@ -1209,7 +1131,6 @@ export const useFriendship = () => {
       setLoading(false);
       return minimalFriend;
     } catch (err: any) {
-      console.error("[FriendsHook] Error fetching friend by ID:", err);
       setError(`Failed to get friend by ID: ${err.message}`);
       setLoading(false);
 
@@ -1250,7 +1171,6 @@ export const useFriendship = () => {
         setSelectedFriend(friendData);
         return friendData;
       } catch (err: any) {
-        console.error("[useFriendship] Error fetching friend details:", err);
         return null;
       }
     },
@@ -1270,9 +1190,6 @@ export const useFriendship = () => {
     if (loading) {
       // Set a timeout to prevent getting stuck in loading state
       const timeoutId = setTimeout(() => {
-        console.warn(
-          "[Friends Store] Loading timeout reached, resetting loading state"
-        );
         setLoading(false);
         if (!friends.length && !friendRequests.length) {
           setError("Request took too long. Please refresh and try again.");
@@ -1295,6 +1212,7 @@ export const useFriendship = () => {
     setRecipientData,
     getFriends,
     getFriendRequests,
+    getFriendAvatar, // Add the new function to exports
     searchUsers,
     addFriendByUsername,
     acceptFriendRequest,

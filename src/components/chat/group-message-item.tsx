@@ -174,8 +174,6 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
       await downloadFile(fileId);
       toast.success(`Downloading ${fileName}...`);
     } catch (error) {
-      console.error("Download failed:", error);
-
       // Check if URL might be expired and try to refresh
       const isExpiredUrl =
         fileUrl.includes("X-Amz-Expires") || fileUrl.includes("X-Amz-Date");
@@ -198,9 +196,7 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
               }
             }
           }
-        } catch (refreshError) {
-          console.error("Failed to refresh download URL:", refreshError);
-        }
+        } catch (refreshError) {}
       }
 
       toast.error("Failed to download file. URL mungkin sudah kadaluarsa.");
@@ -396,8 +392,11 @@ const GroupMessageItem: React.FC<MessageItemProps> = ({
             <span className="text-xs opacity-75">
               {formatMessageTimestamp({
                 timestamp: message.timestamp,
+                raw_timestamp: (message as any).raw_timestamp,
+                created_at: (message as any).created_at,
+                sent_at: (message as any).sent_at,
                 format: "time",
-              })}
+              }) || "No Time"}
             </span>
 
             {/* Ikon status yang ditingkatkan untuk pesan dari pengguna saat ini */}
@@ -471,7 +470,6 @@ const ImageWithRetry: React.FC<ImageWithRetryProps> = ({
         setHasError(true);
       }
     } catch (error) {
-      console.error("Failed to refresh image URL:", error);
       setHasError(true);
     } finally {
       setIsLoading(false);
@@ -479,8 +477,6 @@ const ImageWithRetry: React.FC<ImageWithRetryProps> = ({
   };
 
   const handleError = () => {
-    console.error("Image failed to load:", imageSrc);
-
     // Check if URL might be expired (contains AWS signature parameters)
     const isExpiredUrl =
       imageSrc.includes("X-Amz-Expires") || imageSrc.includes("X-Amz-Date");

@@ -154,9 +154,7 @@ export function useWebSocket(
           "websocket_message_queue",
           JSON.stringify(messageQueueRef.current)
         );
-      } catch (error) {
-        console.warn("[WebSocket] Failed to persist message queue:", error);
-      }
+      } catch (error) {}
     },
     [generateMessageId]
   );
@@ -179,11 +177,6 @@ export function useWebSocket(
         socketMessagesRef.current!.send(JSON.stringify(queueItem.message));
         processedIds.push(queueItem.id);
       } catch (error) {
-        console.error(
-          `[WebSocket Messages] Failed to send queued message ${queueItem.id}:`,
-          error
-        );
-
         // Increment retry count
         queueItem.retryCount++;
 
@@ -191,9 +184,6 @@ export function useWebSocket(
         if (queueItem.retryCount < queueItem.maxRetries) {
           failedMessages.push(queueItem);
         } else {
-          console.warn(
-            `[WebSocket Messages] Dropping message ${queueItem.id} after ${queueItem.maxRetries} retries`
-          );
         }
       }
     });
@@ -207,12 +197,7 @@ export function useWebSocket(
         "websocket_message_queue",
         JSON.stringify(messageQueueRef.current)
       );
-    } catch (error) {
-      console.warn(
-        "[WebSocket] Failed to persist updated message queue:",
-        error
-      );
-    }
+    } catch (error) {}
   }, [isMessagesConnected]);
 
   // Restore message queue from localStorage on component mount
@@ -229,7 +214,6 @@ export function useWebSocket(
         );
       }
     } catch (error) {
-      console.warn("[WebSocket] Failed to restore message queue:", error);
       messageQueueRef.current = [];
     }
   }, []);
@@ -247,16 +231,12 @@ export function useWebSocket(
       throw new Error("No authentication token available");
     }
 
-    // Use the Next.js API route for WebSocket connections
-    const protocol =
-      typeof window !== "undefined" && window.location.protocol === "https:"
-        ? "wss:"
-        : "ws:";
-    const host =
-      typeof window !== "undefined" ? window.location.host : "localhost:3000";
+    // Connect directly to backend WebSocket endpoint on port 8082
+    const protocol = "ws:"; // Always use ws for backend connection
+    const backendHost = "localhost:8082"; // Direct backend connection
 
-    // Use the dedicated WebSocket API route
-    return `${protocol}//${host}/api/messages/ws?token=${session.access_token}`;
+    // Use the direct backend WebSocket endpoint
+    return `${protocol}//${backendHost}/messages/ws?token=${session.access_token}`;
   }, [session?.access_token]);
 
   // Get the appropriate WebSocket URL for presence
@@ -267,7 +247,6 @@ export function useWebSocket(
 
     // For now, disable presence WebSocket since we don't have a dedicated route
     // Return a placeholder that will fail gracefully
-    console.warn("[WebSocket] Presence WebSocket not implemented yet");
     throw new Error("Presence WebSocket not available");
   }, [session?.access_token]);
 
@@ -280,14 +259,12 @@ export function useWebSocket(
 
       // Check for authentication token
       if (!session?.access_token) {
-        console.error("[WebSocket] No authentication token available");
         return false;
       }
 
       // In a real implementation, you might want to verify the token with the server
       return true;
     } catch (error) {
-      console.error("[WebSocket] Token validation error:", error);
       return false;
     } finally {
       authCheckInProgressRef.current = false;
@@ -296,8 +273,6 @@ export function useWebSocket(
 
   // Handle authentication failure
   const handleAuthFailure = useCallback(() => {
-    console.warn("[WebSocket] Authentication failure detected");
-
     // Clean up WebSocket resources
     disconnect();
     clear();
@@ -316,7 +291,6 @@ export function useWebSocket(
     // Validate authentication before connecting
     const isTokenValid = await validateToken();
     if (!isTokenValid) {
-      console.warn("[WebSocket] Invalid token, cannot connect");
       return;
     }
 
@@ -350,7 +324,6 @@ export function useWebSocket(
           socketMessagesRef.current &&
           socketMessagesRef.current.readyState !== WebSocket.OPEN
         ) {
-          console.warn("[WebSocket Messages] Connection timeout");
           socketMessagesRef.current.close(4000, "Connection timeout");
           // Don't set error for timeout - just log and let fallback handle it
 
@@ -369,9 +342,7 @@ export function useWebSocket(
 
       socketMessagesRef.current.onerror = (event) => {
         clearTimeout(timeoutId);
-        console.warn(
-          "[WebSocket Messages] Connection failed - WebSocket not supported in Next.js App Router"
-        );
+
         // Don't set error here to prevent persistent toast notifications
         // The WebSocketProvider will handle fallback to EventBus
         setIsMessagesConnecting(false);
@@ -394,7 +365,6 @@ export function useWebSocket(
         updateConnectedState();
       };
     } catch (err: any) {
-      console.warn("[WebSocket Messages] Connection error:", err);
       // Don't set error to prevent persistent toast notifications
       // The app will gracefully fall back to HTTP-based EventBus
 
@@ -429,7 +399,6 @@ export function useWebSocket(
           socketPresenceRef.current &&
           socketPresenceRef.current.readyState !== WebSocket.OPEN
         ) {
-          console.warn("[WebSocket Presence] Connection timeout");
           socketPresenceRef.current.close(4000, "Connection timeout");
           setError("Presence WebSocket connection timeout");
           setIsPresenceConnecting(false);
@@ -447,8 +416,6 @@ export function useWebSocket(
       socketPresenceRef.current.onerror = handlePresenceError;
       socketPresenceRef.current.onclose = handlePresenceClose;
     } catch (err: any) {
-      console.warn("[WebSocket Presence] Connection error:", err);
-
       // For now, just set presence as unavailable but don't fail the entire connection
       setIsPresenceConnecting(false);
       setIsPresenceConnected(false);
@@ -519,12 +486,7 @@ export function useWebSocket(
 
     try {
       socketMessagesRef.current.send(JSON.stringify(unreadSubscription));
-    } catch (error) {
-      console.error(
-        "[WebSocket Messages] Error subscribing to unread counts:",
-        error
-      );
-    }
+    } catch (error) {}
   }, [isMessagesConnected]);
 
   // Subscribe to a specific channel
@@ -550,12 +512,7 @@ export function useWebSocket(
             channel,
           ];
         }
-      } catch (error) {
-        console.error(
-          `[WebSocket Presence] Error subscribing to channel ${channel}:`,
-          error
-        );
-      }
+      } catch (error) {}
     },
     [isPresenceConnected]
   );
@@ -584,10 +541,6 @@ export function useWebSocket(
           break;
 
         case WebSocketMessageType.ERROR:
-          console.error(
-            "[WebSocket Messages] Error from server:",
-            message.data
-          );
           setError(
             `Error from server: ${message.data.message || "Unknown error"}`
           );
@@ -597,9 +550,7 @@ export function useWebSocket(
 
         default:
       }
-    } catch (error) {
-      console.error("[WebSocket Messages] Failed to parse message:", error);
-    }
+    } catch (error) {}
   }, []);
 
   // Handle incoming messages from Presence WebSocket
@@ -614,10 +565,6 @@ export function useWebSocket(
           break;
 
         case WebSocketMessageType.ERROR:
-          console.error(
-            "[WebSocket Presence] Error from server:",
-            message.data
-          );
           setError(
             `Error from server: ${message.data.message || "Unknown error"}`
           );
@@ -627,9 +574,7 @@ export function useWebSocket(
 
         default:
       }
-    } catch (error) {
-      console.error("[WebSocket Presence] Failed to parse message:", error);
-    }
+    } catch (error) {}
   }, []);
 
   // Handle unread message count updates from WebSocket
@@ -715,14 +660,6 @@ export function useWebSocket(
   // Handle errors for Messages WebSocket
   const handleMessagesError = useCallback(
     (event: Event) => {
-      console.error("[WebSocket Messages] Error event:", {
-        type: event.type,
-        target: event.target,
-        timeStamp: event.timeStamp,
-        // Safely access error details without causing additional errors
-        readyState: socketMessagesRef.current?.readyState,
-        url: socketMessagesRef.current?.url,
-      });
       setError("WebSocket Messages connection error");
       setIsMessagesConnecting(false);
       updateConnectedState();
@@ -733,14 +670,6 @@ export function useWebSocket(
   // Handle errors for Presence WebSocket
   const handlePresenceError = useCallback(
     (event: Event) => {
-      console.error("[WebSocket Presence] Error event:", {
-        type: event.type,
-        target: event.target,
-        timeStamp: event.timeStamp,
-        // Safely access error details without causing additional errors
-        readyState: socketPresenceRef.current?.readyState,
-        url: socketPresenceRef.current?.url,
-      });
       setError("WebSocket Presence connection error");
       setIsPresenceConnecting(false);
       updateConnectedState();
@@ -860,7 +789,6 @@ export function useWebSocket(
       try {
         socketMessagesRef.current.send(JSON.stringify(message));
       } catch (error) {
-        console.error("[WebSocket Messages] Failed to send message:", error);
         // Add to queue to retry later
         addToMessageQueue(message);
       }
@@ -896,9 +824,6 @@ export function useWebSocket(
   const sendPrivateMessage = useCallback(
     (receiverId: string, content: string) => {
       if (!session?.user?.id || !isMessagesConnected) {
-        console.error(
-          "[WebSocket Messages] Cannot send private message: Not connected or no user ID"
-        );
         return false;
       }
 
@@ -913,10 +838,6 @@ export function useWebSocket(
 
         return true;
       } catch (err: any) {
-        console.error(
-          "[WebSocket Messages] Error sending private message:",
-          err
-        );
         setError(`Failed to send message: ${err.message}`);
         return false;
       }
@@ -928,9 +849,6 @@ export function useWebSocket(
   const sendGroupMessage = useCallback(
     (groupId: string, content: string) => {
       if (!session?.user?.id || !isMessagesConnected) {
-        console.error(
-          "[WebSocket Messages] Cannot send group message: Not connected or no user ID"
-        );
         return false;
       }
 
@@ -945,7 +863,6 @@ export function useWebSocket(
 
         return true;
       } catch (err: any) {
-        console.error("[WebSocket Messages] Error sending group message:", err);
         setError(`Failed to send group message: ${err.message}`);
         return false;
       }
@@ -1003,26 +920,17 @@ export function useWebSocket(
     // Clear persisted queue
     try {
       localStorage.removeItem("websocket_message_queue");
-    } catch (error) {
-      console.warn(
-        "[WebSocket] Failed to clear persisted message queue:",
-        error
-      );
-    }
+    } catch (error) {}
   }, []);
 
   // Subscribe to private messages from a specific user
   const subscribeToPrivateMessages = useCallback(
     (userId: string) => {
       if (!isMessagesConnected || !socketMessagesRef.current) {
-        console.warn("[WebSocket Messages] Cannot subscribe: Not connected");
         return;
       }
 
       if (!userId) {
-        console.error(
-          "[WebSocket Messages] Cannot subscribe: No user ID provided"
-        );
         return;
       }
 
@@ -1041,12 +949,7 @@ export function useWebSocket(
             `private:${userId}`,
           ];
         }
-      } catch (error) {
-        console.error(
-          `[WebSocket Messages] Error subscribing to private messages from ${userId}:`,
-          error
-        );
-      }
+      } catch (error) {}
     },
     [isMessagesConnected]
   );
@@ -1055,14 +958,10 @@ export function useWebSocket(
   const unsubscribeFromPrivateMessages = useCallback(
     (userId: string) => {
       if (!socketMessagesRef.current || !isMessagesConnected) {
-        console.warn("[WebSocket Messages] Cannot unsubscribe: Not connected");
         return;
       }
 
       if (!userId) {
-        console.error(
-          "[WebSocket Messages] Cannot unsubscribe: No user ID provided"
-        );
         return;
       }
 
@@ -1078,12 +977,7 @@ export function useWebSocket(
         activeSubscriptionsRef.current = activeSubscriptionsRef.current.filter(
           (channel) => channel !== `private:${userId}`
         );
-      } catch (error) {
-        console.error(
-          `[WebSocket Messages] Error unsubscribing from private messages for ${userId}:`,
-          error
-        );
-      }
+      } catch (error) {}
     },
     [isMessagesConnected]
   );

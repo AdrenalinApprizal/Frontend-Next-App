@@ -37,7 +37,6 @@ export default function FriendPage() {
 
         setFriendData(friend);
       } catch (error) {
-        console.error("[FriendPage] Error fetching friend:", error);
         // Set fallback data with provided name if available
         setFriendData({
           id: friendId,

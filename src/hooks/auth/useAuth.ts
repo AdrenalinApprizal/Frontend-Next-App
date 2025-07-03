@@ -160,7 +160,6 @@ export const useAuth = () => {
         return { success: true, profile_picture_url: "example_url" };
       }
     } catch (error: any) {
-      console.error("[DEBUG] Avatar update error:", error);
       if (
         error.name === "TypeError" &&
         error.message.includes("Failed to fetch")
@@ -196,7 +195,6 @@ export const useAuth = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("[DEBUG] Profile update failed:", errorText);
         throw new Error(
           `Profile update failed: ${response.status} ${errorText}`
         );
@@ -206,7 +204,6 @@ export const useAuth = () => {
 
       return result;
     } catch (error: any) {
-      console.error("[DEBUG] Profile update error:", error);
       throw error;
     }
   }
@@ -235,7 +232,6 @@ export const useAuth = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("[DEBUG] Password change failed:", errorText);
         throw new Error(
           `Password change failed: ${response.status} ${errorText}`
         );
@@ -245,7 +241,6 @@ export const useAuth = () => {
 
       return result;
     } catch (error: any) {
-      console.error("[DEBUG] Password change error:", error);
       throw error;
     }
   }
@@ -284,7 +279,6 @@ export const useAuth = () => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("[DEBUG] Get user info failed:", errorText);
         throw new Error(
           `Get user info failed: ${response.status} ${errorText}`
         );
@@ -294,7 +288,6 @@ export const useAuth = () => {
 
       return result;
     } catch (error: any) {
-      console.error("[DEBUG] Get user info error:", error);
       throw error;
     }
   }

@@ -15,6 +15,28 @@ import { OptimizedAvatar } from "../optimized-avatar";
 import { useFiles } from "@/hooks/files/useFiles";
 import { toast } from "react-hot-toast";
 
+// Helper function to validate avatar URLs including data URLs
+const validateAvatarUrl = (avatarUrl: string): string | null => {
+  if (!avatarUrl) return null;
+
+  // Validate data URL (base64)
+  if (avatarUrl.startsWith("data:")) {
+    const maxSize = 2 * 1024 * 1024; // 2MB limit
+    if (avatarUrl.length > maxSize) {
+      return null;
+    }
+
+    // Validate data URL format
+    const dataUrlRegex =
+      /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
+    if (!dataUrlRegex.test(avatarUrl)) {
+      return null;
+    }
+  }
+
+  return avatarUrl;
+};
+
 // ImageWithRetry component to handle expired URLs
 interface ImageWithRetryProps {
   src: string;
@@ -61,7 +83,6 @@ const ImageWithRetry: React.FC<ImageWithRetryProps> = ({
         setHasError(true);
       }
     } catch (error) {
-      console.error("Failed to refresh image URL:", error);
       setHasError(true);
     } finally {
       setIsLoading(false);
@@ -69,8 +90,6 @@ const ImageWithRetry: React.FC<ImageWithRetryProps> = ({
   };
 
   const handleError = () => {
-    console.error("Image failed to load:", imageSrc);
-
     // Check if URL might be expired (contains AWS signature parameters)
     const isExpiredUrl =
       imageSrc.includes("X-Amz-Expires") || imageSrc.includes("X-Amz-Date");
@@ -263,8 +282,6 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
       await downloadFile(fileId);
       toast.success(`Downloading ${fileName}...`);
     } catch (error) {
-      console.error("Download failed:", error);
-
       // Check if URL might be expired and try to refresh
       const isExpiredUrl =
         fileUrl.includes("X-Amz-Expires") || fileUrl.includes("X-Amz-Date");
@@ -287,9 +304,7 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
               }
             }
           }
-        } catch (refreshError) {
-          console.error("Failed to refresh download URL:", refreshError);
-        }
+        } catch (refreshError) {}
       }
 
       toast.error("Failed to download file. URL mungkin sudah kadaluarsa.");
@@ -303,49 +318,61 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
     setShowActions(!showActions);
   };
 
-  // Get sender info
+  // === BUBBLE CHAT AVATAR PRIORITY SYSTEM ===
+  // Get sender info with fallback strategy
   const senderName = message.isCurrentUser
     ? "You"
     : message.sender?.name || recipient.name || "Unknown";
 
-  const senderAvatar = message.isCurrentUser
-    ? null
-    : message.sender?.avatar_url ||
-      recipient.profile_picture_url ||
-      recipient.avatar;
-
-  // Validate and potentially fix avatar URL
-  const validatedAvatar = useMemo(() => {
-    if (!senderAvatar) return null;
-
-    // Check if it's a data URL
-    if (senderAvatar.startsWith("data:")) {
-      // Check size limit (most browsers support up to 2MB for data URLs)
-      const maxSize = 2 * 1024 * 1024; // 2MB
-      if (senderAvatar.length > maxSize) {
-        console.warn(
-          "[ChatAreaItem] Avatar too large:",
-          senderAvatar.length,
-          "bytes, max:",
-          maxSize
-        );
-        return null; // Fallback to default icon
-      }
-
-      // Validate data URL format
-      const dataUrlRegex =
-        /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
-      if (!dataUrlRegex.test(senderAvatar)) {
-        console.warn(
-          "[ChatAreaItem] Invalid data URL format:",
-          senderAvatar.substring(0, 100)
-        );
-        return null;
-      }
+  // Avatar Priority System for Bubble Chat:
+  // 1. message.sender.avatar_url (from enhanced message data)
+  // 2. message.sender.profile_picture_url (alternative field)
+  // 3. recipient.profile_picture_url (if message is from chat partner)
+  // 4. recipient.avatar (final fallback)
+  // 5. null (will show FaUser icon)
+  const senderAvatar = useMemo(() => {
+    if (message.isCurrentUser) {
+      return null; // Current user messages don't show avatar
     }
 
-    return senderAvatar;
-  }, [senderAvatar]);
+    // Priority 1: message.sender.avatar_url (from cache enhancement)
+    if (message.sender?.avatar_url) {
+      return message.sender.avatar_url;
+    }
+
+    // Priority 2: message.sender.profile_picture_url (alternative field)
+    const senderExtended = message.sender as any;
+    if (senderExtended?.profile_picture_url) {
+      return senderExtended.profile_picture_url;
+    }
+
+    // Priority 3: recipient.profile_picture_url (for chat partner messages)
+    if (recipient.profile_picture_url) {
+      return recipient.profile_picture_url;
+    }
+
+    // Priority 4: recipient.avatar (final fallback)
+    if (recipient.avatar) {
+      return recipient.avatar;
+    }
+
+    return null; // No avatar available
+  }, [
+    message.isCurrentUser,
+    message.sender?.avatar_url,
+    message.sender,
+    recipient.profile_picture_url,
+    recipient.avatar,
+    message.id,
+    message.sender_id,
+  ]);
+
+  // Validate avatar URL with data URL validation
+  const validatedAvatar = useMemo(() => {
+    const validated = senderAvatar ? validateAvatarUrl(senderAvatar) : null;
+
+    return validated;
+  }, [senderAvatar, message.id]);
 
   return (
     <div
@@ -369,10 +396,10 @@ const ChatAreaItem: React.FC<ChatAreaItemProps> = ({
       {/* Message bubble wrapper */}
       <div
         className={`rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-3 relative group shadow-sm ${
-          message.isCurrentUser
-            ? message.isDeleted
-              ? "bg-gray-200 text-gray-500 italic"
-              : message.failed
+          message.isDeleted
+            ? "bg-gray-200 text-gray-500 italic"
+            : message.isCurrentUser
+            ? message.failed
               ? "bg-red-100 text-red-800 border border-red-300 cursor-pointer hover:bg-red-200"
               : "bg-blue-500 text-white"
             : "bg-white border border-gray-200 text-gray-800 hover:shadow-md"

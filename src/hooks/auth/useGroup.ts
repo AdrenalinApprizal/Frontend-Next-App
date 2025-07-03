@@ -15,10 +15,7 @@ function measurePerformance<T extends any[], R>(
       return result;
     } catch (error) {
       const elapsed = performance.now() - start;
-      console.error(
-        `[Groups Store] Failed ${label} after ${elapsed.toFixed(2)}ms:`,
-        error
-      );
+
       throw error;
     }
   };
@@ -260,10 +257,6 @@ export const useGroup = () => {
 
       // Handle different response formats
       if (!response.ok) {
-        console.error(
-          `[Groups Store] Error response for ${endpoint}: ${response.status}`
-        );
-
         // For user-facing endpoints that should be resilient, return fallbacks
         if (
           endpoint.includes("groups") &&
@@ -303,12 +296,6 @@ export const useGroup = () => {
       return text;
     } catch (err) {
       const endTime = performance.now();
-      console.error(
-        `[Groups Store] API call failed after ${(endTime - startTime).toFixed(
-          2
-        )}ms:`,
-        err
-      );
 
       // For critical endpoints, provide fallback values to avoid UI failures
       if (
@@ -377,12 +364,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to get groups after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to get groups: ${err.message}`);
         setLoading(false);
@@ -440,7 +421,6 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to create group: ${err.message}`);
-        console.error("Error creating group:", err);
         setLoading(false);
         throw err;
       }
@@ -462,7 +442,7 @@ export const useGroup = () => {
         return response.data || response;
       } catch (err: any) {
         setError(`Failed to get group details: ${err.message}`);
-        console.error(`Error fetching group ${groupId} details:`, err);
+
         setLoading(false);
         throw err;
       }
@@ -512,7 +492,7 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to update group: ${err.message}`);
-        console.error(`Error updating group ${groupId}:`, err);
+
         setLoading(false);
         throw err;
       }
@@ -541,10 +521,6 @@ export const useGroup = () => {
         let membersList = response.members || response.data || [];
 
         if (!Array.isArray(membersList)) {
-          console.warn(
-            `[Groups Store] Unexpected members response format:`,
-            response
-          );
           membersList = [];
 
           // Try to find members array in the response object
@@ -612,12 +588,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to get group members after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to get group members: ${err.message}`);
         setLoading(false);
@@ -680,7 +650,6 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to add group members: ${err.message}`);
-        console.error(`Error adding members to group ${groupId}:`, err);
         setLoading(false);
         throw err;
       }
@@ -711,10 +680,7 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to remove group member: ${err.message}`);
-        console.error(
-          `Error removing member ${userId} from group ${groupId}:`,
-          err
-        );
+
         setLoading(false);
         throw err;
       }
@@ -744,7 +710,6 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to leave group: ${err.message}`);
-        console.error(`Error leaving group ${groupId}:`, err);
         setLoading(false);
         throw err;
       }
@@ -843,12 +808,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to get group messages after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to get group messages: ${err.message}`);
         setLoading(false);
@@ -955,12 +914,6 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to send message after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to send group message: ${err.message}`);
         setLoading(false);
@@ -1005,10 +958,7 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to send message with attachment: ${err.message}`);
-        console.error(
-          `Error sending message with attachment to group ${groupId}:`,
-          err
-        );
+
         setLoading(false);
         throw err;
       }
@@ -1044,10 +994,7 @@ export const useGroup = () => {
         return response;
       } catch (err: any) {
         setError(`Failed to fetch blocked users: ${err.message}`);
-        console.error(
-          `Error fetching blocked users for group ${groupId}:`,
-          err
-        );
+
         setLoading(false);
         throw err;
       }
@@ -1096,12 +1043,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to block user after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to block user in group: ${err.message}`);
         setLoading(false);
@@ -1155,12 +1096,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to unblock user after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to unblock user in group: ${err.message}`);
         setLoading(false);
@@ -1221,12 +1156,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to edit message after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to edit message: ${err.message}`);
         setLoading(false);
@@ -1279,12 +1208,6 @@ export const useGroup = () => {
         };
       } catch (err: any) {
         const endTime = performance.now();
-        console.error(
-          `[Groups Store] Failed to delete message after ${(
-            endTime - startTime
-          ).toFixed(2)}ms:`,
-          err
-        );
 
         setError(`Failed to delete message: ${err.message}`);
         setLoading(false);

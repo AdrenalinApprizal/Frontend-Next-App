@@ -110,11 +110,9 @@ export function ProfilePictureModal({
           throw new Error("Invalid server response");
         }
       } catch (err) {
-        console.error("Failed to update avatar:", err);
         throw err;
       }
     } catch (error: any) {
-      console.error("Profile picture upload error:", error);
       toast.error(error.message || "Failed to upload profile picture");
     } finally {
       setIsUploading(false);

@@ -162,7 +162,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       toast.success("Profile updated successfully");
       setIsEditing(false);
     } catch (error: any) {
-      console.error("Profile update error:", error);
       toast.error(
         error.message || "An error occurred while updating your profile"
       );
@@ -199,7 +198,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       });
       setActiveTab("profile");
     } catch (error: any) {
-      console.error("Password update error:", error);
       toast.error(error.message || "Failed to change password");
     } finally {
       setIsSubmitting(false);
