@@ -95,7 +95,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
 
       return username;
     } catch (error) {
-      console.error(`Error fetching username for ${userId}:`, error);
 
       // Cache a fallback username to avoid repeated failed requests
       const fallbackUsername = `User-${userId.substring(0, 8)}`;
@@ -118,7 +117,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   const getNotificationDisplayContent = (
     notification: Notification
   ): string => {
-    console.log("[NotificationDropdown] Processing notification:", {
+    ({
       id: notification.id,
       type: notification.type,
       body: notification.body,
@@ -129,16 +128,11 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
 
     // Prioritize body from backend if available (contains username)
     if (notification.body) {
-      console.log("[NotificationDropdown] Using body:", notification.body);
       return notification.body;
     }
 
     // Fallback to content field
     if (notification.content) {
-      console.log(
-        "[NotificationDropdown] Using content:",
-        notification.content
-      );
       return notification.content;
     }
 
@@ -149,20 +143,14 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       // PRIORITY 1: Check if sender_username is available in data object
       if (notification.data.sender_username) {
         const usernameContent = `New message from ${notification.data.sender_username}`;
-        console.log(
-          "[NotificationDropdown] Using sender_username from data:",
-          usernameContent
-        );
+
         return usernameContent;
       }
 
       // PRIORITY 2: Check if we have username in cache
       if (userCache[senderId]) {
         const cachedContent = `New message from ${userCache[senderId]}`;
-        console.log(
-          "[NotificationDropdown] Using cached username:",
-          cachedContent
-        );
+
         return cachedContent;
       }
 
@@ -176,23 +164,15 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
         0,
         8
       )}...`;
-      console.log(
-        "[NotificationDropdown] Using fallback with user ID:",
-        fallbackContent
-      );
 
       // Trigger username fetch in background (don't await to avoid blocking UI)
       fetchUsername(senderId).then((username) => {
         // This will trigger a re-render when username is cached
-        console.log(
-          `[NotificationDropdown] Fetched username for ${senderId}: ${username}`
-        );
       });
 
       return fallbackContent;
     }
 
-    console.log("[NotificationDropdown] Using default content");
     return "New notification";
   };
 
@@ -245,7 +225,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
           }
         }
       } catch (error: any) {
-        console.error("Error marking notification as read:", error);
         toast.error(error.message || "Failed to mark notification as read");
       }
     }
@@ -257,7 +236,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
       await markAllAsRead();
       toast.success("All notifications marked as read");
     } catch (error: any) {
-      console.error("Error marking all notifications as read:", error);
       toast.error(error.message || "Failed to mark all notifications as read");
     }
   };
@@ -270,7 +248,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     try {
       await loadMoreNotifications();
     } catch (error: any) {
-      console.error("Error loading more notifications:", error);
       toast.error(error.message || "Failed to load more notifications");
     } finally {
       setIsLoadingMore(false);
@@ -280,13 +257,11 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   // Load data when component mounts
   useEffect(() => {
     getUnreadCount().catch((err) => {
-      console.error("Failed to fetch unread count:", err);
     });
 
     // Set up periodic refresh of unread count
     const interval = setInterval(() => {
       getUnreadCount().catch((err) => {
-        console.error("Failed to update unread count:", err);
       });
     }, 60000); // Refresh every minute
 
@@ -296,14 +271,11 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
   // Load notifications when dropdown opens
   useEffect(() => {
     if (isOpen) {
-      console.log("Notification dropdown opened, fetching notifications...");
-
       getNotifications(1, 10)
         .then((response) => {
-          console.log("Notifications fetched successfully:", response);
+          // Notifications fetched successfully
         })
         .catch((err) => {
-          console.error("Failed to fetch notifications:", err);
 
           // Only show error toast for actual errors, not for empty results
           if (
@@ -313,7 +285,6 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
             toast.error(`Error loading notifications: ${err.message}`);
           } else {
             // Handle the case where notifications might be empty but not an error
-            console.warn("No notifications found or empty response format");
           }
         });
     }
@@ -331,16 +302,12 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
     );
 
     if (notificationsNeedingUsernames.length > 0) {
-      console.log(
-        "[NotificationDropdown] Auto-fetching usernames for notifications:",
-        notificationsNeedingUsernames.map((n) => n.data?.sender_id)
-      );
+      notificationsNeedingUsernames.map((n) => n.data?.sender_id);
 
       // Batch fetch usernames
       notificationsNeedingUsernames.forEach((notification) => {
         if (notification.data?.sender_id) {
           fetchUsername(notification.data.sender_id).catch((err) => {
-            console.error("Failed to fetch username:", err);
           });
         }
       });
@@ -427,7 +394,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
                             {notification.title}
                           </p>
                         )}
-                      
+
                       {/* Show sender info if available */}
                       {notification.data?.sender_id &&
                         (notification.data?.sender_username ||

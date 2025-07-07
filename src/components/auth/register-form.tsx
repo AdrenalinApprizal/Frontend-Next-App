@@ -62,7 +62,6 @@ export function RegisterForm() {
       }
     } catch (error) {
       toast.error("Something went wrong. Please try again.");
-      console.error("Registration error:", error);
     } finally {
       setLoading(false);
     }

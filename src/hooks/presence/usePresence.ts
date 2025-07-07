@@ -89,19 +89,16 @@ export function usePresence(
 
         if (response.ok && data.success !== false) {
           setCurrentStatus(status);
-          console.log(`[Presence] Status updated to: ${status}`);
           return { success: true, data };
         } else {
           const errorMsg =
             data.message || `HTTP ${response.status}: ${response.statusText}`;
           setError(errorMsg);
-          console.error("[Presence] Failed to update status:", errorMsg);
           return { success: false, error: true, message: errorMsg };
         }
       } catch (error: any) {
         const errorMsg = error.message || "Network error occurred";
         setError(errorMsg);
-        console.error("[Presence] Network error:", error);
         return { success: false, error: true, message: errorMsg };
       } finally {
         setIsLoading(false);
@@ -120,7 +117,6 @@ export function usePresence(
 
   // WebSocket connection (disabled for now)
   const connectWebSocket = useCallback((token?: string) => {
-    console.log("[Presence WebSocket] Connection skipped - not implemented");
     setIsWsConnected(false);
     setError("WebSocket presence not available - using HTTP fallback");
   }, []);
@@ -128,7 +124,6 @@ export function usePresence(
   // Disconnect WebSocket (no-op for now)
   const disconnectWebSocket = useCallback(() => {
     setIsWsConnected(false);
-    console.log("[Presence WebSocket] Disconnect skipped - not implemented");
   }, []);
 
   // Get user status
@@ -150,7 +145,6 @@ export function usePresence(
   // Set initial status
   const setInitialStatus = useCallback(async () => {
     if (session?.access_token && deviceId) {
-      console.log("[Presence] Setting initial status to online");
       await updateStatus("online");
     }
   }, [session?.access_token, deviceId, updateStatus]);
@@ -161,7 +155,6 @@ export function usePresence(
 
     // Simply ensure user is marked as online when active
     if (currentStatus === "offline") {
-      console.log("[Presence] User became active, updating status to online");
       updateStatus("online");
     }
   }, [enableActivityDetection, currentStatus, updateStatus]);
@@ -173,7 +166,6 @@ export function usePresence(
 
     hasInitializedRef.current = true;
 
-    console.log("[Presence] Initializing presence system");
 
     // Connect WebSocket (skipped for now)
     connectWebSocket(session.access_token);
@@ -195,7 +187,6 @@ export function usePresence(
       window.addEventListener("focus", handleActivity);
 
       return () => {
-        console.log("[Presence] Cleaning up presence system");
         hasInitializedRef.current = false;
         disconnectWebSocket();
 
@@ -220,7 +211,6 @@ export function usePresence(
     if (autoConnect && session?.access_token && !isWsConnected) {
       connectWebSocket(session.access_token);
     } else if (!session?.access_token && isWsConnected) {
-      console.log("[Presence] Session lost, disconnecting");
       disconnectWebSocket();
     }
   }, [

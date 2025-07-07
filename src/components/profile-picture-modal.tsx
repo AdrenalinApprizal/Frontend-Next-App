@@ -92,7 +92,6 @@ export function ProfilePictureModal({
       });
 
       const base64String = await filePromise;
-      console.log("File converted to base64, sending to API...");
 
       try {
         // Use the updateAvatar function from auth hook
@@ -111,11 +110,9 @@ export function ProfilePictureModal({
           throw new Error("Invalid server response");
         }
       } catch (err) {
-        console.error("Failed to update avatar:", err);
         throw err;
       }
     } catch (error: any) {
-      console.error("Profile picture upload error:", error);
       toast.error(error.message || "Failed to upload profile picture");
     } finally {
       setIsUploading(false);

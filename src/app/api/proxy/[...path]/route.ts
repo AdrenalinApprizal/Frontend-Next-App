@@ -61,18 +61,10 @@ async function handleRequest(
 
     // Enhanced logging for message endpoints to debug issues
     if (path.includes("messages")) {
-      console.log(
-        `[Proxy] Messages request: Path=${path}, Method=${method}, SearchParams=${searchParams}`
-      );
-
-      // Log detailed path components
-      console.log(`[Proxy] Path components:`, paths);
-
       // Log detailed query parameters
       const queryParams = Object.fromEntries(
         originalUrl.searchParams.entries()
       );
-      console.log(`[Proxy] Query parameters:`, queryParams);
 
       // Enhanced message history detection to match Vue.js patterns
       if (
@@ -82,22 +74,14 @@ async function handleRequest(
           path.includes("/group/") ||
           path === "messages/history") // Add exact match for root history endpoint
       ) {
-        console.log(`[Proxy] Message history detected: ${path}`);
-
         // Check if this request has been retried too many times
         const retryCount = parseInt(
           originalUrl.searchParams.get("_retryCount") || "0",
           10
         );
-        console.log(
-          `[Proxy] Message history request with retry count: ${retryCount}`
-        );
 
         // If we've already tried too many times, break the loop
         if (retryCount >= 2) {
-          console.log(
-            `[Proxy] Breaking retry loop after ${retryCount} attempts for ${path}`
-          );
           return NextResponse.json(
             {
               messages: [],
@@ -134,10 +118,6 @@ async function handleRequest(
         // Try each method
         for (const methodToTry of methodsToTry) {
           try {
-            console.log(
-              `[Proxy] Trying ${methodToTry} request for message history: ${url}`
-            );
-
             const options: RequestInit = {
               method: methodToTry,
               headers,
@@ -155,9 +135,6 @@ async function handleRequest(
             );
 
             if (response.ok) {
-              console.log(
-                `[Proxy] ${methodToTry} request successful for message history`
-              );
               const contentType = response.headers.get("content-type");
               if (contentType?.includes("application/json")) {
                 const data = await response.json();
@@ -176,12 +153,6 @@ async function handleRequest(
                   success: true,
                 };
 
-                console.log(
-                  `[Proxy] Returning formatted message history data with ${
-                    formattedData.messages?.length || 0
-                  } messages`
-                );
-
                 return NextResponse.json(formattedData, { status: 200 });
               } else {
                 const text = await response.text();
@@ -195,39 +166,11 @@ async function handleRequest(
                   { status: 200 }
                 );
               }
-            } else if (response.status === 405) {
-              // Special handling for 405 Method Not Allowed
-              console.error(
-                `[Proxy] ${methodToTry} request got 405 Method Not Allowed, trying alternate method`
-              );
-              // Continue to next method in loop
-            } else {
-              console.error(
-                `[Proxy] ${methodToTry} request failed for message history: ${response.status}`
-              );
-              // Try the next method if this one failed
             }
           } catch (error) {
-            console.error(
-              `[Proxy] Error trying ${methodToTry} for message history:`,
-              error
-            );
-            // Try the next method if this one failed
+            error;
           }
         }
-
-        // If all methods failed, return a fallback empty response
-        console.error(
-          `[Proxy] All methods failed for message history, returning fallback`
-        );
-
-        // Log detailed diagnostic information for troubleshooting
-        console.error(`[Proxy] Message history failure diagnostics: 
-          - URL: ${url}
-          - Available methods: ${methodsToTry.join(", ")}
-          - Query parameters: ${originalUrl.search}
-          - Authentication: ${token?.access_token ? "Present" : "Missing"}
-        `);
 
         return NextResponse.json(
           {
@@ -250,14 +193,8 @@ async function handleRequest(
 
       // Special handling for UUID paths that may indicate direct message access
       if (paths.length > 1 && /^[0-9a-f-]{36}$/.test(paths[1])) {
-        console.log(
-          `[Proxy] Message ID detected: ${paths[1]}, this may be a direct message access`
-        );
-
         // Special handling for direct message access with UUID - add fallback safety
         if (method === "GET") {
-          console.log(`[Proxy] Direct message GET request for ID: ${paths[1]}`);
-
           // Get authentication token
           const token = await getToken({
             req,
@@ -281,8 +218,6 @@ async function handleRequest(
             // CRITICAL FIX: Include search parameters for direct message requests too
             const url = `${baseUrl}/${path}${searchParams}`;
 
-            console.log(`[Proxy] Attempting to fetch direct message: ${url}`);
-
             // Make the request with timeout
             const response = await fetch(url, {
               method,
@@ -291,15 +226,10 @@ async function handleRequest(
             }).finally(() => clearTimeout(timeoutId));
 
             if (response.ok) {
-              console.log(
-                `[Proxy] Direct message fetch successful: ${response.status}`
-              );
               const data = await response.json();
               return NextResponse.json(data, { status: 200 });
             } else {
-              console.error(
-                `[Proxy] Direct message fetch failed: ${response.status}`
-              );
+             
 
               // Return empty data with success status to avoid breaking UI
               return NextResponse.json(
@@ -314,7 +244,6 @@ async function handleRequest(
               );
             }
           } catch (error: any) {
-            console.error(`[Proxy] Error fetching direct message:`, error);
 
             // Return empty data with success status to avoid breaking UI
             return NextResponse.json(
@@ -345,6 +274,13 @@ async function handleRequest(
       path === "notification" ||
       path.startsWith("notification/");
 
+    ({
+      isGroupEndpoint,
+      isMessagesEndpoint,
+      isAuthEndpoint,
+      isNotificationEndpoint,
+    });
+
     // Special handling for group messages - redirect to correct endpoint format
     let finalPath = path;
 
@@ -358,9 +294,6 @@ async function handleRequest(
       ) {
         const groupId = pathParts[1];
         finalPath = `groups/${groupId}/messages`;
-        console.log(
-          `[Proxy] Converting group message path from ${path} to ${finalPath}`
-        );
       }
     }
 
@@ -376,9 +309,6 @@ async function handleRequest(
       if (messagesIndex > 0 && pathParts[messagesIndex + 1]) {
         const messageId = pathParts[messagesIndex + 1];
         finalPath = `messages/${messageId}`;
-        console.log(
-          `[Proxy] Redirecting group message ${method} from ${path} to ${finalPath}`
-        );
       }
     }
 
@@ -388,10 +318,7 @@ async function handleRequest(
       paths.length > 1 &&
       /^[0-9a-f-]{36}$/.test(paths[1])
     ) {
-      console.log(
-        `[Proxy] Handling specific message request for ID: ${paths[1]}`
-      );
-      console.log(`[Proxy] Full path: ${path}`);
+      // Handling specific message request
     }
     const isFilesEndpoint =
       path === "files" ||
@@ -423,9 +350,7 @@ async function handleRequest(
           (finalPath.includes("/") &&
             /^[0-9a-f-]{36}$/.test(finalPath.split("/")[1])))
       ) {
-        console.log(
-          `[Proxy] Using message API for specific message: ${finalPath}`
-        );
+        // Using message API for specific message
       }
     } else if (isNotificationEndpoint) {
       baseUrl = NOTIFICATION_API_BASE_URL;
@@ -437,12 +362,14 @@ async function handleRequest(
       baseUrl = API_BASE_URL;
     }
 
+    // Final URL will be constructed
+
     // CRITICAL FIX: Include search parameters in all API requests
     const url = `${baseUrl}/${finalPath}${searchParams}`;
 
     // Special handling for WebSocket connection attempts through the proxy
     if (isWebSocketEndpoint) {
-      console.log(`[Proxy] WebSocket request detected for ${path}`);
+      // WebSocket request detected
 
       // Prepare headers to forward to the backend
       const headers: HeadersInit = {};
@@ -470,44 +397,26 @@ async function handleRequest(
         tokenParam || tokenFromHeader || sessionToken?.access_token;
 
       if (effectiveToken) {
-        console.log("[Proxy] Found token for WebSocket connection");
+        // Found token for WebSocket connection
         // Add token to authorization header
         headers["Authorization"] = `Bearer ${effectiveToken}`;
 
-        // Log only the first few characters of the token for security
-        const tokenPreview =
-          typeof effectiveToken === "string"
-            ? effectiveToken.substring(0, 15) + "..."
-            : "token format is not a string";
-        console.log(
-          `[Proxy] Added token to Authorization header: Bearer ${tokenPreview}`
-        );
+        // Token added to Authorization header
 
         // Add other headers that might be relevant
         headers["Content-Type"] = "application/json";
         headers["Accept"] = "application/json";
 
-        // Debug dump all headers being sent (excluding sensitive values)
-        console.log(
-          "[Proxy] Headers being sent to WebSocket endpoint:",
-          Object.keys(headers).map(
-            (key) =>
-              `${key}: ${
-                key.toLowerCase() === "authorization"
-                  ? "[REDACTED]"
-                  : headers[key]
-              }`
-          )
-        );
+        // Headers being sent to WebSocket endpoint
       } else {
-        console.log("[Proxy] No token found for WebSocket connection");
+        // No token found for WebSocket connection
       }
 
       // Check if this is a Socket.IO polling request
       const isSocketIOPolling =
         searchParams.has("EIO") && searchParams.get("transport") === "polling";
       if (isSocketIOPolling) {
-        console.log("[Proxy] Detected Socket.IO polling request");
+        // Detected Socket.IO polling request
       }
 
       // For WebSocket requests, provide connection details
@@ -517,7 +426,7 @@ async function handleRequest(
 
       // If we detect a WebSocket upgrade request, return helpful connection information
       if (isWebSocketRequest) {
-        console.log(`[Proxy] WebSocket upgrade request detected for ${path}`);
+        // WebSocket upgrade request detected
         return NextResponse.json(
           {
             status: "websocket_redirect",
@@ -529,7 +438,6 @@ async function handleRequest(
       }
 
       // Otherwise continue with proxy request
-      console.log(`[Proxy] ${method} request to: ${url} (WEBSOCKET API)`);
 
       // Forward the request to backend with token in authorization header
       try {
@@ -538,25 +446,19 @@ async function handleRequest(
           headers,
         });
 
-        console.log(
-          `[Proxy] WebSocket proxy response status: ${response.status}`
-        );
-
         if (response.ok) {
           const data = await response.json();
           return NextResponse.json(data, { status: response.status });
         } else {
           const errorText = await response.text();
-          console.error(
-            `[Proxy] WebSocket error response: ${response.status} ${errorText}`
-          );
+          
           return NextResponse.json(
             { error: `WebSocket connection error: ${errorText}` },
             { status: response.status }
           );
         }
       } catch (error) {
-        console.error(`[Proxy] WebSocket fetch error:`, error);
+        
         return NextResponse.json(
           {
             error: "WebSocket proxy error",
@@ -567,22 +469,8 @@ async function handleRequest(
       }
     }
 
-    console.log(
-      `[Proxy] ${method} request to: ${url} (${
-        isGroupEndpoint || isMessagesEndpoint
-          ? "GROUP API"
-          : isNotificationEndpoint
-          ? "NOTIFICATION API"
-          : isFilesEndpoint
-          ? "FILES API"
-          : "MAIN API"
-      })`
-    );
-
     // Get authentication token from the request
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-
-    console.log(`[Proxy] Token exists: ${!!token?.access_token}`);
 
     // Prepare headers to forward to the backend
     const headers: HeadersInit = {};
@@ -590,9 +478,6 @@ async function handleRequest(
     // Add authorization header if token exists and the endpoint is not auth login
     if (token?.access_token && !path.includes("auth/login")) {
       headers["Authorization"] = `Bearer ${token.access_token as string}`;
-      console.log("[Proxy] Added Authorization header");
-    } else {
-      console.log("[Proxy] No token available for Authorization header");
     }
 
     // Check content type to handle FormData for file uploads
@@ -620,7 +505,6 @@ async function handleRequest(
     if (method === "POST" || method === "PUT" || method === "PATCH") {
       try {
         if (isFormData) {
-          console.log("[Proxy] Handling FormData request");
           // Clone the request for debugging (we can't read the body twice)
           const clonedRequest = req.clone();
           const forwardRequest = req.clone(); // Second clone for forwarding
@@ -629,15 +513,8 @@ async function handleRequest(
           // Move debug operations to a separate promise chain to avoid blocking
           (async () => {
             try {
-              console.log("[Proxy] Content-Type:", contentType);
-              console.log(
-                "[Proxy] FormData debugging - this will not affect request processing"
-              );
             } catch (formDataError) {
-              console.error(
-                "[Proxy] Error in FormData debug logging:",
-                formDataError
-              );
+              
             }
           })();
 
@@ -650,10 +527,6 @@ async function handleRequest(
             duplex: "half", // Required for ReadableStream body
           } as RequestInit)
             .then(async (response) => {
-              console.log(
-                `[Proxy] FormData response status: ${response.status}`
-              );
-
               // Clone the response before reading its body
               const responseClone = response.clone();
 
@@ -661,33 +534,25 @@ async function handleRequest(
               if (response.ok) {
                 try {
                   const data = await response.json();
-                  console.log(`[Proxy] FormData success response`, data);
+
                   return NextResponse.json(data, { status: response.status });
                 } catch (err) {
                   // If not JSON, return text (using the cloned response)
                   const text = await responseClone.text();
-                  console.log(
-                    `[Proxy] FormData success response (text)`,
-                    text.substring(0, 100)
-                  );
+
                   return new NextResponse(text, { status: response.status });
                 }
               } else {
                 try {
                   const errorData = await response.json();
-                  console.error(
-                    `[Proxy] FormData error response: ${response.status}`,
-                    errorData
-                  );
+                  
                   return NextResponse.json(errorData, {
                     status: response.status,
                   });
                 } catch (err) {
                   // Using the cloned response for text if JSON parsing fails
                   const text = await responseClone.text();
-                  console.error(
-                    `[Proxy] FormData error response text: ${text}`
-                  );
+                  
                   return NextResponse.json(
                     { error: "API Error", details: text },
                     { status: response.status }
@@ -696,7 +561,7 @@ async function handleRequest(
               }
             })
             .catch((error) => {
-              console.error(`[Proxy] FormData fetch error:`, error);
+              
               return NextResponse.json(
                 { error: "Proxy Error", message: error.message },
                 { status: 500 }
@@ -717,9 +582,6 @@ async function handleRequest(
             if (groupsIndex >= 0 && pathParts[groupsIndex + 1]) {
               const groupId = pathParts[groupsIndex + 1];
               jsonBody.group_id = groupId;
-              console.log(
-                `[Proxy] Added group_id ${groupId} to request body for redirected group message request`
-              );
             }
           }
 
@@ -728,7 +590,7 @@ async function handleRequest(
           options.body = await req.text();
         }
       } catch (error) {
-        console.error("[Proxy] Error processing request body:", error);
+        
         return NextResponse.json(
           { error: "Proxy Error", message: "Failed to process request body" },
           { status: 400 }
@@ -737,16 +599,8 @@ async function handleRequest(
     }
 
     // Forward the request to the backend
-    console.log(`[Proxy] Forwarding to backend with options:`, {
-      method: options.method,
-      headers: Object.keys(headers),
-      isFormData,
-      url,
-    }); // Enhanced handling for messages history endpoint
+    // Enhanced handling for messages history endpoint
     if (path.includes("messages/history")) {
-      console.log(`[Proxy] Messages history request: ${url}`);
-      console.log(`[Proxy] Search params: ${new URL(req.url).search}`);
-
       // Set a longer timeout for history requests
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds
@@ -757,15 +611,11 @@ async function handleRequest(
         const response = await fetch(url, options).finally(() =>
           clearTimeout(timeoutId)
         );
-        console.log(
-          `[Proxy] Messages history response status: ${response.status}`
-        );
 
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Messages history success:`, data);
 
             // Create standardized response format regardless of backend API structure
             // This ensures our client code can rely on consistent response format
@@ -781,23 +631,19 @@ async function handleRequest(
             return NextResponse.json(formattedData, { status: 200 });
           } else {
             // For non-JSON responses, provide a fallback
-            console.log(`[Proxy] Non-JSON response for messages/history`);
             return NextResponse.json(
               { messages: [], data: [] },
               { status: 200 }
             );
           }
         } else {
-          // For error responses, provide a fallback to prevent UI breakage
-          console.error(`[Proxy] Messages history error: ${response.status}`);
+          
 
           // Try to parse error response for logging purposes
           let errorMessage = "Unknown error";
           try {
             const errorText = await response.text();
-            console.error(
-              `[Proxy] Messages history error response: ${response.status} - ${errorText}`
-            );
+           
 
             try {
               const errorData = JSON.parse(errorText);
@@ -806,14 +652,10 @@ async function handleRequest(
               errorMessage = errorText;
             }
           } catch (textError) {
-            console.error(`[Proxy] Error reading response text:`, textError);
           }
 
           // For 404 or other common errors, return empty array with 200 status
           // This prevents UI errors while still logging the actual backend error
-          console.log(
-            `[Proxy] Returning fallback empty messages array for history`
-          );
           return NextResponse.json(
             {
               messages: [],
@@ -825,7 +667,6 @@ async function handleRequest(
           );
         }
       } catch (fetchError) {
-        console.error(`[Proxy] Messages history fetch error:`, fetchError);
 
         // Return fallback for fetch errors as well
         return NextResponse.json(
@@ -844,17 +685,13 @@ async function handleRequest(
 
     // Handle message sending specially
     if (path === "messages" && method === "POST") {
-      console.log(`[Proxy] Handling message send request: ${url}`);
-
       try {
         const response = await fetch(url, options);
-        console.log(`[Proxy] Message send response status: ${response.status}`);
 
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Message send success:`, data);
 
             // Ensure response has the required structure
             return NextResponse.json(
@@ -882,9 +719,7 @@ async function handleRequest(
           let errorMessage = "Failed to send message";
           try {
             const errorText = await response.text();
-            console.error(
-              `[Proxy] Message send error: ${response.status} - ${errorText}`
-            );
+            
 
             try {
               const errorData = JSON.parse(errorText);
@@ -893,7 +728,6 @@ async function handleRequest(
               errorMessage = errorText;
             }
           } catch (textError) {
-            console.error(`[Proxy] Error reading response text:`, textError);
           }
 
           // Return user-friendly error
@@ -906,7 +740,6 @@ async function handleRequest(
           );
         }
       } catch (fetchError) {
-        console.error(`[Proxy] Message send fetch error:`, fetchError);
 
         const errorMessage =
           fetchError instanceof Error ? fetchError.message : String(fetchError);
@@ -923,26 +756,19 @@ async function handleRequest(
     // Handle auth endpoints (other than login which is handled above)
     if (isAuthEndpoint && path !== "auth/login") {
       try {
-        console.log(`[Proxy] Handling auth endpoint: ${path}`);
         const response = await fetch(url, options);
-        console.log(`[Proxy] Auth response status: ${response.status}`);
 
         if (response.ok) {
           const data = await response.json();
-          console.log(`[Proxy] Auth success response`);
           return NextResponse.json(data, { status: response.status });
         } else {
           const errorData = await response
             .json()
             .catch(() => ({ error: "Authentication failed" }));
-          console.error(
-            `[Proxy] Auth error response: ${response.status}`,
-            errorData
-          );
+          
           return NextResponse.json(errorData, { status: response.status });
         }
       } catch (error) {
-        console.error(`[Proxy] Auth endpoint exception:`, error);
         return NextResponse.json(
           { error: "Authentication service unavailable" },
           { status: 503 }
@@ -957,23 +783,15 @@ async function handleRequest(
       path.startsWith("friends/")
     ) {
       try {
-        console.log(`[Proxy] Handling friends endpoint: ${path}`);
-
         // Special handling for friends/requests endpoint
         if (path === "friends/requests") {
-          console.log(`[Proxy] Special handling for friends requests endpoint`);
-
           try {
             const response = await fetch(url, options);
-            console.log(
-              `[Proxy] Response status for ${path}: ${response.status}`
-            );
 
             if (response.ok) {
               const responseContentType = response.headers.get("content-type");
               if (responseContentType?.includes("application/json")) {
                 const data = await response.json();
-                console.log(`[Proxy] Friend requests response data:`, data);
 
                 // Check different possible response formats
                 if (Array.isArray(data)) {
@@ -991,40 +809,28 @@ async function handleRequest(
                     { status: 200 }
                   );
                 } else {
-                  console.log(
-                    `[Proxy] Unknown format for friend requests, using empty array`
-                  );
                   return NextResponse.json([], { status: 200 });
                 }
               } else {
                 return NextResponse.json([], { status: 200 });
               }
             } else {
-              console.error(
-                `[Proxy] Error for friend requests: ${response.status}`
-              );
+              
               return NextResponse.json([], { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for friend requests:`, error);
             return NextResponse.json([], { status: 200 });
           }
         }
         // Special handling for main friends list endpoint
         else if (path === "friends") {
-          console.log(`[Proxy] Special handling for main friends endpoint`);
-
           try {
             const response = await fetch(url, options);
-            console.log(
-              `[Proxy] Response status for ${path}: ${response.status}`
-            );
 
             if (response.ok) {
               const responseContentType = response.headers.get("content-type");
               if (responseContentType?.includes("application/json")) {
                 const data = await response.json();
-                console.log(`[Proxy] Friends list response data:`, data);
 
                 // Check different possible response formats
                 if (Array.isArray(data)) {
@@ -1034,42 +840,31 @@ async function handleRequest(
                 } else if (data && Array.isArray(data.friends)) {
                   return NextResponse.json(data.friends, { status: 200 });
                 } else {
-                  console.log(
-                    `[Proxy] Unknown format for friends list, using empty array`
-                  );
                   return NextResponse.json([], { status: 200 });
                 }
               } else {
                 return NextResponse.json([], { status: 200 });
               }
             } else {
-              console.error(
-                `[Proxy] Error for friends list: ${response.status}`
-              );
+              
               return NextResponse.json([], { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for friends list:`, error);
             return NextResponse.json([], { status: 200 });
           }
         }
 
         // For other friend-related endpoints
         const response = await fetch(url, options);
-        console.log(`[Proxy] Response status for ${path}: ${response.status}`);
 
         // Get response data
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Friends API response data:`, data);
             return NextResponse.json(data, { status: 200 });
           } else {
             // If not JSON, return an appropriate fallback
-            console.log(
-              `[Proxy] Non-JSON response for ${path}, using fallback`
-            );
             return NextResponse.json(
               path.includes("search") ? [] : { success: true },
               {
@@ -1079,7 +874,6 @@ async function handleRequest(
           }
         } else {
           // For error responses, return appropriate fallbacks with 200 status to prevent UI breakage
-          console.log(`[Proxy] Error from ${path} API, using fallback`);
           // Return appropriate fallback based on endpoint
           if (path === "friends") {
             return NextResponse.json([], { status: 200 });
@@ -1090,7 +884,6 @@ async function handleRequest(
           } else if (path.startsWith("friends/")) {
             // Handle friends/{id} endpoint - create a fallback user object
             const friendId = path.split("/")[1]; // Extract the ID from the path
-            console.log(`[Proxy] Creating fallback for friend ID: ${friendId}`);
 
             return NextResponse.json(
               {
@@ -1109,7 +902,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         return NextResponse.json(path.includes("search") ? [] : [], {
           status: 200,
         });
@@ -1119,22 +911,16 @@ async function handleRequest(
     // Handle special case for presence endpoints - provide fallback when error occurs
     if (path === "presence" || path.startsWith("presence/")) {
       try {
-        console.log(`[Proxy] Handling presence endpoint: ${path}`);
         const response = await fetch(url, options);
-        console.log(`[Proxy] Response status for ${path}: ${response.status}`);
 
         // Get response data
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Presence API response data:`, data);
             return NextResponse.json(data, { status: 200 });
           } else {
             // If not JSON, return an appropriate fallback
-            console.log(
-              `[Proxy] Non-JSON response for ${path}, using fallback`
-            );
 
             // Provide appropriate fallbacks based on the specific endpoint
             if (path === "presence/status") {
@@ -1147,9 +933,6 @@ async function handleRequest(
           }
         } else {
           // For error responses, provide appropriate fallbacks
-          console.log(
-            `[Proxy] Error from ${path} API, using fallback. Status: ${response.status}`
-          );
 
           // Return appropriate fallback based on endpoint
           if (path === "presence/status") {
@@ -1161,7 +944,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
 
         // Return fallback responses even for exceptions
         if (path === "presence/status") {
@@ -1177,22 +959,15 @@ async function handleRequest(
     // Handle special case for notifications endpoints - provide fallback when error occurs
     if (path === "notifications" || path.startsWith("notifications/")) {
       try {
-        console.log(`[Proxy] Handling notifications endpoint: ${path}`);
-
         // Special handling for unread-count endpoint
         if (path === "notifications/unread-count") {
-          console.log(`[Proxy] Special handling for unread-count endpoint`);
           try {
             const response = await fetch(url, options);
-            console.log(
-              `[Proxy] Response status for ${path}: ${response.status}`
-            );
 
             if (response.ok) {
               const responseContentType = response.headers.get("content-type");
               if (responseContentType?.includes("application/json")) {
                 const data = await response.json();
-                console.log(`[Proxy] Unread count response data:`, data);
 
                 // Check different possible response formats for the count
                 if (data && typeof data.count === "number") {
@@ -1205,9 +980,6 @@ async function handleRequest(
                 } else if (typeof data === "number") {
                   return NextResponse.json({ count: data }, { status: 200 });
                 } else {
-                  console.log(
-                    `[Proxy] Could not find count in response, using default`
-                  );
                   return NextResponse.json({ count: 0 }, { status: 200 });
                 }
               } else {
@@ -1221,33 +993,25 @@ async function handleRequest(
                 }
               }
             } else {
-              console.error(
-                `[Proxy] Error for unread-count: ${response.status}`
-              );
+              
               return NextResponse.json({ count: 0 }, { status: 200 });
             }
           } catch (error) {
-            console.error(`[Proxy] Exception for unread-count:`, error);
             return NextResponse.json({ count: 0 }, { status: 200 });
           }
         }
 
         // For other notification endpoints
         const response = await fetch(url, options);
-        console.log(`[Proxy] Response status for ${path}: ${response.status}`);
 
         // Get response data
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Notifications API response data:`, data);
             return NextResponse.json(data, { status: 200 });
           } else {
             // If not JSON, return an appropriate fallback
-            console.log(
-              `[Proxy] Non-JSON response for ${path}, using fallback`
-            );
 
             // Provide appropriate fallbacks based on the specific endpoint
             if (path === "notifications") {
@@ -1260,9 +1024,6 @@ async function handleRequest(
           }
         } else {
           // For error responses, provide appropriate fallbacks
-          console.log(
-            `[Proxy] Error from ${path} API, using fallback. Status: ${response.status}`
-          );
 
           // Return appropriate fallback based on endpoint
           if (path === "notifications") {
@@ -1278,7 +1039,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
 
         // Return fallback responses even for exceptions
         if (path === "notifications") {
@@ -1295,20 +1055,15 @@ async function handleRequest(
     if (path === "groups" || path.startsWith("groups/")) {
       try {
         const response = await fetch(url, options);
-        console.log(`[Proxy] Response status for ${path}: ${response.status}`);
 
         // Get response data
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Groups API response data:`, data);
             return NextResponse.json(data, { status: 200 });
           } else {
             // If not JSON, return an appropriate fallback
-            console.log(
-              `[Proxy] Non-JSON response for ${path}, using fallback`
-            );
             return NextResponse.json(
               path === "groups"
                 ? { groups: [], current_page: 1, page_size: 20, total: 0 }
@@ -1320,9 +1075,6 @@ async function handleRequest(
           }
         } else {
           // For error responses, provide appropriate fallbacks
-          console.log(
-            `[Proxy] Error from ${path} API, using fallback. Status: ${response.status}`
-          );
 
           // Return appropriate fallback based on endpoint
           if (path === "groups") {
@@ -1354,7 +1106,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         if (path === "groups") {
           return NextResponse.json(
             { groups: [], current_page: 1, page_size: 20, total: 0 },
@@ -1375,20 +1126,15 @@ async function handleRequest(
     ) {
       try {
         const response = await fetch(url, options);
-        console.log(`[Proxy] Response status for ${path}: ${response.status}`);
 
         // Get response data
         if (response.ok) {
           const responseContentType = response.headers.get("content-type");
           if (responseContentType?.includes("application/json")) {
             const data = await response.json();
-            console.log(`[Proxy] Files API response data:`, data);
             return NextResponse.json(data, { status: 200 });
           } else {
             // If not JSON, return an appropriate fallback
-            console.log(
-              `[Proxy] Non-JSON response for ${path}, using fallback`
-            );
             return NextResponse.json(
               path === "files"
                 ? { files: [], current_page: 1, page_size: 20, total: 0 }
@@ -1400,9 +1146,6 @@ async function handleRequest(
           }
         } else {
           // For error responses, provide appropriate fallbacks
-          console.log(
-            `[Proxy] Error from ${path} API, using fallback. Status: ${response.status}`
-          );
 
           // Return appropriate fallback based on endpoint
           if (path === "files") {
@@ -1432,7 +1175,6 @@ async function handleRequest(
           }
         }
       } catch (error) {
-        console.error(`[Proxy] Exception in ${path} handling:`, error);
         if (path === "files") {
           return NextResponse.json(
             { files: [], current_page: 1, page_size: 20, total: 0 },
@@ -1449,7 +1191,6 @@ async function handleRequest(
 
     // For all other endpoints, use standard handling
     const response = await fetch(url, options);
-    console.log(`[Proxy] Response status: ${response.status}`);
 
     // Get response data
     let data: any;
@@ -1457,30 +1198,20 @@ async function handleRequest(
 
     if (responseContentType?.includes("application/json")) {
       data = await response.json();
-      console.log(`[Proxy] Response data:`, data);
     } else {
       data = await response.text();
-      console.log(
-        `[Proxy] Response text: ${
-          typeof data === "string"
-            ? data.substring(0, 100) + (data.length > 100 ? "..." : "")
-            : "Response is not a string"
-        }`
-      );
     }
 
     // Create the response with the same status
     if (response.ok) {
       return NextResponse.json(data, { status: response.status });
     } else {
-      console.error(`[Proxy] Error response: ${response.status}`, data);
       return NextResponse.json(
         { error: data.error || "API Error", details: data },
         { status: response.status }
       );
     }
   } catch (error: any) {
-    console.error("[Proxy] Error:", error);
     return NextResponse.json(
       { error: "Proxy Error", message: error.message },
       { status: 500 }

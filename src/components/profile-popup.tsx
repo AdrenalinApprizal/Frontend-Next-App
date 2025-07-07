@@ -28,8 +28,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
   // Helper function to handle avatar URLs correctly
   const getAvatarUrl = (url: string): string => {
-    console.log("Original avatar URL:", url);
-
     if (!url) return "";
 
     // If URL is already absolute (starts with http:// or https://)
@@ -57,7 +55,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
   // Function to handle the new profile picture upload
   const handleProfilePictureUploaded = (newPictureUrl: string) => {
-    console.log("New profile picture uploaded:", newPictureUrl);
     // Close the modal
     setShowProfilePictureModal(false);
     // No need to manually update the UI here as we already refetch user data in the modal
@@ -149,8 +146,7 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
         throw new Error("No authentication token available");
       }
 
-      console.log("[ProfilePopup] Updating profile with data:", formData);
-      console.log("[ProfilePopup] Data structure:", {
+      ({
         about_me: formData.about_me,
         first_name: formData.first_name,
         last_name: formData.last_name,
@@ -159,7 +155,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
       // Use the updateProfile function from auth hook
       const result = await updateProfile(formData);
-      console.log("[ProfilePopup] Update result:", result);
 
       // Refresh user data
       await refetch();
@@ -167,7 +162,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       toast.success("Profile updated successfully");
       setIsEditing(false);
     } catch (error: any) {
-      console.error("Profile update error:", error);
       toast.error(
         error.message || "An error occurred while updating your profile"
       );
@@ -204,7 +198,6 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
       });
       setActiveTab("profile");
     } catch (error: any) {
-      console.error("Password update error:", error);
       toast.error(error.message || "Failed to change password");
     } finally {
       setIsSubmitting(false);
@@ -261,26 +254,24 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
                   onClick={() => setShowProfilePictureModal(true)}
                 >
                   {userInfo.profile_picture_url ? (
-                    <img
-                      src={getAvatarUrl(userInfo.profile_picture_url)}
-                      alt={userInfo.username || "Profile"}
-                      className="h-full w-full object-cover"
-                      onError={(e) => {
-                        console.log(
-                          "Image failed to load:",
-                          userInfo.profile_picture_url
-                        );
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = ""; // Clear the src
-                        e.currentTarget.style.display = "none"; // Hide the img
-                        // Check if parent exists before trying to add a class
-                        if (e.currentTarget.parentElement) {
-                          e.currentTarget.parentElement.classList.add(
-                            "avatar-fallback"
-                          );
-                        }
-                      }}
-                    />
+                    <>
+                      <img
+                        src={getAvatarUrl(userInfo.profile_picture_url)}
+                        alt={userInfo.username || "Profile"}
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                          const fallbackIcon = e.currentTarget.nextElementSibling as HTMLElement;
+                          if (fallbackIcon) {
+                            fallbackIcon.style.display = "flex";
+                          }
+                        }}
+                      />
+                      <FaUser 
+                        className="h-6 w-6 sm:h-8 sm:w-8 text-blue-400 absolute inset-0 m-auto" 
+                        style={{ display: "none" }}
+                      />
+                    </>
                   ) : (
                     <FaUser className="h-6 w-6 sm:h-8 sm:w-8 text-blue-400" />
                   )}
@@ -394,28 +385,26 @@ export function ProfilePopup({ onClose }: ProfilePopupProps) {
 
             <div className="flex justify-center mb-4">
               <div className="relative">
-                <div className="h-16 w-16 rounded-full overflow-hidden bg-blue-600/30 relative cursor-pointer">
+                <div className="h-16 w-16 rounded-full overflow-hidden bg-blue-600/30 relative flex items-center justify-center cursor-pointer">
                   {userInfo.profile_picture_url ? (
-                    <img
-                      src={getAvatarUrl(userInfo.profile_picture_url)}
-                      alt={userInfo.username}
-                      className="h-full w-full object-cover"
-                      onError={(e) => {
-                        console.log(
-                          "Image failed to load:",
-                          userInfo.profile_picture_url
-                        );
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = ""; // Clear the src
-                        e.currentTarget.style.display = "none"; // Hide the img
-                        // Check if parent exists before trying to add a class
-                        if (e.currentTarget.parentElement) {
-                          e.currentTarget.parentElement.classList.add(
-                            "avatar-fallback"
-                          );
-                        }
-                      }}
-                    />
+                    <>
+                      <img
+                        src={getAvatarUrl(userInfo.profile_picture_url)}
+                        alt={userInfo.username}
+                        className="h-full w-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                          const fallbackIcon = e.currentTarget.nextElementSibling as HTMLElement;
+                          if (fallbackIcon) {
+                            fallbackIcon.style.display = "flex";
+                          }
+                        }}
+                      />
+                      <FaUser 
+                        className="h-8 w-8 text-blue-400 absolute inset-0 m-auto" 
+                        style={{ display: "none" }}
+                      />
+                    </>
                   ) : (
                     <FaUser className="h-8 w-8 text-blue-400" />
                   )}

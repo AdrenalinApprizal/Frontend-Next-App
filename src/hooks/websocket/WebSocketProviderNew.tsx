@@ -32,7 +32,7 @@ const WebSocketContext = createContext<WebSocketContextType | null>(null);
 
 // Provider component
 export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
-  console.log("[WebSocketProvider] Initializing provider");
+ 
 
   // Track if we've shown the fallback notification
   const fallbackNotificationShown = useRef(false);
@@ -68,11 +68,6 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
       !fallbackNotificationShown.current
     ) {
       fallbackNotificationShown.current = true;
-      console.log(
-        "[WebSocketProvider] Using HTTP-based messaging for real-time features"
-      );
-      // You could add a toast notification here if desired:
-      // toast.info("Using HTTP-based messaging (WebSocket not available)", { duration: 2000 });
     }
   }, [
     webSocketService.isConnected,
@@ -108,10 +103,6 @@ export const WebSocketProvider = ({ children }: { children: ReactNode }) => {
           webSocketService.sendPrivateMessage(receiverId, content)
         );
       } else {
-        // Use EventBus for message handling - this is the HTTP fallback
-        console.log(
-          "[WebSocketProvider] Using HTTP fallback for message sending"
-        );
         return await eventBusSendMessage(receiverId, content);
       }
     },

@@ -54,7 +54,6 @@ export function GroupsList() {
       // Navigate to the chat with this group
       router.push(`/chat/messages/${groupId}?type=group`);
     } catch (err) {
-      console.error("[GroupsList] Error navigating to group:", err);
       toast.error("Failed to open group chat");
     }
   };
@@ -148,7 +147,7 @@ export function GroupsList() {
       const formattedGroups: Group[] = hookGroups.map((group: ApiGroup) => {
         // Log one group to check avatar fields
         if (hookGroups.length > 0 && group === hookGroups[0]) {
-          console.log("[GroupsList] First group avatar fields:", {
+          ({
             avatar_url: group.avatar_url,
             profile_picture_url: (group as any).profile_picture_url,
           });
@@ -323,7 +322,6 @@ export function GroupsList() {
       resetForm();
       setShowCreateGroupPopup(false);
     } catch (error: any) {
-      console.error("Error creating group:", error);
       setErrors({
         general: error.message || "Failed to create group. Please try again.",
       });

@@ -38,7 +38,7 @@ export function OptimizedAvatar({
 
   // Validate and optimize image URL
   const optimizedSrc = useMemo(() => {
-    console.log("[OptimizedAvatar] Processing src:", {
+    ({
       hasSrc: !!src,
       srcType: typeof src,
       srcLength: src?.length || 0,
@@ -47,36 +47,23 @@ export function OptimizedAvatar({
     });
 
     if (!src) {
-      console.log("[OptimizedAvatar] No src provided, returning null");
       return null;
     }
 
     // Check if it's a data URL
     if (src.startsWith("data:")) {
-      console.log("[OptimizedAvatar] Processing data URL...");
-
       // Validate data URL format
       const dataUrlRegex =
         /^data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,/;
       if (!dataUrlRegex.test(src)) {
-        console.warn(
-          "[OptimizedAvatar] Invalid data URL format:",
-          src.substring(0, 100)
-        );
+        
         return null;
       }
-
-      console.log("[OptimizedAvatar] Data URL format is valid");
 
       // Check size limit (2MB for safety across browsers)
       const maxSize = 2 * 1024 * 1024;
       if (src.length > maxSize) {
-        console.warn(
-          "[OptimizedAvatar] Avatar too large:",
-          src.length,
-          "bytes, max:",
-          maxSize
-        );
+        
 
         // Try to compress or return null
         try {
@@ -84,61 +71,37 @@ export function OptimizedAvatar({
           // For now, we'll just reject them
           return null;
         } catch (error) {
-          console.error(
-            "[OptimizedAvatar] Error processing large image:",
-            error
-          );
+          
           return null;
         }
       }
 
-      console.log("[OptimizedAvatar] Size check passed:", src.length, "bytes");
-
       // Check if base64 data appears to be corrupted (very short or has invalid characters)
       const base64Data = src.split(",")[1];
       if (!base64Data || base64Data.length < 100) {
-        console.warn(
-          "[OptimizedAvatar] Base64 data too short or missing, length:",
-          base64Data?.length || 0
-        );
+        
         return null;
       }
-
-      console.log(
-        "[OptimizedAvatar] Base64 data length check passed:",
-        base64Data.length
-      );
 
       // Test if base64 is valid
       try {
         atob(base64Data.substring(0, 100)); // Test decode a small portion
-        console.log("[OptimizedAvatar] Base64 validation passed");
       } catch (error) {
-        console.warn("[OptimizedAvatar] Invalid base64 data:", error);
         return null;
       }
 
-      console.log(
-        "[OptimizedAvatar] ✅ All validations passed, returning data URL"
-      );
       return src;
     }
 
-    console.log("[OptimizedAvatar] Not a data URL, returning as-is:", src);
     return src;
   }, [src]);
 
   const handleLoad = useCallback(() => {
-    console.log("[OptimizedAvatar] ✅ Image loaded successfully for:", alt);
     setIsLoading(false);
     setHasError(false);
   }, [alt]);
 
   const handleError = useCallback(() => {
-    console.error("[OptimizedAvatar] ❌ Image failed to load for:", alt, {
-      src: optimizedSrc?.substring?.(0, 100),
-      srcLength: optimizedSrc?.length,
-    });
     setIsLoading(false);
     setHasError(true);
   }, [alt, optimizedSrc]);

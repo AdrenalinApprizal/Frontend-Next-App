@@ -22,15 +22,11 @@ export default function FriendPage() {
 
       try {
         setLoading(true);
-        console.log("[FriendPage] Fetching friend data for ID:", friendId);
 
         // First check if friend exists in the cached friends list
         const cachedFriend = friends.find((f) => f.id === friendId);
         if (cachedFriend) {
-          console.log(
-            "[FriendPage] Found friend in cached list:",
-            cachedFriend
-          );
+          cachedFriend;
           setFriendData(cachedFriend);
           setLoading(false);
           return;
@@ -38,11 +34,9 @@ export default function FriendPage() {
 
         // Try to get from API
         const friend = await getFriendById(friendId);
-        console.log("[FriendPage] Received friend data:", friend);
 
         setFriendData(friend);
       } catch (error) {
-        console.error("[FriendPage] Error fetching friend:", error);
         // Set fallback data with provided name if available
         setFriendData({
           id: friendId,
@@ -74,7 +68,6 @@ export default function FriendPage() {
   // First priority: provided name from navigation
   if (providedName && !providedName.startsWith("User ")) {
     displayName = providedName;
-    console.log("[FriendPage] Using provided name from URL:", displayName);
   }
   // Second priority: API data
   else if (friendData) {
@@ -93,30 +86,17 @@ export default function FriendPage() {
       } else if (friendData.username) {
         displayName = friendData.username;
       }
-      console.log(
-        "[FriendPage] Using real API data for display name:",
-        displayName
-      );
+      displayName;
     } else {
-      console.log(
-        "[FriendPage] API returned fallback data, checking for provided name"
-      );
       // If API returned fallback but we have a provided name, use it
       if (providedName) {
         displayName = providedName;
-        console.log(
-          "[FriendPage] Using provided name over API fallback:",
-          displayName
-        );
       } else {
         // Last resort: use the API fallback
         displayName = friendData.name || "User";
-        console.log("[FriendPage] Using API fallback name:", displayName);
       }
     }
   }
-
-  console.log("[FriendPage] Final display name:", displayName);
 
   return (
     <ChatArea

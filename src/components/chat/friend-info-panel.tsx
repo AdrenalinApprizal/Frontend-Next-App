@@ -6,7 +6,6 @@ import {
   FaUser,
   FaEnvelope,
   FaDownload,
-  FaShareAlt,
   FaFile,
   FaCheck,
   FaChevronLeft,
@@ -84,6 +83,9 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
+  // Avatar fallback state
+  const [avatarError, setAvatarError] = useState(false);
+
   // Modal states
   const [showAttachmentsModal, setShowAttachmentsModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -142,6 +144,19 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
     return mimeType.startsWith("image/");
   };
 
+  // Reset avatar error when friendDetails changes
+  useEffect(() => {
+    setAvatarError(false);
+  }, [friendDetails?.avatar, friendDetails?.profile_picture_url]);
+
+  // Helper function to get proper avatar URL
+  const getValidAvatarUrl = (): string => {
+    const avatarUrl =
+      friendDetails?.profile_picture_url || friendDetails?.avatar;
+    if (!avatarUrl || avatarError) return "";
+    return avatarUrl;
+  };
+
   // Initialize friends list
   useEffect(() => {
     if (friends) {
@@ -179,7 +194,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       }
 
       const data = await response.json();
-      console.log("Message history response:", data);
 
       // Extract messages array from response
       let messages = [];
@@ -242,7 +256,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       );
 
       setAttachments(attachmentData);
-      console.log("Loaded attachments from messages:", attachmentData);
 
       // Set basic pagination
       setPagination({
@@ -254,7 +267,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
       });
       setCurrentPage(1);
     } catch (error) {
-      console.error("Error loading attachments from messages:", error);
       // Silently handle error
       setAttachments([]); // Set empty array as fallback
     } finally {
@@ -266,7 +278,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
   const loadMoreAttachments = async () => {
     // Since we load all attachments from message history in one request,
     // this function is no longer needed but kept for UI compatibility
-    console.log("Load more attachments disabled for message history approach");
   };
 
   // Download file using attachment URL
@@ -283,7 +294,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
       toast.success("File download started");
     } catch (error) {
-      console.error("Error downloading file:", error);
       toast.error("Failed to download file");
     }
   };
@@ -343,7 +353,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
       closeShareDialog();
     } catch (error) {
-      console.error("Error sharing file:", error);
       // Silently handle error - file service might not be available
     }
   };
@@ -387,11 +396,12 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
 
         <div className="flex flex-col items-center">
           <div className="h-24 w-24 rounded-full overflow-hidden bg-gray-200 mb-3 flex items-center justify-center ring-2 ring-gray-100">
-            {friendDetails?.avatar || friendDetails?.profile_picture_url ? (
+            {getValidAvatarUrl() ? (
               <img
-                src={friendDetails.avatar || friendDetails.profile_picture_url}
-                alt={friendDetails.name}
+                src={getValidAvatarUrl()}
+                alt={friendDetails?.name || "Profile"}
                 className="h-full w-full object-cover"
+                onError={() => setAvatarError(true)}
               />
             ) : (
               <FaUser className="h-12 w-12 text-gray-400" />
@@ -472,9 +482,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                     <p className="text-sm font-medium truncate">
                       {attachment.filename}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {formatFileSize(attachment.size)}
-                    </p>
                   </div>
                   <div className="ml-2 flex">
                     <button
@@ -486,16 +493,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                       title="Download"
                     >
                       <FaDownload className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showShareDialog(attachment);
-                      }}
-                      className="p-1 text-gray-500 hover:text-blue-500"
-                      title="Share"
-                    >
-                      <FaShareAlt className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -555,9 +552,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                       <p className="text-sm font-medium truncate">
                         {attachment.filename}
                       </p>
-                      <p className="text-xs text-gray-500">
-                        {formatFileSize(attachment.size)}
-                      </p>
                       <p className="text-xs text-gray-400">
                         {new Date(attachment.uploaded_at).toLocaleDateString()}
                       </p>
@@ -572,16 +566,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                         title="Download"
                       >
                         <FaDownload className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          showShareDialog(attachment);
-                        }}
-                        className="p-2 text-gray-500 hover:text-blue-500"
-                        title="Share"
-                      >
-                        <FaShareAlt className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -629,9 +613,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                 <div>
                   <p className="text-sm font-medium">
                     {selectedAttachment.filename}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {formatFileSize(selectedAttachment.size)}
                   </p>
                 </div>
               </div>
@@ -713,9 +694,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                   <h3 className="text-lg font-medium text-gray-900 mb-2">
                     {selectedAttachment.filename}
                   </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {formatFileSize(selectedAttachment.size)}
-                  </p>
                   <p className="text-sm text-gray-600">
                     This file type cannot be previewed
                   </p>
@@ -729,14 +707,6 @@ const FriendInfoPanel: React.FC<FriendInfoPanelProps> = ({
                 >
                   <FaDownload className="h-4 w-4 mr-2" />
                   Download
-                </button>
-
-                <button
-                  onClick={() => showShareDialog(selectedAttachment)}
-                  className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 flex items-center"
-                >
-                  <FaShareAlt className="h-4 w-4 mr-2" />
-                  Share
                 </button>
               </div>
 

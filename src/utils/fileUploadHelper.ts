@@ -148,23 +148,15 @@ export const sendMessageWithFile = async (
     headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  console.log(`[FileUpload] Step 2 - Sending message to ${endpoint}:`, payload);
-  console.log(`[FileUpload] Step 2 - Headers:`, {
-    ...headers,
-    Authorization: accessToken ? "[REDACTED]" : "Not provided",
-  });
-
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
   });
 
-  console.log(`[FileUpload] Step 2 response status: ${response.status}`);
-
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[FileUpload] Step 2 failed:`, {
+    ({
       status: response.status,
       statusText: response.statusText,
       error: errorText,
@@ -175,7 +167,6 @@ export const sendMessageWithFile = async (
   }
 
   const result = await response.json();
-  console.log(`[FileUpload] Step 2 success:`, result);
 
   return {
     messageId: result.data?.id || result.id,
@@ -200,11 +191,8 @@ export const uploadFileAndSendMessage = async (
     throw new Error(validation.error);
   }
 
-  console.log(`[FileUpload] Starting 2-step upload for ${file.name}`);
-
   try {
     // Step 1: Upload file
-    console.log("[FileUpload] Step 1: Uploading file...");
     if (onProgress) onProgress(25);
 
     const uploadResult = await uploadFileToServer(
@@ -213,12 +201,9 @@ export const uploadFileAndSendMessage = async (
       isGroup,
       onProgress
     );
-    console.log("[FileUpload] Step 1 completed:", uploadResult);
-
     if (onProgress) onProgress(75);
 
     // Step 2: Send message with file attachment
-    console.log("[FileUpload] Step 2: Sending message with attachment...");
     const messageResult = await sendMessageWithFile(
       recipientId,
       uploadResult.fileId,
@@ -228,7 +213,6 @@ export const uploadFileAndSendMessage = async (
       isGroup,
       accessToken // Pass the access token for authentication
     );
-    console.log("[FileUpload] Step 2 completed:", messageResult);
 
     if (onProgress) onProgress(100);
 
@@ -241,10 +225,8 @@ export const uploadFileAndSendMessage = async (
       messageId: messageResult.messageId,
     };
 
-    console.log("[FileUpload] Complete 2-step process finished:", result);
     return result;
   } catch (error) {
-    console.error("[FileUpload] 2-step process failed:", error);
     throw error;
   }
 };

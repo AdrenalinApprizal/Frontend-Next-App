@@ -20,26 +20,14 @@ export function FriendRequest({
   // Extract the correct ID to use for actions
   const friendshipId = request.friendship_id || request.id || "";
 
-  // Enhanced debug logging
-  console.log("[FriendRequest] ===== COMPONENT DEBUG =====");
-  console.log("[FriendRequest] Raw request object:", request);
-  console.log("[FriendRequest] request.friendship_id:", request.friendship_id);
-  console.log("[FriendRequest] request.id:", request.id);
-  console.log("[FriendRequest] Extracted friendshipId:", friendshipId);
-  console.log("[FriendRequest] friendshipId type:", typeof friendshipId);
-  console.log("[FriendRequest] friendshipId length:", friendshipId?.length);
-  console.log("[FriendRequest] All request keys:", Object.keys(request));
-
-  // Additional validation
-  if (!friendshipId) {
-    console.error("[FriendRequest] WARNING: No valid friendship ID found!");
-    console.error("[FriendRequest] This will cause accept/reject to fail");
-  }
-
   // User data might be in different fields depending on API response format
   const userData = request.user || request.friend || request;
   const userName = userData.name || userData.username || "Unknown User";
-  const userAvatar = userData.avatar || userData.profile_pic || null;
+  const userAvatar =
+    userData.profile_picture_url ||
+    userData.avatar ||
+    userData.profile_pic ||
+    "";
 
   return (
     <div className="p-3 bg-white rounded-md border border-gray-200 shadow-sm flex items-center gap-3">

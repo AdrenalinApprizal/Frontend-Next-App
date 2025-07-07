@@ -91,6 +91,10 @@ interface GroupMessage {
   content: string;
   sender: MessageSender;
   timestamp: string;
+  // Additional timestamp fields for better accuracy
+  raw_timestamp?: string;
+  created_at?: string;
+  sent_at?: string;
   isCurrentUser: boolean;
   isEdited?: boolean;
   isDeleted?: boolean;
@@ -110,6 +114,17 @@ interface GroupMessage {
   editHistory?: { content: string; editedAt: string }[];
   replyTo?: string;
   reactions?: { emoji: string; users: string[] }[];
+  // Local state tracking to prevent server overwrites
+  lastEditedAt?: string;
+  lastDeletedAt?: string;
+  // Protection timestamps to prevent overwrites for a period after operations
+  localEditProtection?: number;
+  localDeleteProtection?: number;
+  // Additional timestamps for edit state persistence
+  editTimestamp?: string;
+  // Permanent flags to preserve state across WebSocket updates
+  editedPermanently?: boolean;
+  deletedPermanently?: boolean;
 }
 
 // Enhanced WebSocket message interface with better typing
@@ -132,6 +147,10 @@ interface WebSocketMessage {
     deleted?: boolean;
     reply_to?: string;
   };
+  // Add flags for edited state
+  isEdited?: boolean;
+  is_edited?: boolean;
+  editedPermanently?: boolean;
 }
 
 // Group details interface
@@ -144,6 +163,64 @@ interface GroupDetails {
   members: GroupMember[];
   avatar_url?: string;
 }
+
+// Helper function for date separator formatting
+const formatDateForSeparator = (date: Date): string => {
+  const now = new Date();
+  const today = now.toDateString();
+  const yesterday = new Date(now.getTime() - 86400000).toDateString();
+  const dateString = date.toDateString();
+
+  if (dateString === today) {
+    return "Today";
+  } else if (dateString === yesterday) {
+    return "Yesterday";
+  } else {
+    return date.toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }
+};
+
+// Helper function to get date key for grouping
+const getDateKey = (dateString: string): string => {
+  try {
+    const date = new Date(dateString);
+    return date.toDateString();
+  } catch (error) {
+    return new Date().toDateString();
+  }
+};
+
+// Helper untuk localStorage - edited messages
+const getEditedMessagesFromStorage = (groupId: string): string[] => {
+  try {
+    const storageKey = `group_${groupId}_edited_messages`;
+    const storedData = localStorage.getItem(storageKey);
+    if (storedData) {
+      return JSON.parse(storedData);
+    }
+  } catch (e) {
+    console.error("Error reading from localStorage:", e);
+  }
+  return [];
+};
+
+const saveEditedMessageToStorage = (groupId: string, messageId: string) => {
+  try {
+    const storageKey = `group_${groupId}_edited_messages`;
+    const currentData = getEditedMessagesFromStorage(groupId);
+    if (!currentData.includes(messageId)) {
+      const newData = [...currentData, messageId];
+      localStorage.setItem(storageKey, JSON.stringify(newData));
+    }
+  } catch (e) {
+    console.error("Error writing to localStorage:", e);
+  }
+};
 
 const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   // Refs for managing scrolling
@@ -198,6 +275,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Loading state for initial data
   const [groupDetailsLoaded, setGroupDetailsLoaded] = useState(false);
@@ -241,13 +319,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   // Debug logging for blocked users
   useEffect(() => {
     if (blockedUsers && blockedUsers.length > 0) {
-      console.log(
-        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users:`,
-        blockedUsers.map((u) => ({
-          user_id: u.user_id || u.id,
-          blocked_at: u.blocked_at,
-        }))
-      );
+      // Blocked users loaded
     }
   }, [blockedUsers, groupId]);
 
@@ -414,7 +486,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           avatar_url: groupData.avatar_url,
         });
       } catch (error: any) {
-        console.error("Error fetching group details:", error);
         setError("Failed to load group details");
         toast.error("Failed to load group details");
       } finally {
@@ -429,16 +500,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   useEffect(() => {
     const fetchBlockedUsers = async () => {
       try {
-        console.log(`[GroupChat] Fetching blocked users for group ${groupId}`);
         await getGroupBlocks(groupId);
-        console.log(
-          `[GroupChat] Successfully fetched blocked users for group ${groupId}`
-        );
       } catch (error: any) {
-        console.error(
-          `[GroupChat] Failed to fetch blocked users for group ${groupId}:`,
-          error
-        );
         // Don't show error toast for blocked users fetch failure as it's not critical
       }
     };
@@ -448,32 +511,77 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     }
   }, [groupId, getGroupBlocks]);
 
-  // Fetch group messages
+  // Fetch group messages - FIXED: Use unified messages endpoint like private chat
   const fetchGroupMessages = useCallback(
     async (page = 1, limit = 20) => {
       try {
         setLoadingMessages(true);
 
-        const messagesData = await getGroupMessages(groupId, page, limit);
-        console.log(
-          `[GroupChat] Fetched ${
-            messagesData.messages?.length || 0
-          } messages for group ${groupId}`
+        // CHANGED: Use the same unified endpoint as private chat for consistency
+        // This endpoint has better support for edit/delete states
+        const response = await fetch(
+          `/api/proxy/messages/history?type=group&target_id=${groupId}&limit=${limit}&page=${page}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session?.access_token}`,
+            },
+          }
         );
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const messagesData = await response.json();
+
+        // DEBUG: Log the server response structure
+        console.log("Server response structure:", {
+          hasMessages: !!messagesData.messages,
+          hasData: !!messagesData.data,
+          isArray: Array.isArray(messagesData),
+          messageCount:
+            messagesData.messages?.length ||
+            messagesData.data?.length ||
+            (Array.isArray(messagesData) ? messagesData.length : 0),
+          sampleMessage:
+            messagesData.messages?.[0] ||
+            messagesData.data?.[0] ||
+            messagesData[0],
+          fullResponse: messagesData,
+        });
+
+        // Extract messages from various possible response formats
+        let messagesList = [];
+        if (Array.isArray(messagesData)) {
+          messagesList = messagesData;
+        } else if (
+          messagesData.messages &&
+          Array.isArray(messagesData.messages)
+        ) {
+          messagesList = messagesData.messages;
+        } else if (messagesData.data && Array.isArray(messagesData.data)) {
+          messagesList = messagesData.data;
+        }
 
         const paginationData = {
           current_page: messagesData.current_page || page,
-          total_pages: Math.ceil((messagesData.total || 0) / limit) || 1,
-          total_items: messagesData.total || messagesData.messages?.length || 0,
+          total_pages:
+            Math.ceil((messagesData.total || messagesList.length) / limit) || 1,
+          total_items: messagesData.total || messagesList.length || 0,
           items_per_page: limit,
           has_more_pages:
             (messagesData.current_page || page) <
-            (Math.ceil((messagesData.total || 0) / limit) || 1),
+            (Math.ceil((messagesData.total || messagesList.length) / limit) ||
+              1),
         };
 
         setPagination(paginationData);
         setCanLoadMoreMessages(paginationData.has_more_pages);
 
+        // Get edited message IDs from localStorage
+        const editedMessagesFromStorage = getEditedMessagesFromStorage(groupId);
+        
         const formattedMessages = messagesData.messages.map(
           (apiMsg: ApiGroupMessage): GroupMessage => {
             const messageId =
@@ -484,19 +592,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               isCurrentUser
             );
 
-            // Debug logging for API message data
-            console.log(`[GroupChat] Processing message ${messageId}:`, {
-              content: apiMsg.content,
-              isEdited: (apiMsg as any).isEdited || (apiMsg as any).is_edited,
-              isDeleted:
-                (apiMsg as any).isDeleted || (apiMsg as any).is_deleted,
-              editedAt: (apiMsg as any).editedAt || (apiMsg as any).edited_at,
-              deletedAt:
-                (apiMsg as any).deletedAt || (apiMsg as any).deleted_at,
-              originalContent:
-                (apiMsg as any).originalContent ||
-                (apiMsg as any).original_content,
-            });
+            // Process message data
 
             let attachment = undefined;
             if (apiMsg.attachment_url) {
@@ -508,13 +604,16 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               };
             }
 
-            // Check for edit/delete state from various possible API field names
+            // Use robust edit detection checking all possible flag variants
+            // AND check localStorage for edited state
             const isEdited = Boolean(
-              (apiMsg as any).isEdited ||
-                (apiMsg as any).is_edited ||
-                (apiMsg as any).edited ||
-                (apiMsg as any).editedAt ||
-                (apiMsg as any).edited_at
+              (apiMsg as any).isEdited || 
+              (apiMsg as any).is_edited ||
+              (apiMsg as any).edited ||
+              (apiMsg as any).editedAt ||
+              (apiMsg as any).edited_at ||
+              // Check localStorage for edited state - this ensures persistence across refreshes
+              (editedMessagesFromStorage.includes(messageId))
             );
 
             const isDeleted = Boolean(
@@ -538,6 +637,10 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               messageContent = "This message was deleted";
             }
 
+            // Use more robust timestamp handling
+            const messageTimestamp =
+              apiMsg.created_at || apiMsg.sent_at || new Date().toISOString();
+
             const message: GroupMessage = {
               id: messageId,
               content: messageContent,
@@ -546,7 +649,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                 name: senderInfo.name,
                 avatar_url: senderInfo.avatar,
               },
-              timestamp: apiMsg.created_at || new Date().toISOString(),
+              timestamp: messageTimestamp,
+              // Preserve all timestamp fields for accurate time display
+              raw_timestamp: apiMsg.created_at || apiMsg.sent_at,
+              created_at: apiMsg.created_at,
+              sent_at: apiMsg.sent_at,
               isCurrentUser,
               attachment,
               pending: false,
@@ -554,6 +661,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               delivered: true,
               isEdited,
               isDeleted,
+              // Set permanent edit flag if the message is in localStorage
+              editedPermanently: isEdited || editedMessagesFromStorage.includes(messageId),
             };
 
             return message;
@@ -566,14 +675,85 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         if (page === 1) {
-          setMessages(sortedMessages);
+          // SMART MERGE: Preserve local edit/delete states that haven't been synced yet
+          setMessages((prevMessages) => {
+            const mergedMessages = sortedMessages.map(
+              (newMsg: GroupMessage) => {
+                const existingMsg = prevMessages.find(
+                  (m) => m.id === newMsg.id
+                );
+
+                // If we have a locally edited/deleted message that's newer than server data,
+                // preserve the local state
+                if (existingMsg) {
+                  const now = Date.now();
+                  const hasEditProtection =
+                    existingMsg.localEditProtection &&
+                    now < existingMsg.localEditProtection;
+                  const hasDeleteProtection =
+                    existingMsg.localDeleteProtection &&
+                    now < existingMsg.localDeleteProtection;
+
+                  const hasLocalEdit =
+                    existingMsg.lastEditedAt &&
+                    new Date(existingMsg.lastEditedAt) >
+                      new Date(newMsg.timestamp);
+                  const hasLocalDelete =
+                    existingMsg.lastDeletedAt &&
+                    new Date(existingMsg.lastDeletedAt) >
+                      new Date(newMsg.timestamp);
+
+                  // ENHANCED: Also preserve if local state shows edit/delete but server doesn't
+                  // Always preserve locally edited state marked by editTimestamp
+                  const localEditNotOnServer =
+                    (existingMsg.isEdited && !newMsg.isEdited) ||
+                    existingMsg.editTimestamp ||
+                    existingMsg.editedPermanently;
+                  const localDeleteNotOnServer =
+                    existingMsg.isDeleted && !newMsg.isDeleted;
+
+                  const shouldPreserveLocal =
+                    hasEditProtection ||
+                    hasDeleteProtection ||
+                    hasLocalEdit ||
+                    hasLocalDelete ||
+                    localEditNotOnServer ||
+                    localDeleteNotOnServer;
+
+                  if (shouldPreserveLocal) {
+                    // Preserve local state over server state
+
+                    return {
+                      ...newMsg, // Use server data as base
+                      content: existingMsg.content, // But keep local content
+                      isEdited: existingMsg.isEdited || existingMsg.editedPermanently, // Keep local edit state
+                      isDeleted: existingMsg.isDeleted || existingMsg.deletedPermanently, // Keep local delete state
+                      lastEditedAt: existingMsg.lastEditedAt, // Keep local timestamps
+                      lastDeletedAt: existingMsg.lastDeletedAt,
+                      localEditProtection: existingMsg.localEditProtection, // Keep protections
+                      localDeleteProtection: existingMsg.localDeleteProtection,
+                      pending: existingMsg.pending, // Keep pending state
+                      editTimestamp: existingMsg.editTimestamp, // Keep edit timestamp
+                      editedPermanently: existingMsg.editedPermanently, // Keep permanent edit flag
+                      deletedPermanently: existingMsg.deletedPermanently, // Keep permanent delete flag
+                    };
+                  }
+                }
+
+                return newMsg;
+              }
+            );
+
+            return mergedMessages;
+          });
         } else {
+          // For pagination (loading older messages), add them to the BEGINNING of the array
+          // since they are older than existing messages
           setMessages((prevMessages) => [...sortedMessages, ...prevMessages]);
         }
 
         return messagesData;
       } catch (error: any) {
-        console.error("Error fetching group messages:", error);
         setError("Failed to load messages");
         toast.error("Failed to load messages");
       } finally {
@@ -599,30 +779,13 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       // Messages from blocked users are primarily filtered by the backend
       // This function provides client-side validation as backup
 
-      console.log(
-        `[GroupChat] filterBlockedMessages called with ${messagesToFilter.length} messages`
-      );
-
       if (!blockedUsers || blockedUsers.length === 0) {
-        console.log(
-          `[GroupChat] No blocked users found, returning all ${messagesToFilter.length} messages`
-        );
         return messagesToFilter;
       }
-
-      console.log(
-        `[GroupChat] Group ${groupId} has ${blockedUsers.length} blocked users - applying client-side validation`
-      );
-      console.log(`[GroupChat] Blocked users:`, blockedUsers);
 
       // Create a Set of blocked user IDs for efficient lookup
       const blockedUserIds = new Set(
         blockedUsers.map((user) => user.user_id || user.id).filter(Boolean)
-      );
-
-      console.log(
-        `[GroupChat] Blocked user IDs set:`,
-        Array.from(blockedUserIds)
       );
 
       // Filter messages with client-side validation
@@ -636,58 +799,92 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         const senderId = message.sender.id;
         const isBlocked = blockedUserIds.has(senderId);
 
-        console.log(
-          `[GroupChat] Checking message from sender ${senderId}: isBlocked=${isBlocked}`
-        );
-
         if (isBlocked) {
-          console.log(
-            `[GroupChat] Client-side filter: Blocked message from user ${senderId}`
-          );
           return false;
         }
 
         return true;
       });
 
-      if (filtered.length !== messagesToFilter.length) {
-        console.log(
-          `[GroupChat] Client-side filtered ${
-            messagesToFilter.length - filtered.length
-          } messages from blocked users`
-        );
-      }
-
       return filtered;
     },
     [blockedUsers, groupId]
   );
 
-  // Get visible messages with enhanced filtering
-  const visibleMessages = useMemo(() => {
+  // Enhanced message grouping by date with better formatting
+  const groupedMessages = useMemo(() => {
     // First apply client-side blocked user filtering as backup
     const clientFiltered = filterBlockedMessages(messages);
 
     // Then apply search filter if searching
-    const finalMessages = isSearching ? filteredMessages : clientFiltered;
+    const messagesToProcess = isSearching ? filteredMessages : clientFiltered;
 
-    console.log(
-      `[GroupChat] Visible messages: ${finalMessages.length}/${
-        messages.length
-      } total, ${isSearching ? "search filtered" : "blocked user filtered"}`
+    if (!messagesToProcess || !Array.isArray(messagesToProcess)) {
+      return [];
+    }
+
+    const messagesByDate: Record<
+      string,
+      {
+        dateKey: string;
+        date: string;
+        messages: GroupMessage[];
+        isToday: boolean;
+        isYesterday: boolean;
+      }
+    > = {};
+
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+
+    // Sort messages by timestamp first (newest at bottom)
+    const sortedMessages = [...messagesToProcess].sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeA - timeB;
+    });
+
+    sortedMessages.forEach((message) => {
+      const dateKey = getDateKey(message.timestamp);
+
+      if (!messagesByDate[dateKey]) {
+        const messageDate = new Date(message.timestamp);
+        messagesByDate[dateKey] = {
+          dateKey,
+          date: formatDateForSeparator(messageDate),
+          messages: [],
+          isToday: dateKey === today,
+          isYesterday: dateKey === yesterday,
+        };
+      }
+
+      messagesByDate[dateKey].messages.push(message);
+    });
+
+    // Convert to array and sort by date
+    return Object.values(messagesByDate).sort(
+      (a, b) => new Date(a.dateKey).getTime() - new Date(b.dateKey).getTime()
     );
-
-    return finalMessages;
   }, [messages, filteredMessages, isSearching, filterBlockedMessages]);
+
+  // Get visible messages for backward compatibility
+  const visibleMessages = useMemo(() => {
+    return groupedMessages.flatMap((group) => group.messages);
+  }, [groupedMessages]);
 
   // Handle edit message
   const handleEditMessage = useCallback(
     (messageId: string) => {
+      // Check if this is a temporary ID that shouldn't be edited via API
+      if (messageId.startsWith("temp-")) {
+        toast.error("Cannot edit message that hasn't been sent yet");
+        return;
+      }
+
       const message = messages.find((msg) => msg.id === messageId);
       if (message && !message.isDeleted && !message.pending) {
         setEditingMessageId(messageId);
         setInputMessage(message.content);
-        console.log(`[GroupChat] Editing message: ${messageId}`);
       }
     },
     [messages]
@@ -697,7 +894,12 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
     setInputMessage("");
-    console.log("[GroupChat] Edit cancelled");
+
+    // Robustly clear and blur the textarea
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+      textareaRef.current.blur();
+    }
   }, []);
 
   // Handle submit edit (updated to accept content parameter)
@@ -717,13 +919,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       setIsSending(true);
 
       try {
-        console.log(
-          "🔧 EDIT: Starting edit for message:",
-          editingMessageId,
-          "New content:",
-          messageContent
-        );
-
         // Update message optimistically
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
@@ -732,6 +927,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                   ...msg,
                   content: messageContent,
                   isEdited: true,
+                  editedPermanently: true, // Add this to ensure edit state persists
+                  editTimestamp: new Date().toISOString(), // Add timestamp
                   pending: true,
                 }
               : msg
@@ -739,20 +936,18 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         // Call API to edit message
-        console.log("🔧 EDIT: Calling editGroupMessage API...");
         const response = await editGroupMessage(
           groupId,
           editingMessageId,
           messageContent
         );
-        console.log("🔧 EDIT: API response:", response);
 
         // Simple validation - if we get a response, consider it successful
         if (!response) {
           throw new Error("No response received from edit API");
         }
 
-        // Update with successful edit
+        // Update with successful edit - ENHANCED with protection timestamp
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
             msg.id === editingMessageId
@@ -760,30 +955,40 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                   ...msg,
                   content: messageContent,
                   isEdited: true,
+                  editedPermanently: true, // Add permanent flag to prevent losing edit state
                   pending: false,
+                  lastEditedAt: new Date().toISOString(), // Add timestamp to track local edits
+                  localEditProtection: Date.now() + 60000, // Protect from overwrites for 60 seconds
+                  editTimestamp: new Date().toISOString(), // Store edit timestamp for persistent state
                 }
               : msg
           )
         );
-
+        
+        // Save edited message ID to localStorage for permanent persistence
+        saveEditedMessageToStorage(groupId, editingMessageId        );
+        
+        // Save edited message ID to localStorage for permanent persistence
+        saveEditedMessageToStorage(groupId, editingMessageId);
+        
         // Clear edit state
         setEditingMessageId(null);
+        setInputMessage("");
+
+        // Robustly clear and blur the textarea
+        if (textareaRef.current) {
+          textareaRef.current.value = "";
+          textareaRef.current.blur();
+        }
 
         toast.success("Message updated successfully");
-        console.log(
-          `[GroupChat] Message edited successfully: ${editingMessageId}`
-        );
 
-        // Schedule a background refresh to ensure consistency with backend
-        setTimeout(() => {
-          if (!hasPendingOperations) {
-            console.log("[GroupChat] Background refresh after edit operation");
-            fetchGroupMessages(1, 20);
-          }
-        }, 2000);
+        // Save edited message ID to localStorage
+        saveEditedMessageToStorage(groupId, editingMessageId);
+
+        // REMOVED: Background refresh that was causing state loss
+        // The message state is already correct from optimistic update + API response
       } catch (error: any) {
-        console.error("🔧 EDIT ERROR: Failed to edit message:", error);
-
         // Show more specific error message
         const errorMessage =
           error?.message || error?.error || "Failed to edit message";
@@ -831,6 +1036,12 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       const message = messages.find((msg) => msg.id === messageId);
       if (!message) return;
 
+      // Check if this is a temporary ID that shouldn't be deleted via API
+      if (messageId.startsWith("temp-")) {
+        toast.error("Cannot delete message that hasn't been sent yet");
+        return;
+      }
+
       // Show confirmation using react-hot-toast
       const shouldDelete = await new Promise<boolean>((resolve) => {
         toast(
@@ -872,8 +1083,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
       if (!shouldDelete) return;
 
-      console.log("🗑️ DELETE: Starting delete for message:", messageId);
-
       try {
         // Optimistically mark message as deleted
         setMessages((prevMessages) =>
@@ -890,37 +1099,33 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         );
 
         // Call API to delete message
-        console.log("🗑️ DELETE: Calling deleteGroupMessage API...");
         const response = await deleteGroupMessage(groupId, messageId);
-        console.log("🗑️ DELETE: API response:", response);
 
         // Simple validation - if we get a response, consider it successful
         if (!response) {
           throw new Error("No response received from delete API");
         }
 
-        // Confirm deletion
+        // Confirm deletion - ENHANCED with protection timestamp
         setMessages((prevMessages) =>
           prevMessages.map((msg) =>
-            msg.id === messageId ? { ...msg, pending: false } : msg
+            msg.id === messageId
+              ? {
+                  ...msg,
+                  pending: false,
+                  lastDeletedAt: new Date().toISOString(), // Add timestamp to track local deletes
+                  localDeleteProtection: Date.now() + 60000, // Protect from overwrites for 60 seconds (increased from 30)
+                  deletedPermanently: true, // Add permanent flag to prevent WebSocket from overriding
+                }
+              : msg
           )
         );
 
         toast.success("Message deleted successfully");
-        console.log(`[GroupChat] Message deleted: ${messageId}`);
 
-        // Schedule a background refresh to ensure consistency with backend
-        setTimeout(() => {
-          if (!hasPendingOperations) {
-            console.log(
-              "[GroupChat] Background refresh after delete operation"
-            );
-            fetchGroupMessages(1, 20);
-          }
-        }, 2000);
+        // REMOVED: Background refresh that was causing message disappearance
+        // The message state is already correct from optimistic update + API response
       } catch (error: any) {
-        console.error("🗑️ DELETE ERROR: Failed to delete message:", error);
-
         // Show more specific error message
         const errorMessage =
           error?.message || error?.error || "Failed to delete message";
@@ -989,7 +1194,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
         toast.success("Message sent successfully");
       } catch (error) {
-        console.error("Failed to retry message:", error);
         toast.error("Failed to send message");
 
         // Mark as failed again
@@ -1020,12 +1224,19 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
     const messageContent = inputMessage.trim();
     setInputMessage(""); // Clear input early for better UX
+
+    // Robustly clear the textarea
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+    }
+
     setIsSending(true);
 
     const tempId = `temp-${Date.now()}-${Math.random()}`;
 
     try {
       // Create optimistic message for immediate UI feedback
+      const nowISO = new Date().toISOString();
       const optimisticMessage: GroupMessage = {
         id: tempId,
         content: messageContent,
@@ -1035,7 +1246,11 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           avatar_url:
             userInfo?.profile_picture_url || user?.profile_picture_url || null,
         },
-        timestamp: new Date().toISOString(),
+        timestamp: nowISO,
+        // Include all timestamp fields for consistency
+        raw_timestamp: nowISO,
+        created_at: nowISO,
+        sent_at: nowISO,
         isCurrentUser: true,
         pending: true,
         delivered: false,
@@ -1051,19 +1266,36 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
       const response = await sendGroupMessage(groupId, messageContent);
 
-      console.log("[GroupChat] Message sent successfully:", response);
+      // Extract real message ID from response
+      const realMessageId = response?.message_id;
 
-      // Update optimistic message to delivered
-      setMessages((prevMessages) =>
-        prevMessages.map((msg) =>
-          msg.id === tempId ? { ...msg, pending: false, delivered: true } : msg
-        )
-      );
+      if (realMessageId) {
+        // Update optimistic message with real ID and delivered status
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === tempId
+              ? {
+                  ...msg,
+                  id: realMessageId, // Replace temp ID with real ID
+                  pending: false,
+                  delivered: true,
+                }
+              : msg
+          )
+        );
+      } else {
+        // Fallback: just mark as delivered if no real ID available
+        setMessages((prevMessages) =>
+          prevMessages.map((msg) =>
+            msg.id === tempId
+              ? { ...msg, pending: false, delivered: true }
+              : msg
+          )
+        );
+      }
 
       toast.success("Message sent successfully", { id: `send-${tempId}` });
     } catch (error: any) {
-      console.error("Failed to send message:", error);
-
       // Mark optimistic message as failed
       setMessages((prevMessages) =>
         prevMessages.map((msg) =>
@@ -1139,8 +1371,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
   useEffect(() => {
     if (!wsMessages || wsMessages.length === 0 || !groupId) return;
 
-    console.log(`[GroupChat] Received WebSocket messages:`, wsMessages);
-
     const newGroupMessages = wsMessages.filter(
       (msg: any) => msg.group_id === groupId || msg.chatroom_id === groupId
     );
@@ -1151,20 +1381,71 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       const isCurrentUser = isMessageFromCurrentUser(wsMsg.sender_id);
       const senderInfo = resolveSenderName(wsMsg.sender_id, isCurrentUser);
 
+      // Check for edit status from WebSocket message - simplified to match private chat approach
+      const isEdited = Boolean(wsMsg.isEdited || wsMsg.is_edited);
+
+      const isDeleted = Boolean(
+        wsMsg.isDeleted ||
+          wsMsg.is_deleted ||
+          wsMsg.deleted ||
+          wsMsg.deletedAt ||
+          wsMsg.deleted_at ||
+          wsMsg.content === "This message was deleted" ||
+          wsMsg.content === "[Deleted]"
+      );
+
+      // Handle deleted message content
+      let messageContent = wsMsg.content;
+      if (isDeleted && wsMsg.content !== "This message was deleted") {
+        messageContent = "This message was deleted";
+      }
+
+      // Use more robust timestamp handling for WebSocket messages
+      const messageTimestamp =
+        wsMsg.created_at ||
+        wsMsg.sent_at ||
+        (wsMsg as any).timestamp ||
+        new Date().toISOString();
+
       return {
         id: wsMsg.id,
-        content: wsMsg.content,
+        content: messageContent,
         sender: {
           id: String(wsMsg.sender_id),
           name: senderInfo.name,
           avatar_url: senderInfo.avatar,
         },
-        timestamp: wsMsg.created_at || new Date().toISOString(),
+        timestamp: messageTimestamp,
+        // Preserve all timestamp fields for accurate time display
+        raw_timestamp: wsMsg.created_at || wsMsg.sent_at,
+        created_at: wsMsg.created_at,
+        sent_at: wsMsg.sent_at,
         isCurrentUser,
+        isEdited,
+        isDeleted,
         pending: false,
         delivered: true,
+        // Add editedPermanently field to ensure it's included in the type
+        editedPermanently: false, // This will be updated based on localStorage check
       };
-    });
+    });      // Get edited message IDs from localStorage to preserve state
+      const editedMessagesFromStorage = getEditedMessagesFromStorage(groupId);
+      
+      // Mark messages from WebSocket as edited if they're in localStorage
+      formattedNewMessages.forEach(msg => {
+        if (editedMessagesFromStorage.includes(msg.id)) {
+          msg.isEdited = true;
+          msg.editedPermanently = true;
+        }
+      });
+      
+      // Track if we have new messages for background refresh decision
+      const hasNewMessages =
+        formattedNewMessages.length > 0 &&
+        formattedNewMessages.some(
+          (msg: GroupMessage) =>
+            !messages.some((prev: GroupMessage) => prev.id === msg.id)
+        );
 
     setMessages((prevMessages) => {
       const existingIds = new Set(prevMessages.map((m) => m.id));
@@ -1172,7 +1453,74 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
         (m) => !existingIds.has(m.id)
       );
 
-      if (uniqueNewMessages.length === 0) return prevMessages;
+      if (uniqueNewMessages.length === 0) {
+        // No new messages, but check if existing messages need updates
+        // ENHANCED: Better merge of WebSocket updates with local states
+        const updatedMessages = prevMessages.map((existingMsg) => {
+          const wsUpdate = formattedNewMessages.find(
+            (ws) => ws.id === existingMsg.id
+          );
+          if (wsUpdate) {
+            // Check for local changes that should be preserved
+            const now = Date.now();
+            const hasEditProtection =
+              existingMsg.localEditProtection &&
+              now < existingMsg.localEditProtection;
+            const hasDeleteProtection =
+              existingMsg.localDeleteProtection &&
+              now < existingMsg.localDeleteProtection;
+
+            const hasRecentLocalEdit =
+              existingMsg.lastEditedAt &&
+              new Date(existingMsg.lastEditedAt) > new Date(Date.now() - 30000); // 30 seconds - increased window to ensure edit state persists
+            const hasRecentLocalDelete =
+              existingMsg.lastDeletedAt &&
+              new Date(existingMsg.lastDeletedAt) >
+                new Date(Date.now() - 10000); // 10 seconds
+
+            // Also preserve if we have pending operations or edit timestamp
+            const hasPendingOperation = Boolean(existingMsg.pending);
+            const hasEditTimestamp = Boolean(existingMsg.editTimestamp);
+
+            const shouldPreserveLocal =
+              hasEditProtection ||
+              hasDeleteProtection ||
+              hasRecentLocalEdit ||
+              hasRecentLocalDelete ||
+              hasPendingOperation;
+
+            if (shouldPreserveLocal) {
+              // Preserve local changes over WebSocket updates
+              return existingMsg; // Keep existing message as-is
+            } else {
+              // This is a special case: always preserve edited state even when accepting websocket updates
+              const preserveEditedState = Boolean(
+                existingMsg.isEdited || existingMsg.editTimestamp
+              );
+
+              // Safe to update with WebSocket data, but preserve edited state if already set
+              return {
+                ...existingMsg,
+                content: wsUpdate.content,
+                isEdited: preserveEditedState || wsUpdate.isEdited, // Always preserve local edit state if set
+                isDeleted: existingMsg.isDeleted || wsUpdate.isDeleted, // Preserve deleted state if already set
+                timestamp: wsUpdate.timestamp,
+                // Preserve important state flags and timestamps
+                lastEditedAt: existingMsg.lastEditedAt,
+                lastDeletedAt: existingMsg.lastDeletedAt,
+                editTimestamp:
+                  existingMsg.editTimestamp ||
+                  (existingMsg.isEdited ? new Date().toISOString() : undefined),
+                localEditProtection: existingMsg.localEditProtection,
+                localDeleteProtection: existingMsg.localDeleteProtection,
+              };
+            }
+          }
+          return existingMsg;
+        });
+
+        return updatedMessages;
+      }
 
       // Remove any temporary/optimistic messages that match the new real messages
       const messagesWithoutOptimistic = prevMessages.filter((msg) => {
@@ -1207,18 +1555,9 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
       );
     });
 
-    // Refresh message history to ensure we have all messages
-    // But only if we don't have pending operations to avoid conflicts
-    setTimeout(() => {
-      if (!hasPendingOperations) {
-        console.log("[GroupChat] Background refresh from WebSocket");
-        fetchGroupMessages(1, 20);
-      } else {
-        console.log(
-          "[GroupChat] Skipping WebSocket refresh due to pending operations"
-        );
-      }
-    }, 1000);
+    // DISABLED: Background refresh completely to prevent state overwrites
+    // The WebSocket already provides real-time updates, no need for additional fetching
+    // that can overwrite local optimistic states for edit/delete operations
   }, [
     wsMessages,
     groupId,
@@ -1233,8 +1572,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading group chat...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4" />
         </div>
       </div>
     );
@@ -1334,7 +1672,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
           {/* Messages list */}
           <div className="flex-1 overflow-y-auto p-2 sm:p-3 lg:p-4 space-y-2 sm:space-y-3">
             {!loadingMessages &&
-              visibleMessages.length === 0 &&
+              groupedMessages.length === 0 &&
               !isSearching && (
                 <div className="text-center py-8 sm:py-12 lg:py-16">
                   <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 lg:mb-6">
@@ -1349,7 +1687,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                 </div>
               )}
 
-            {isSearching && visibleMessages.length === 0 && (
+            {isSearching && groupedMessages.length === 0 && (
               <div className="text-center py-8 sm:py-12 lg:py-16">
                 <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 lg:mb-6">
                   <FaSearch className="text-gray-400 text-lg sm:text-2xl lg:text-3xl" />
@@ -1363,15 +1701,33 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               </div>
             )}
 
-            {/* Messages list */}
-            {visibleMessages.map((message) => (
-              <GroupMessageItem
-                key={message.id}
-                message={message}
-                onRetryClick={handleRetryMessage}
-                onEditClick={handleEditMessage}
-                onDeleteClick={handleDeleteMessage}
-              />
+            {/* Messages list with date separators */}
+            {groupedMessages.map((group) => (
+              <div key={group.dateKey} className="message-group">
+                {/* Date separator */}
+                <div className="flex justify-center my-4">
+                  <div className="bg-gray-100 rounded-full px-3 py-1">
+                    <span className="text-xs text-gray-600 font-medium">
+                      {group.isToday
+                        ? "Today"
+                        : group.isYesterday
+                        ? "Yesterday"
+                        : group.date}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Message items */}
+                {group.messages.map((message) => (
+                  <GroupMessageItem
+                    key={message.id}
+                    message={message}
+                    onRetryClick={handleRetryMessage}
+                    onEditClick={handleEditMessage}
+                    onDeleteClick={handleDeleteMessage}
+                  />
+                ))}
+              </div>
             ))}
 
             {loadingMessages && (
@@ -1425,18 +1781,8 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                       setIsUploadingFile(true);
                       setUploadProgress(0);
 
-                      // Upload file and send message using fileUploadHelper
-                      const result = await uploadFileAndSendMessage(
-                        file,
-                        groupId,
-                        "", // messageText (empty since we're just sending a file)
-                        true, // isGroup set to true for group chat
-                        (progress: number) => setUploadProgress(progress),
-                        session?.access_token
-                      );
-
-                      // Add optimistic message with file attachment
-                      const tempId = `temp-${Date.now()}`;
+                      // Create optimistic message first
+                      const tempId = `temp-${Date.now()}-${Math.random()}`;
                       const optimisticMessage: GroupMessage = {
                         id: tempId,
                         content: `📎 ${file.name}`,
@@ -1457,7 +1803,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                             getMediaType(file.type) === "image"
                               ? "image"
                               : "file",
-                          url: result.fileUrl,
+                          url: URL.createObjectURL(file), // Use temporary URL for immediate display
                           name: file.name,
                           size: formatFileSize(file.size),
                         },
@@ -1469,14 +1815,55 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
                         optimisticMessage,
                       ]);
 
-                      // Update message to delivered state
-                      setMessages((prevMessages) =>
-                        prevMessages.map((msg) =>
-                          msg.id === tempId
-                            ? { ...msg, pending: false, delivered: true }
-                            : msg
-                        )
+                      // Upload file and send message using fileUploadHelper
+                      const result = await uploadFileAndSendMessage(
+                        file,
+                        groupId,
+                        "", // messageText (empty since we're just sending a file)
+                        true, // isGroup set to true for group chat
+                        (progress: number) => setUploadProgress(progress),
+                        session?.access_token
                       );
+
+                      // Extract real message ID from response
+                      const realMessageId = result?.messageId;
+
+                      if (realMessageId) {
+                        // Update optimistic message with real ID and server URL
+                        setMessages((prevMessages) =>
+                          prevMessages.map((msg) =>
+                            msg.id === tempId
+                              ? {
+                                  ...msg,
+                                  id: realMessageId, // Replace temp ID with real ID
+                                  pending: false,
+                                  delivered: true,
+                                  attachment: {
+                                    ...msg.attachment!,
+                                    url: result.fileUrl,
+                                  },
+                                }
+                              : msg
+                          )
+                        );
+                      } else {
+                        // Fallback: just mark as delivered if no real ID available
+                        setMessages((prevMessages) =>
+                          prevMessages.map((msg) =>
+                            msg.id === tempId
+                              ? {
+                                  ...msg,
+                                  pending: false,
+                                  delivered: true,
+                                  attachment: {
+                                    ...msg.attachment!,
+                                    url: result.fileUrl,
+                                  },
+                                }
+                              : msg
+                          )
+                        );
+                      }
 
                       // Auto-scroll to show the new message
                       setTimeout(() => {
@@ -1487,7 +1874,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
                       toast.success("File uploaded successfully!");
                     } catch (error) {
-                      console.error("File upload failed:", error);
                       toast.error(
                         error instanceof Error
                           ? error.message
@@ -1514,6 +1900,7 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
               </button>
 
               <textarea
+                ref={textareaRef}
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={(e) => {
@@ -1581,19 +1968,6 @@ const GroupDetail: React.FC<GroupDetailProps> = ({ groupId, isOwner }) => {
 
             {/* Sidebar */}
             <div className="fixed lg:absolute right-0 top-0 h-full w-full sm:w-96 lg:w-80 bg-white border-l border-gray-200 z-50 lg:z-auto shadow-xl lg:shadow-none transform transition-transform duration-300">
-              {/* Mobile header */}
-              <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 lg:hidden bg-gray-50">
-                <h3 className="font-semibold text-gray-900 text-base sm:text-lg">
-                  Group Info
-                </h3>
-                <button
-                  onClick={() => setShowProfile(false)}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors touch-manipulation"
-                >
-                  <X className="text-lg" />
-                </button>
-              </div>
-
               {/* Content */}
               <div className="h-full overflow-hidden">
                 <GroupProfileInfo

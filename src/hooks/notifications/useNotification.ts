@@ -105,7 +105,6 @@ export const useNotification = () => {
         url = `${API_ENDPOINT}/${endpointPath}`.replace(/\/+/g, "/");
       }
 
-      console.log(`[Notification API] Calling SAasasa: ${url}`);
 
       const response = await fetch(url, mergedOptions);
 
@@ -139,7 +138,6 @@ export const useNotification = () => {
 
       return await response.text();
     } catch (err: any) {
-      console.error(`API call failed for ${endpoint}:`, err);
       throw err;
     }
   };
@@ -160,7 +158,6 @@ export const useNotification = () => {
         method: "GET",
       });
 
-      console.log("[DEBUG] Response data from notifications API:", data);
 
       // Handle different response formats
       let notificationsData: Notification[] = [];
@@ -255,7 +252,6 @@ export const useNotification = () => {
       };
     } catch (err: any) {
       setError(`Failed to get notifications: ${err.message}`);
-      console.error("Error fetching notifications:", err);
       setLoading(false);
       throw err;
     }
@@ -287,7 +283,6 @@ export const useNotification = () => {
 
         return response;
       } catch (err) {
-        console.error("Error loading more notifications:", err);
         throw err;
       }
     };
@@ -322,7 +317,6 @@ export const useNotification = () => {
       return response;
     } catch (err: any) {
       setError(`Failed to mark all notifications as read: ${err.message}`);
-      console.error("Error marking all notifications as read:", err);
       setLoading(false);
       throw err;
     }
@@ -335,13 +329,11 @@ export const useNotification = () => {
     setError(null);
 
     try {
-      console.log("[Notifications] Fetching unread count...");
       // Using "/unread-count" with leading slash to ensure proper URL construction
       const response = await apiCall("/unread-count", {
         method: "GET",
       });
 
-      console.log("[DEBUG] Unread count response:", response);
 
       // Handle various response formats
       if (response && typeof response.count === "number") {
@@ -352,17 +344,13 @@ export const useNotification = () => {
         const possibleCountProps = ["count", "unread_count", "total", "unread"];
         for (const prop of possibleCountProps) {
           if (typeof response[prop] === "number") {
-            console.log(`[Notifications] Found count in property: ${prop}`);
             const count = response[prop];
             setUnreadCount(count);
             return { count };
           }
         }
 
-        console.warn(
-          "[Notifications] Invalid unread count response:",
-          response
-        );
+       
         // Keep the previous value if response is invalid
         return { count: unreadCount };
       } else if (typeof response === "number") {
@@ -370,13 +358,11 @@ export const useNotification = () => {
         setUnreadCount(response);
         return { count: response };
       } else {
-        console.warn("[Notifications] Unexpected response format:", response);
         return { count: unreadCount };
       }
     } catch (err: any) {
       // For errors fetching unread count, we'll use 0 as default but still record the error
       setError(`Failed to get unread notification count: ${err.message}`);
-      console.error("[Notifications] Error fetching unread count:", err);
 
       // Return a valid response with count 0 to prevent UI errors
       return { count: 0 };
@@ -388,7 +374,6 @@ export const useNotification = () => {
    */
   const markAsRead = async (notificationId: string) => {
     if (!notificationId) {
-      console.error("Invalid notification ID provided");
       throw new Error("Invalid notification ID");
     }
 
@@ -419,7 +404,6 @@ export const useNotification = () => {
       return response;
     } catch (err: any) {
       setError(`Failed to mark notification as read: ${err.message}`);
-      console.error("Error marking notification as read:", err);
       setLoading(false);
       throw err;
     }
@@ -441,7 +425,6 @@ export const useNotification = () => {
       return response;
     } catch (err: any) {
       setError(`Failed to check notification service health: ${err.message}`);
-      console.error("Error checking notification service health:", err);
       setLoading(false);
       throw err;
     }

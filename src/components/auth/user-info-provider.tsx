@@ -49,20 +49,14 @@ const useUserInfoQuery = () => {
   const { data: session, status } = useSession();
   const access_token = session?.access_token as string;
 
-  console.log("Session status:", status);
-  console.log("Access token exists:", !!access_token);
-
   return useQuery<UserInfo>({
     queryKey: ["userInfo"],
     queryFn: async () => {
       if (!access_token || status !== "authenticated") {
-        console.error("Not authenticated in useUserInfoQuery");
         throw new Error("Not authenticated");
       }
 
       try {
-        console.log("Fetching user info from API...");
-
         // Try multiple endpoints to get user info
         const endpoints = [
           `/api/proxy/auth/user/info`,
@@ -78,7 +72,6 @@ const useUserInfoQuery = () => {
         // Try each endpoint until we get a successful response
         for (const endpoint of endpoints) {
           try {
-            console.log(`Trying to fetch user info from ${endpoint}`);
             const resp = await fetch(endpoint, {
               headers: {
                 Authorization: `Bearer ${access_token}`,
@@ -92,7 +85,6 @@ const useUserInfoQuery = () => {
               break;
             }
           } catch (err) {
-            console.warn(`Error fetching from ${endpoint}:`, err);
           }
         }
 
@@ -102,10 +94,7 @@ const useUserInfoQuery = () => {
 
         // Parse response
         const rawData = await response.json();
-        console.log(
-          `User info fetched successfully from ${endpointUsed}:`,
-          rawData
-        );
+        rawData;
 
         // Extract user data from the response, considering different response structures
         const userData =
@@ -133,12 +122,10 @@ const useUserInfoQuery = () => {
           username: userData.username || "",
         };
 
-        console.log("Processed user info:", userInfo);
         return userInfo;
       } catch (error: unknown) {
         const errorMessage =
           error instanceof Error ? error.message : "An unknown error occurred";
-        console.error("User info fetch error:", errorMessage);
         throw new Error(`Failed to fetch user info: ${errorMessage}`);
       }
     },

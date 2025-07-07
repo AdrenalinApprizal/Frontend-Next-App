@@ -10,36 +10,34 @@ const handler = NextAuth({
         email: { label: "Email", type: "text" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         try {
           if (!credentials?.email || !credentials?.password) {
             throw new Error("Email and password are required");
           }
 
           // Use the proxy endpoint instead of directly connecting to the backend
-          const response = await fetch(
-            `${process.env.NEXTAUTH_URL || ""}/api/proxy/auth/login`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
-              body: JSON.stringify({
-                email: credentials.email,
-                password: credentials.password,
-              }),
-              cache: "no-store",
-            }
-          );
+          const authUrl = `${
+            process.env.NEXTAUTH_URL || ""
+          }/api/proxy/auth/login`;
+
+          const response = await fetch(authUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              email: credentials.email,
+              password: credentials.password,
+            }),
+            cache: "no-store",
+          });
 
           const data = await response.json();
 
           if (!response.ok) {
-            console.error(
-              `Auth API error: ${response.status} ${response.statusText}`,
-              data
-            );
+            data;
             // Throw specific error message if available from API
             throw new Error(
               data?.message ||
@@ -61,7 +59,6 @@ const handler = NextAuth({
             expiresAt: data.expires_at || data.expiresAt,
           };
         } catch (error) {
-          console.error("Authentication error:", error);
           throw error; // Re-throw to let NextAuth handle the error
         }
       },
@@ -69,6 +66,12 @@ const handler = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
+      ({
+        tokenExists: !!token,
+        userExists: !!user,
+        userAccessToken: user?.access_token ? "Present" : "Missing",
+      });
+
       if (user) {
         token.access_token = user.access_token;
         token.expiresAt = user.expiresAt;
@@ -77,6 +80,12 @@ const handler = NextAuth({
       return token;
     },
     async session({ session, token }) {
+      ({
+        sessionExists: !!session,
+        tokenExists: !!token,
+        tokenAccessToken: token?.access_token ? "Present" : "Missing",
+      });
+
       // Use type assertion to ensure TypeScript recognizes these properties
       session.access_token = token.access_token as string;
       session.expiresAt = token.expiresAt as string;

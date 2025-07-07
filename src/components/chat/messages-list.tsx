@@ -19,11 +19,17 @@ import { useFriendship } from "@/hooks/auth/useFriends";
 import { useMessages } from "@/hooks/messages/useMessages";
 import usePresence from "@/hooks/presence/usePresence";
 import { useWebSocketContext } from "@/hooks/websocket/WebSocketProviderNew";
+import { eventBus } from "@/hooks/websocket/useEventBus";
 import {
   formatMessageTimestamp,
   formatTimeString,
 } from "@/utils/timestampHelper";
 import { OptimizedAvatar } from "../optimized-avatar";
+import {
+  MessageListItem,
+  BaseMessage,
+  normalizeSingleMessage,
+} from "@/types/messages";
 
 type MessageType = "friend" | "group";
 
@@ -33,25 +39,8 @@ type UserStatus = "online" | "offline";
 // Message read status type
 type ReadStatus = "read" | "delivered" | "sent" | "unread";
 
-// Tipe data untuk pesan
-interface Message {
-  id: string;
-  sender: {
-    name: string;
-    profile_picture_url?: string;
-    id?: string;
-    status?: UserStatus; // Added status for friend messages
-  };
-  content: string;
-  timestamp: string;
-  formattedTime?: string; // For displaying formatted time
-  readStatus?: ReadStatus;
-  unreadCount?: number;
-  type: MessageType; // Add type to distinguish between friend and group messages
-  lastActivity?: string; // ISO date string for the last activity
-  isTyping?: boolean; // Added to show typing indicator
-  hasMessages?: boolean; // Flag to identify which have real messages
-}
+// Tipe data untuk pesan - sekarang menggunakan type yang konsisten
+interface Message extends MessageListItem {}
 
 // Interface untuk friend data
 interface Friend {
@@ -115,6 +104,7 @@ export function MessagesList() {
     getGroups,
     createGroup,
     getGroupMessages,
+    getGroupConversationHistory,
   } = useGroup();
 
   // Get data from the messages hook
@@ -122,7 +112,8 @@ export function MessagesList() {
     loading: messageLoading,
     error: messageError,
     getUnreadCount,
-    getMessages,
+    getLastMessage,
+    getConversationHistory,
     getUnifiedMessages,
   } = useMessages();
 
@@ -137,23 +128,18 @@ export function MessagesList() {
   // Update local state when hook data changes
   useEffect(() => {
     if (hookFriends && Array.isArray(hookFriends)) {
-      console.log("[MessagesList] Transforming friends data:", hookFriends);
-
       // Process friends data for display
 
       const transformAndSetFriends = async () => {
         const friendsWithMessages = await transformFriendsToMessages(
           hookFriends
         );
-        console.log(
-          "[MessagesList] Transformed friends with profile pictures:",
-          friendsWithMessages.map((f) => ({
-            id: f.id,
-            name: f.sender.name,
-            profile_url: f.sender.profile_picture_url,
-            content: f.content,
-          }))
-        );
+        friendsWithMessages.map((f) => ({
+          id: f.id,
+          name: f.sender.name,
+          profile_url: f.sender.profile_picture_url,
+          content: f.content,
+        }));
         setMessages((prevMessages) => {
           // Remove old friend messages and add new ones
           const nonFriendMessages = prevMessages.filter(
@@ -205,6 +191,24 @@ export function MessagesList() {
         }
       };
 
+      // Subscribe to message deletion events
+      const handleMessageDeleted = (data: any) => {
+        if (data.type === "message_deleted" && data.message_id) {
+          // Refresh the message list to reflect deletion
+          getFriends();
+          getGroups();
+        }
+      };
+
+      // Subscribe to message edit events
+      const handleMessageEdited = (data: any) => {
+        if (data.type === "message_edited" && data.message_id) {
+          // Refresh the message list to reflect edit
+          getFriends();
+          getGroups();
+        }
+      };
+
       // Subscribe to typing indicators
       const handleTypingEvent = (data: any) => {
         if (data.type === "typing" && data.user_id) {
@@ -221,6 +225,8 @@ export function MessagesList() {
         wsMessages.forEach((message: any) => {
           if (message.type === "presence") handlePresenceUpdate(message);
           if (message.type === "message") handleNewMessage(message);
+          if (message.type === "message_deleted") handleMessageDeleted(message);
+          if (message.type === "message_edited") handleMessageEdited(message);
           if (message.type === "typing") handleTypingEvent(message);
         });
       }
@@ -230,36 +236,108 @@ export function MessagesList() {
     }
   }, [isConnected, wsMessages]);
 
+  // Listen for real-time message events via EventBus
+  useEffect(() => {
+    const handleMessageDeleted = (data: {
+      messageId: string;
+      conversationId: string;
+      type: "private" | "group";
+    }) => {
+      // Update local state to reflect the deletion
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) => {
+          if (msg.id === data.conversationId) {
+            return {
+              ...msg,
+              content: "This message was deleted",
+              timestamp: new Date().toISOString(), // Update timestamp to show recent activity
+            };
+          }
+          return msg;
+        })
+      );
+
+      // Also refresh data from server to ensure consistency
+      if (data.type === "private") {
+        getFriends();
+      } else if (data.type === "group") {
+        getGroups();
+      }
+    };
+
+    const handleMessageEdited = (data: {
+      messageId: string;
+      conversationId: string;
+      content: string;
+      type: "private" | "group";
+    }) => {
+      // Update local state to reflect the edit
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) => {
+          if (msg.id === data.conversationId) {
+            return {
+              ...msg,
+              content: data.content,
+              timestamp: new Date().toISOString(), // Update timestamp to show recent activity
+            };
+          }
+          return msg;
+        })
+      );
+
+      // Also refresh data from server to ensure consistency
+      if (data.type === "private") {
+        getFriends();
+      } else if (data.type === "group") {
+        getGroups();
+      }
+    };
+
+    // Subscribe to events
+    eventBus.on("message-deleted", handleMessageDeleted);
+    eventBus.on("message-edited", handleMessageEdited);
+
+    // Cleanup
+    return () => {
+      eventBus.off("message-deleted", handleMessageDeleted);
+      eventBus.off("message-edited", handleMessageEdited);
+    };
+  }, [getFriends, getGroups]);
+
   // Function to get last message for a conversation
   const getLastMessageForConversation = async (
     conversationId: string,
     type: "friend" | "group"
   ) => {
     try {
+      let response = null;
+
+      // Use unified getLastMessage function for both friends and groups
       if (type === "group") {
-        // For groups, use the group messages API from the hook
-        const response = await getGroupMessages(conversationId, 1, 1); // Get only 1 message (latest)
-        if (response && response.messages && response.messages.length > 0) {
-          return response.messages[0]; // Return the latest message
-        }
+        response = await getLastMessage(conversationId, "group");
       } else {
-        // For friends, try the unified messages API with correct type
-        const response = await getUnifiedMessages({
-          target_id: conversationId,
-          type: "private",
-          limit: 1,
-          page: 1,
-        });
-        if (response && response.data && response.data.length > 0) {
-          return response.data[0]; // Return the latest message
-        }
+        response = await getLastMessage(conversationId, "private");
       }
-      return null;
+
+      // Use consistent response normalization
+      const normalizedMessage = normalizeMessageResponse(response);
+
+      // Check if the response indicates no conversation history exists
+      // Return null if there's truly no chat history (empty response, no data, etc.)
+      if (
+        !normalizedMessage ||
+        (response &&
+          response.data &&
+          Array.isArray(response.data) &&
+          response.data.length === 0) ||
+        (response && response.success === false)
+      ) {
+        return null;
+      }
+
+      return normalizedMessage;
     } catch (error) {
-      console.error(
-        `[MessagesList] Failed to get last message for ${type} ${conversationId}:`,
-        error
-      );
+      // If API call fails, treat as no conversation history
       return null;
     }
   };
@@ -281,10 +359,8 @@ export function MessagesList() {
       await Promise.all([getFriends(), getGroups()]);
 
       // The useEffect hooks will automatically update the messages when hookFriends and hookGroups change
-      console.log("[MessagesList] Data refresh completed");
     } catch (err: any) {
       setError(err.message || "Failed to load conversations");
-      console.error("Error loading conversations data:", err);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -377,7 +453,6 @@ export function MessagesList() {
         result?.message || `Friend request sent to ${friendUsername}`
       );
     } catch (err: any) {
-      console.error("Failed to add friend:", err);
       toast.error(err.message || "Failed to send friend request");
     } finally {
       setIsAddingFriend(false);
@@ -420,7 +495,6 @@ export function MessagesList() {
       // Refresh data to show the new group
       await getGroups();
     } catch (err: any) {
-      console.error("Failed to create group:", err);
       toast.error(err.message || "Failed to create group");
     } finally {
       setIsLoading(false);
@@ -443,7 +517,7 @@ export function MessagesList() {
   const transformGroupsToMessages = async (
     groups: any[]
   ): Promise<Message[]> => {
-    // Filter out invalid groups first
+    // Process all groups and only show those with conversation history
     const validGroups = await Promise.all(
       groups
         .filter((group) => group && group.id)
@@ -451,47 +525,30 @@ export function MessagesList() {
           // Handle different formats of last_message
           let lastMessage = group.last_message || {};
 
-          // Debug: Log the actual last_message structure for groups
-          console.log(
-            `[MessagesList] Group ${group.name || group.id} last_message:`,
-            lastMessage
-          );
-
           // If no last_message from group data, try to fetch from messages API
           if (!lastMessage || !Object.keys(lastMessage).length) {
-            console.log(
-              `[MessagesList] No last_message for group ${
-                group.name || group.id
-              }, fetching from API...`
-            );
             lastMessage = await getLastMessageForConversation(
               group.id,
               "group"
             );
+
+            // If API returns null/empty, this group has no conversation history
+            // Return null to filter it out from the list
+            if (!lastMessage) {
+              return null;
+            }
           }
 
           // Enhanced check for message existence - check multiple possible content fields
-          let messageContent = "";
-          let hasMessage = false;
+          const messageDisplay = getMessageDisplayContent(lastMessage);
+          let messageContent = messageDisplay.content;
+          let hasMessage =
+            messageContent !== "No messages yet" && !messageDisplay.isDeleted;
+          let isDeleted = messageDisplay.isDeleted;
 
-          if (lastMessage && typeof lastMessage === "object") {
-            // Try multiple possible content fields for groups
-            messageContent =
-              lastMessage.content ||
-              lastMessage.message_content ||
-              lastMessage.text ||
-              lastMessage.message ||
-              "";
-
-            // Check if we have actual content
-            hasMessage = !!(messageContent && messageContent.trim() !== "");
-
-            console.log(
-              `[MessagesList] Group ${
-                group.name || group.id
-              } - Content: "${messageContent}", HasMessage: ${hasMessage}, LastMessage:`,
-              lastMessage
-            );
+          // If still no message content and not deleted, skip this group
+          if (!hasMessage && !isDeleted) {
+            return null;
           }
 
           // Find a valid timestamp for sorting
@@ -502,16 +559,19 @@ export function MessagesList() {
             group.created_at ||
             new Date().toISOString();
 
-          // Format content properly with sender name if it's a group message
+          // Format content properly - handle deleted messages first, then regular messages
           let content;
-          if (hasMessage) {
-            // Include sender name in the preview if available
+          if (isDeleted) {
+            // Always show deleted message indicator for deleted messages
+            content = "This message was deleted";
+          } else if (hasMessage) {
+            // Include sender name in the preview if available for regular messages
             content = lastMessage.sender_name
               ? `${lastMessage.sender_name}: ${messageContent}`
               : messageContent;
           } else {
-            // Show "No messages yet" for groups without messages
-            content = "No messages yet";
+            // This case should not happen due to the filter above, but keep as fallback
+            return null;
           }
 
           return {
@@ -523,9 +583,10 @@ export function MessagesList() {
               id: group.id,
             },
             content: content,
-            timestamp: hasMessage
-              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-              : "",
+            timestamp:
+              hasMessage || isDeleted
+                ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+                : "",
             formattedTime: formatTimestamp(lastActivity),
             read: !group.unread_count || group.unread_count === 0,
             readStatus:
@@ -539,13 +600,18 @@ export function MessagesList() {
             type: "group" as MessageType,
             lastActivity,
             isTyping: false, // Will be updated by WebSocket events
-            hasMessages: hasMessage, // Flag to identify which have real messages
+            hasMessages: hasMessage || isDeleted, // Include deleted messages as having conversation history
           } as Message;
         })
     );
 
+    // Filter out null results (groups with no conversation history)
+    const filteredGroups = validGroups.filter(
+      (group): group is Message => group !== null
+    );
+
     // Sort groups (we're sure all values are valid now after filtering)
-    return validGroups.sort((a, b) => {
+    return filteredGroups.sort((a, b) => {
       // First sort by whether they have messages (those with messages come first)
       const aHasMessages = a.hasMessages ? 1 : 0;
       const bHasMessages = b.hasMessages ? 1 : 0;
@@ -564,56 +630,37 @@ export function MessagesList() {
   const transformFriendsToMessages = async (
     friends: any[]
   ): Promise<Message[]> => {
-    // Show ALL friends, not just those with messages
+    // Process all friends and only show those with conversation history
     const friendMessages = await Promise.all(
       friends.map(async (friend) => {
         const userId = friend.id;
         const friendStatus = presence.getStatus(userId);
         let lastMessage = friend.last_message;
 
-        // Debug: Log the actual last_message structure
-        console.log(
-          `[MessagesList] Friend ${
-            friend.username || friend.name || friend.id
-          } last_message:`,
-          lastMessage
-        );
-
         // If no last_message from friend data, try to fetch from messages API
         if (!lastMessage || !Object.keys(lastMessage).length) {
-          console.log(
-            `[MessagesList] No last_message for friend ${
-              friend.username || friend.name || friend.id
-            }, fetching from API...`
-          );
           lastMessage = await getLastMessageForConversation(
             friend.id,
             "friend"
           );
+
+          // If API returns null/empty, this friend has no conversation history
+          // Return null to filter it out from the list
+          if (!lastMessage) {
+            return null;
+          }
         }
 
         // Enhanced check for message existence - check multiple possible content fields
-        let messageContent = "";
-        let hasMessage = false;
+        const messageDisplay = getMessageDisplayContent(lastMessage);
+        let messageContent = messageDisplay.content;
+        let hasMessage =
+          messageContent !== "No messages yet" && !messageDisplay.isDeleted;
+        let isDeleted = messageDisplay.isDeleted;
 
-        if (lastMessage && typeof lastMessage === "object") {
-          // Try multiple possible content fields for friends
-          messageContent =
-            lastMessage.content ||
-            lastMessage.message_content ||
-            lastMessage.text ||
-            lastMessage.message ||
-            "";
-
-          // Check if we have actual content
-          hasMessage = !!(messageContent && messageContent.trim() !== "");
-
-          console.log(
-            `[MessagesList] Friend ${
-              friend.username || friend.name || friend.id
-            } - Content: "${messageContent}", HasMessage: ${hasMessage}, LastMessage:`,
-            lastMessage
-          );
+        // If still no message content and not deleted, skip this friend
+        if (!hasMessage && !isDeleted) {
+          return null;
         }
 
         const lastActivity =
@@ -640,6 +687,17 @@ export function MessagesList() {
           displayName = "User";
         }
 
+        // Determine content based on message state
+        let content;
+        if (isDeleted) {
+          content = "This message was deleted";
+        } else if (hasMessage) {
+          content = messageContent;
+        } else {
+          // This case should not happen due to the filter above, but keep as fallback
+          return null;
+        }
+
         return {
           id: friend.id,
           sender: {
@@ -652,12 +710,13 @@ export function MessagesList() {
                 ? ("online" as UserStatus)
                 : ("offline" as UserStatus),
           },
-          content: hasMessage ? messageContent : "No messages yet",
-          timestamp: hasMessage
-            ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
-            : friendStatus === "online"
-            ? "Online"
-            : "Offline",
+          content: content,
+          timestamp:
+            hasMessage || isDeleted
+              ? formatTimestamp(lastMessage.sent_at || lastMessage.created_at)
+              : friendStatus === "online"
+              ? "Online"
+              : "Offline",
           formattedTime: formatTimestamp(lastActivity),
           read: !friend.unread_count || friend.unread_count === 0,
           readStatus:
@@ -671,13 +730,18 @@ export function MessagesList() {
           type: "friend" as MessageType,
           lastActivity,
           isTyping: isTyping[userId] || false,
-          hasMessages: hasMessage, // Add flag to identify which have real messages
+          hasMessages: hasMessage || isDeleted, // Include deleted messages as having conversation history
         };
       })
     );
 
+    // Filter out null results (friends with no conversation history)
+    const filteredFriends = friendMessages.filter(
+      (friend) => friend !== null
+    ) as Message[];
+
     // Sort to show friends with messages first, then those without messages
-    return friendMessages.sort((a, b) => {
+    return filteredFriends.sort((a, b) => {
       const aHasMessages = a.hasMessages ? 1 : 0;
       const bHasMessages = b.hasMessages ? 1 : 0;
 
@@ -687,10 +751,54 @@ export function MessagesList() {
       }
 
       // If both have messages or both don't have messages, sort by activity time
-      const aTime = new Date(a.lastActivity).getTime();
-      const bTime = new Date(b.lastActivity).getTime();
+      const aTime = new Date(a.lastActivity || new Date()).getTime();
+      const bTime = new Date(b.lastActivity || new Date()).getTime();
       return bTime - aTime;
     });
+  };
+
+  // Helper function to ensure consistent data structure from API responses
+  const normalizeMessageResponse = (response: any): BaseMessage | null => {
+    return normalizeSingleMessage(response);
+  };
+
+  // Helper function to get display content for message preview
+  const getMessageDisplayContent = (
+    lastMessage: any
+  ): { content: string; isDeleted: boolean } => {
+    if (!lastMessage || typeof lastMessage !== "object") {
+      return { content: "No messages yet", isDeleted: false };
+    }
+
+    // Handle array response (like your JSON data with "0", "1" keys)
+    if (Array.isArray(lastMessage)) {
+      lastMessage = lastMessage[0];
+    } else if (typeof lastMessage === "object" && "0" in lastMessage) {
+      lastMessage = lastMessage["0"];
+    }
+
+    if (!lastMessage || typeof lastMessage !== "object") {
+      return { content: "No messages yet", isDeleted: false };
+    }
+
+    const isDeleted = !!(lastMessage.is_deleted || lastMessage.isDeleted);
+
+    if (isDeleted) {
+      return { content: "This message was deleted", isDeleted: true };
+    }
+
+    const messageContent =
+      lastMessage.content ||
+      lastMessage.message_content ||
+      lastMessage.text ||
+      lastMessage.message ||
+      "";
+
+    if (!messageContent || messageContent.trim() === "") {
+      return { content: "No messages yet", isDeleted: false };
+    }
+
+    return { content: messageContent, isDeleted: false };
   };
 
   return (
@@ -713,13 +821,6 @@ export function MessagesList() {
         </div>
         <div className="flex items-center space-x-2">
           <NotificationDropdown />
-          <button
-            onClick={() => setShowNewChatPopup(true)}
-            className="p-2.5 bg-blue-500 text-white rounded-full hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300 transition-colors"
-            title="New Chat"
-          >
-            <Plus size={16} />
-          </button>
         </div>
       </div>
 
@@ -816,13 +917,6 @@ export function MessagesList() {
                       }`
                     : `/chat/messages/${message.id}?type=group`;
 
-                console.log("🔍 [MessagesList] Building URL:", {
-                  messageId: message.id,
-                  messageType: message.type,
-                  senderName: message.sender.name,
-                  finalUrl: friendUrl,
-                });
-
                 return (
                   <Link key={message.id} href={friendUrl}>
                     <div
@@ -888,7 +982,13 @@ export function MessagesList() {
                                 </span>
                               </p>
                             ) : (
-                              <p className="text-xs text-gray-600 truncate flex-1">
+                              <p
+                                className={`text-xs truncate flex-1 ${
+                                  message.content === "This message was deleted"
+                                    ? "text-gray-400 italic"
+                                    : "text-gray-600"
+                                }`}
+                              >
                                 {message.content}
                               </p>
                             )}

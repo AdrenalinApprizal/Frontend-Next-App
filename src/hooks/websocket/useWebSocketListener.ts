@@ -68,10 +68,8 @@ export function useWebSocketListener(
       isVisibleRef.current = !document.hidden;
 
       if (document.hidden) {
-        console.log("[WebSocketListener] Page hidden, pausing listeners");
         pause();
       } else {
-        console.log("[WebSocketListener] Page visible, resuming listeners");
         resume();
       }
     };
@@ -120,10 +118,7 @@ export function useWebSocketListener(
   const start = useCallback(() => {
     if (isListeningRef.current) return;
 
-    console.log(
-      "[WebSocketListener] Starting to listen to events:",
-      listenersRef.current.map((l) => l.event)
-    );
+    listenersRef.current.map((l) => l.event);
 
     listenersRef.current.forEach((config) => {
       let handler = config.handler;
@@ -162,7 +157,6 @@ export function useWebSocketListener(
   const stop = useCallback(() => {
     if (!isListeningRef.current) return;
 
-    console.log("[WebSocketListener] Stopping event listeners");
 
     // Clear all debounce timers
     debounceTimersRef.current.forEach((timer) => {
@@ -182,7 +176,6 @@ export function useWebSocketListener(
   const pause = useCallback(() => {
     if (!isListeningRef.current) return;
 
-    console.log("[WebSocketListener] Pausing event listeners");
     stop();
   }, [stop]);
 
@@ -190,7 +183,6 @@ export function useWebSocketListener(
   const resume = useCallback(() => {
     if (isListeningRef.current || !isVisibleRef.current) return;
 
-    console.log("[WebSocketListener] Resuming event listeners");
     start();
   }, [start]);
 
